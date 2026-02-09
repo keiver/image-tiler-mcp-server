@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tile Preview — portrait.png</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+  .header { margin-bottom: 20px; }
+  .header h1 { font-size: 1.4em; margin-bottom: 8px; color: #fff; }
+  .meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.85em; color: #aaa; }
+  .meta span { background: #16213e; padding: 4px 10px; border-radius: 4px; }
+  .toggle { display: flex; gap: 8px; margin: 16px 0; }
+  .toggle button { padding: 8px 18px; border: 1px solid #334; background: #16213e; color: #ccc; border-radius: 6px; cursor: pointer; font-size: 0.9em; transition: all 0.15s; }
+  .toggle button.active { background: #0f3460; color: #fff; border-color: #1a8; }
+  .toggle button:hover { background: #0f3460; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* Source View */
+  .source-container { position: relative; display: inline-block; max-width: 100%; }
+  .source-container img { display: block; max-width: 100%; height: auto; }
+  .source-container svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  .source-container svg line { stroke: rgba(255, 60, 60, 0.7); stroke-width: 1.5; }
+  .source-container svg text { fill: rgba(255, 255, 255, 0.85); font-size: 14px; font-family: monospace; text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: rgba(0,0,0,0.6); stroke-width: 3px; }
+
+  /* Tile View */
+  .tile-grid { display: grid; gap: 4px; }
+  .tile-cell { position: relative; background: #16213e; border-radius: 4px; overflow: hidden; }
+  .tile-cell img { display: block; width: 100%; height: auto; }
+  .tile-badge { position: absolute; top: 4px; left: 4px; background: rgba(0,0,0,0.7); color: #fff; font-size: 11px; font-family: monospace; padding: 2px 6px; border-radius: 3px; pointer-events: none; }
+  .tile-cell .tooltip { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.9); color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 12px; font-family: monospace; white-space: nowrap; z-index: 10; pointer-events: none; }
+  .tile-cell:hover .tooltip { display: block; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Tile Preview</h1>
+  <div class="meta">
+    <span>Source: portrait.png</span>
+    <span>3600 × 22810</span>
+    <span>Grid: 4 × 21 = 84 tiles</span>
+    <span>Tile size: 1092px</span>
+    <span>Model: claude</span>
+    <span>~133,560 tokens</span>
+  </div>
+</div>
+
+<div class="toggle">
+  <button id="btn-source" class="active" onclick="showView('source')">Source View</button>
+  <button id="btn-tiles" onclick="showView('tiles')">Tile View</button>
+</div>
+
+<div id="view-source" class="view active">
+  <div class="source-container">
+    <img id="source-img" src="../portrait.png" alt="Source image" />
+    <svg id="grid-overlay" viewBox="0 0 3600 22810" preserveAspectRatio="xMinYMin meet"></svg>
+  </div>
+</div>
+
+<div id="view-tiles" class="view">
+  <div class="tile-grid" id="tile-grid" style="grid-template-columns: repeat(4, 1fr);"></div>
+</div>
+
+<script>
+(function() {
+  var META = {
+    width: 3600,
+    height: 22810,
+    cols: 4,
+    rows: 21,
+    tileSize: 1092,
+    totalTiles: 84,
+    model: "claude"
+  };
+  var TILES = [{"index":0,"row":0,"col":0,"x":0,"y":0,"width":1092,"height":1092,"filename":"tile_000_000.png"},{"index":1,"row":0,"col":1,"x":1092,"y":0,"width":1092,"height":1092,"filename":"tile_000_001.png"},{"index":2,"row":0,"col":2,"x":2184,"y":0,"width":1092,"height":1092,"filename":"tile_000_002.png"},{"index":3,"row":0,"col":3,"x":3276,"y":0,"width":324,"height":1092,"filename":"tile_000_003.png"},{"index":4,"row":1,"col":0,"x":0,"y":1092,"width":1092,"height":1092,"filename":"tile_001_000.png"},{"index":5,"row":1,"col":1,"x":1092,"y":1092,"width":1092,"height":1092,"filename":"tile_001_001.png"},{"index":6,"row":1,"col":2,"x":2184,"y":1092,"width":1092,"height":1092,"filename":"tile_001_002.png"},{"index":7,"row":1,"col":3,"x":3276,"y":1092,"width":324,"height":1092,"filename":"tile_001_003.png"},{"index":8,"row":2,"col":0,"x":0,"y":2184,"width":1092,"height":1092,"filename":"tile_002_000.png"},{"index":9,"row":2,"col":1,"x":1092,"y":2184,"width":1092,"height":1092,"filename":"tile_002_001.png"},{"index":10,"row":2,"col":2,"x":2184,"y":2184,"width":1092,"height":1092,"filename":"tile_002_002.png"},{"index":11,"row":2,"col":3,"x":3276,"y":2184,"width":324,"height":1092,"filename":"tile_002_003.png"},{"index":12,"row":3,"col":0,"x":0,"y":3276,"width":1092,"height":1092,"filename":"tile_003_000.png"},{"index":13,"row":3,"col":1,"x":1092,"y":3276,"width":1092,"height":1092,"filename":"tile_003_001.png"},{"index":14,"row":3,"col":2,"x":2184,"y":3276,"width":1092,"height":1092,"filename":"tile_003_002.png"},{"index":15,"row":3,"col":3,"x":3276,"y":3276,"width":324,"height":1092,"filename":"tile_003_003.png"},{"index":16,"row":4,"col":0,"x":0,"y":4368,"width":1092,"height":1092,"filename":"tile_004_000.png"},{"index":17,"row":4,"col":1,"x":1092,"y":4368,"width":1092,"height":1092,"filename":"tile_004_001.png"},{"index":18,"row":4,"col":2,"x":2184,"y":4368,"width":1092,"height":1092,"filename":"tile_004_002.png"},{"index":19,"row":4,"col":3,"x":3276,"y":4368,"width":324,"height":1092,"filename":"tile_004_003.png"},{"index":20,"row":5,"col":0,"x":0,"y":5460,"width":1092,"height":1092,"filename":"tile_005_000.png"},{"index":21,"row":5,"col":1,"x":1092,"y":5460,"width":1092,"height":1092,"filename":"tile_005_001.png"},{"index":22,"row":5,"col":2,"x":2184,"y":5460,"width":1092,"height":1092,"filename":"tile_005_002.png"},{"index":23,"row":5,"col":3,"x":3276,"y":5460,"width":324,"height":1092,"filename":"tile_005_003.png"},{"index":24,"row":6,"col":0,"x":0,"y":6552,"width":1092,"height":1092,"filename":"tile_006_000.png"},{"index":25,"row":6,"col":1,"x":1092,"y":6552,"width":1092,"height":1092,"filename":"tile_006_001.png"},{"index":26,"row":6,"col":2,"x":2184,"y":6552,"width":1092,"height":1092,"filename":"tile_006_002.png"},{"index":27,"row":6,"col":3,"x":3276,"y":6552,"width":324,"height":1092,"filename":"tile_006_003.png"},{"index":28,"row":7,"col":0,"x":0,"y":7644,"width":1092,"height":1092,"filename":"tile_007_000.png"},{"index":29,"row":7,"col":1,"x":1092,"y":7644,"width":1092,"height":1092,"filename":"tile_007_001.png"},{"index":30,"row":7,"col":2,"x":2184,"y":7644,"width":1092,"height":1092,"filename":"tile_007_002.png"},{"index":31,"row":7,"col":3,"x":3276,"y":7644,"width":324,"height":1092,"filename":"tile_007_003.png"},{"index":32,"row":8,"col":0,"x":0,"y":8736,"width":1092,"height":1092,"filename":"tile_008_000.png"},{"index":33,"row":8,"col":1,"x":1092,"y":8736,"width":1092,"height":1092,"filename":"tile_008_001.png"},{"index":34,"row":8,"col":2,"x":2184,"y":8736,"width":1092,"height":1092,"filename":"tile_008_002.png"},{"index":35,"row":8,"col":3,"x":3276,"y":8736,"width":324,"height":1092,"filename":"tile_008_003.png"},{"index":36,"row":9,"col":0,"x":0,"y":9828,"width":1092,"height":1092,"filename":"tile_009_000.png"},{"index":37,"row":9,"col":1,"x":1092,"y":9828,"width":1092,"height":1092,"filename":"tile_009_001.png"},{"index":38,"row":9,"col":2,"x":2184,"y":9828,"width":1092,"height":1092,"filename":"tile_009_002.png"},{"index":39,"row":9,"col":3,"x":3276,"y":9828,"width":324,"height":1092,"filename":"tile_009_003.png"},{"index":40,"row":10,"col":0,"x":0,"y":10920,"width":1092,"height":1092,"filename":"tile_010_000.png"},{"index":41,"row":10,"col":1,"x":1092,"y":10920,"width":1092,"height":1092,"filename":"tile_010_001.png"},{"index":42,"row":10,"col":2,"x":2184,"y":10920,"width":1092,"height":1092,"filename":"tile_010_002.png"},{"index":43,"row":10,"col":3,"x":3276,"y":10920,"width":324,"height":1092,"filename":"tile_010_003.png"},{"index":44,"row":11,"col":0,"x":0,"y":12012,"width":1092,"height":1092,"filename":"tile_011_000.png"},{"index":45,"row":11,"col":1,"x":1092,"y":12012,"width":1092,"height":1092,"filename":"tile_011_001.png"},{"index":46,"row":11,"col":2,"x":2184,"y":12012,"width":1092,"height":1092,"filename":"tile_011_002.png"},{"index":47,"row":11,"col":3,"x":3276,"y":12012,"width":324,"height":1092,"filename":"tile_011_003.png"},{"index":48,"row":12,"col":0,"x":0,"y":13104,"width":1092,"height":1092,"filename":"tile_012_000.png"},{"index":49,"row":12,"col":1,"x":1092,"y":13104,"width":1092,"height":1092,"filename":"tile_012_001.png"},{"index":50,"row":12,"col":2,"x":2184,"y":13104,"width":1092,"height":1092,"filename":"tile_012_002.png"},{"index":51,"row":12,"col":3,"x":3276,"y":13104,"width":324,"height":1092,"filename":"tile_012_003.png"},{"index":52,"row":13,"col":0,"x":0,"y":14196,"width":1092,"height":1092,"filename":"tile_013_000.png"},{"index":53,"row":13,"col":1,"x":1092,"y":14196,"width":1092,"height":1092,"filename":"tile_013_001.png"},{"index":54,"row":13,"col":2,"x":2184,"y":14196,"width":1092,"height":1092,"filename":"tile_013_002.png"},{"index":55,"row":13,"col":3,"x":3276,"y":14196,"width":324,"height":1092,"filename":"tile_013_003.png"},{"index":56,"row":14,"col":0,"x":0,"y":15288,"width":1092,"height":1092,"filename":"tile_014_000.png"},{"index":57,"row":14,"col":1,"x":1092,"y":15288,"width":1092,"height":1092,"filename":"tile_014_001.png"},{"index":58,"row":14,"col":2,"x":2184,"y":15288,"width":1092,"height":1092,"filename":"tile_014_002.png"},{"index":59,"row":14,"col":3,"x":3276,"y":15288,"width":324,"height":1092,"filename":"tile_014_003.png"},{"index":60,"row":15,"col":0,"x":0,"y":16380,"width":1092,"height":1092,"filename":"tile_015_000.png"},{"index":61,"row":15,"col":1,"x":1092,"y":16380,"width":1092,"height":1092,"filename":"tile_015_001.png"},{"index":62,"row":15,"col":2,"x":2184,"y":16380,"width":1092,"height":1092,"filename":"tile_015_002.png"},{"index":63,"row":15,"col":3,"x":3276,"y":16380,"width":324,"height":1092,"filename":"tile_015_003.png"},{"index":64,"row":16,"col":0,"x":0,"y":17472,"width":1092,"height":1092,"filename":"tile_016_000.png"},{"index":65,"row":16,"col":1,"x":1092,"y":17472,"width":1092,"height":1092,"filename":"tile_016_001.png"},{"index":66,"row":16,"col":2,"x":2184,"y":17472,"width":1092,"height":1092,"filename":"tile_016_002.png"},{"index":67,"row":16,"col":3,"x":3276,"y":17472,"width":324,"height":1092,"filename":"tile_016_003.png"},{"index":68,"row":17,"col":0,"x":0,"y":18564,"width":1092,"height":1092,"filename":"tile_017_000.png"},{"index":69,"row":17,"col":1,"x":1092,"y":18564,"width":1092,"height":1092,"filename":"tile_017_001.png"},{"index":70,"row":17,"col":2,"x":2184,"y":18564,"width":1092,"height":1092,"filename":"tile_017_002.png"},{"index":71,"row":17,"col":3,"x":3276,"y":18564,"width":324,"height":1092,"filename":"tile_017_003.png"},{"index":72,"row":18,"col":0,"x":0,"y":19656,"width":1092,"height":1092,"filename":"tile_018_000.png"},{"index":73,"row":18,"col":1,"x":1092,"y":19656,"width":1092,"height":1092,"filename":"tile_018_001.png"},{"index":74,"row":18,"col":2,"x":2184,"y":19656,"width":1092,"height":1092,"filename":"tile_018_002.png"},{"index":75,"row":18,"col":3,"x":3276,"y":19656,"width":324,"height":1092,"filename":"tile_018_003.png"},{"index":76,"row":19,"col":0,"x":0,"y":20748,"width":1092,"height":1092,"filename":"tile_019_000.png"},{"index":77,"row":19,"col":1,"x":1092,"y":20748,"width":1092,"height":1092,"filename":"tile_019_001.png"},{"index":78,"row":19,"col":2,"x":2184,"y":20748,"width":1092,"height":1092,"filename":"tile_019_002.png"},{"index":79,"row":19,"col":3,"x":3276,"y":20748,"width":324,"height":1092,"filename":"tile_019_003.png"},{"index":80,"row":20,"col":0,"x":0,"y":21840,"width":1092,"height":970,"filename":"tile_020_000.png"},{"index":81,"row":20,"col":1,"x":1092,"y":21840,"width":1092,"height":970,"filename":"tile_020_001.png"},{"index":82,"row":20,"col":2,"x":2184,"y":21840,"width":1092,"height":970,"filename":"tile_020_002.png"},{"index":83,"row":20,"col":3,"x":3276,"y":21840,"width":324,"height":970,"filename":"tile_020_003.png"}];
+
+  // Draw grid overlay on source view
+  var svg = document.getElementById('grid-overlay');
+  // Vertical lines
+  for (var c = 1; c < META.cols; c++) {
+    var x = c * META.tileSize;
+    var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', x); line.setAttribute('y1', 0);
+    line.setAttribute('x2', x); line.setAttribute('y2', META.height);
+    svg.appendChild(line);
+  }
+  // Horizontal lines
+  for (var r = 1; r < META.rows; r++) {
+    var y = r * META.tileSize;
+    var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', 0); line.setAttribute('y1', y);
+    line.setAttribute('x2', META.width); line.setAttribute('y2', y);
+    svg.appendChild(line);
+  }
+  // Tile index labels at cell centers
+  for (var i = 0; i < TILES.length; i++) {
+    var t = TILES[i];
+    var cx = t.x + t.width / 2;
+    var cy = t.y + t.height / 2;
+    var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', cx);
+    text.setAttribute('y', cy);
+    text.textContent = String(t.index);
+    svg.appendChild(text);
+  }
+
+  // Build tile grid
+  var grid = document.getElementById('tile-grid');
+  for (var i = 0; i < TILES.length; i++) {
+    var t = TILES[i];
+    var cell = document.createElement('div');
+    cell.className = 'tile-cell';
+
+    var img = document.createElement('img');
+    img.src = t.filename;
+    img.alt = 'Tile ' + t.index;
+    cell.appendChild(img);
+
+    var badge = document.createElement('div');
+    badge.className = 'tile-badge';
+    badge.textContent = t.index + ' [' + t.row + ',' + t.col + ']';
+    cell.appendChild(badge);
+
+    var tooltip = document.createElement('div');
+    tooltip.className = 'tooltip';
+    tooltip.textContent = 'Tile ' + t.index + ' — row ' + t.row + ', col ' + t.col + ' — pos(' + t.x + ',' + t.y + ') — ' + t.width + '×' + t.height + 'px';
+    cell.appendChild(tooltip);
+
+    grid.appendChild(cell);
+  }
+})();
+
+function showView(name) {
+  document.getElementById('view-source').className = 'view' + (name === 'source' ? ' active' : '');
+  document.getElementById('view-tiles').className = 'view' + (name === 'tiles' ? ' active' : '');
+  document.getElementById('btn-source').className = name === 'source' ? 'active' : '';
+  document.getElementById('btn-tiles').className = name === 'tiles' ? 'active' : '';
+}
+</script>
+</body>
+</html>
