@@ -1,5 +1,5 @@
 {
-  "name": "image-tiler-mcp-server",
+  "name": "large-image-tiler-mcp-server",
   "version": "1.1.2",
   "description": "MCP server that splits large images into optimally-sized tiles for LLM vision (Claude, OpenAI, Gemini, Gemini 3)",
   "type": "module",
