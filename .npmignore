@@ -2,3 +2,9 @@ src/
 tsconfig.json
 .gitignore
 *.tgz
+.github/
+assets/
+.claude/
+src/__tests__/
+coverage/
+*.test.ts
