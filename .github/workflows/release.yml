@@ -89,7 +89,7 @@ jobs:
             const version = '${{ steps.bump.outputs.version }}';
             const body = [
               `🚀 Released as [v${version}](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/v${version})`,
-              `📦 [npm](https://www.npmjs.com/package/large-image-tiler-mcp-server/v/${version})`
+              `📦 [npm](https://www.npmjs.com/package/image-tiler-mcp-server/v/${version})`
             ].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,

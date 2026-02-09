@@ -1,5 +1,5 @@
 {
-  "name": "large-image-tiler-mcp-server",
+  "name": "image-tiler-mcp-server",
   "version": "1.1.2",
   "description": "MCP server that splits large images into optimally-sized tiles for LLM vision (Claude, OpenAI, Gemini, Gemini 3)",
   "type": "module",
@@ -37,12 +37,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keiver/large-image-tiler-mcp-server.git"
+    "url": "git+https://github.com/keiver/image-tiler-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/keiver/large-image-tiler-mcp-server/issues"
+    "url": "https://github.com/keiver/image-tiler-mcp-server/issues"
   },
-  "homepage": "https://github.com/keiver/large-image-tiler-mcp-server#readme",
+  "homepage": "https://github.com/keiver/image-tiler-mcp-server#readme",
   "engines": {
     "node": ">=18.0.0"
   },
