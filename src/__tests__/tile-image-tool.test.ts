@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { TileImageResult } from "../types.js";
 
@@ -95,7 +96,7 @@ describe("registerTileImageTool", () => {
     expect(mockedTileImage).toHaveBeenCalledWith(
       "/images/photo.png",
       1092,
-      expect.stringContaining("tiles"),
+      expect.stringContaining(path.join("tiles", "photo")),
       1590
     );
   });

@@ -20,7 +20,7 @@ const TILE_IMAGE_DESCRIPTION = (() => {
 Supports ${VISION_MODELS.length} vision models via the "model" parameter:
 ${modelLines}
 
-Tiles are saved as PNG files to a 'tiles' subfolder next to the source image (or a custom output directory).
+Tiles are saved as PNG files to a 'tiles/{name}' subfolder next to the source image (or a custom output directory).
 
 Supported formats: ${SUPPORTED_FORMATS.join(", ")}
 
@@ -91,8 +91,9 @@ export function registerTileImageTool(server: McpServer): void {
           effectiveTileSize = config.minTileSize;
         }
 
+        const basename = path.basename(filePath, path.extname(filePath));
         const resolvedOutputDir =
-          outputDir || path.join(path.dirname(path.resolve(filePath)), "tiles");
+          outputDir || path.join(path.dirname(path.resolve(filePath)), "tiles", basename);
 
         const result = await tileImage(
           filePath,
