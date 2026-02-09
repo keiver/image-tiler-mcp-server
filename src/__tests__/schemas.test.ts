@@ -1,0 +1,178 @@
+import { describe, it, expect } from "vitest";
+import { z } from "zod";
+import { TileImageInputSchema, GetTilesInputSchema } from "../schemas/index.js";
+
+const tileImageSchema = z.object(TileImageInputSchema);
+const getTilesSchema = z.object(GetTilesInputSchema);
+
+describe("TileImageInputSchema", () => {
+  describe("filePath", () => {
+    it("accepts a valid file path", () => {
+      const result = tileImageSchema.parse({ filePath: "/path/to/image.png" });
+      expect(result.filePath).toBe("/path/to/image.png");
+    });
+
+    it("rejects an empty string", () => {
+      expect(() => tileImageSchema.parse({ filePath: "" })).toThrow(
+        "File path cannot be empty"
+      );
+    });
+
+    it("rejects missing filePath", () => {
+      expect(() => tileImageSchema.parse({})).toThrow();
+    });
+
+    it("rejects non-string filePath", () => {
+      expect(() => tileImageSchema.parse({ filePath: 123 })).toThrow();
+    });
+  });
+
+  describe("model", () => {
+    it("defaults to claude when omitted", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png" });
+      expect(result.model).toBe("claude");
+    });
+
+    it("accepts claude", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", model: "claude" });
+      expect(result.model).toBe("claude");
+    });
+
+    it("accepts openai", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", model: "openai" });
+      expect(result.model).toBe("openai");
+    });
+
+    it("accepts gemini", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", model: "gemini" });
+      expect(result.model).toBe("gemini");
+    });
+
+    it("accepts gemini3", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", model: "gemini3" });
+      expect(result.model).toBe("gemini3");
+    });
+
+    it("rejects invalid model name", () => {
+      expect(() =>
+        tileImageSchema.parse({ filePath: "test.png", model: "gpt4" })
+      ).toThrow();
+    });
+
+    it("rejects non-string model", () => {
+      expect(() =>
+        tileImageSchema.parse({ filePath: "test.png", model: 42 })
+      ).toThrow();
+    });
+  });
+
+  describe("tileSize", () => {
+    it("is undefined when omitted", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png" });
+      expect(result.tileSize).toBeUndefined();
+    });
+
+    it("accepts minimum value (256)", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", tileSize: 256 });
+      expect(result.tileSize).toBe(256);
+    });
+
+    it("accepts maximum value (3072)", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", tileSize: 3072 });
+      expect(result.tileSize).toBe(3072);
+    });
+
+    it("accepts mid-range value (1072)", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", tileSize: 1072 });
+      expect(result.tileSize).toBe(1072);
+    });
+
+    it("rejects below minimum (255)", () => {
+      expect(() =>
+        tileImageSchema.parse({ filePath: "test.png", tileSize: 255 })
+      ).toThrow("at least 256");
+    });
+
+    it("rejects above maximum (3073)", () => {
+      expect(() =>
+        tileImageSchema.parse({ filePath: "test.png", tileSize: 3073 })
+      ).toThrow("must not exceed 3072");
+    });
+
+    it("rejects non-integer", () => {
+      expect(() =>
+        tileImageSchema.parse({ filePath: "test.png", tileSize: 500.5 })
+      ).toThrow();
+    });
+  });
+
+  describe("outputDir", () => {
+    it("is optional and undefined by default", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png" });
+      expect(result.outputDir).toBeUndefined();
+    });
+
+    it("accepts a string value", () => {
+      const result = tileImageSchema.parse({
+        filePath: "test.png",
+        outputDir: "/tmp/tiles",
+      });
+      expect(result.outputDir).toBe("/tmp/tiles");
+    });
+  });
+});
+
+describe("GetTilesInputSchema", () => {
+  describe("tilesDir", () => {
+    it("accepts a valid directory path", () => {
+      const result = getTilesSchema.parse({ tilesDir: "/path/to/tiles" });
+      expect(result.tilesDir).toBe("/path/to/tiles");
+    });
+
+    it("rejects an empty string", () => {
+      expect(() => getTilesSchema.parse({ tilesDir: "" })).toThrow(
+        "Tiles directory path cannot be empty"
+      );
+    });
+
+    it("rejects missing tilesDir", () => {
+      expect(() => getTilesSchema.parse({})).toThrow();
+    });
+  });
+
+  describe("start", () => {
+    it("defaults to 0 when omitted", () => {
+      const result = getTilesSchema.parse({ tilesDir: "/tiles" });
+      expect(result.start).toBe(0);
+    });
+
+    it("accepts 0", () => {
+      const result = getTilesSchema.parse({ tilesDir: "/tiles", start: 0 });
+      expect(result.start).toBe(0);
+    });
+
+    it("rejects negative values", () => {
+      expect(() =>
+        getTilesSchema.parse({ tilesDir: "/tiles", start: -1 })
+      ).toThrow("Start index must be >= 0");
+    });
+  });
+
+  describe("end", () => {
+    it("is optional and undefined by default", () => {
+      const result = getTilesSchema.parse({ tilesDir: "/tiles" });
+      expect(result.end).toBeUndefined();
+    });
+
+    it("accepts 0", () => {
+      const result = getTilesSchema.parse({ tilesDir: "/tiles", end: 0 });
+      expect(result.end).toBe(0);
+    });
+
+    it("rejects negative values", () => {
+      expect(() =>
+        getTilesSchema.parse({ tilesDir: "/tiles", end: -1 })
+      ).toThrow("End index must be >= 0");
+    });
+  });
+});
