@@ -1,16 +1,11 @@
 import { z } from "zod";
 import {
-  MIN_TILE_SIZE,
+  MAX_IMAGE_DIMENSION,
   MAX_TILES_PER_BATCH,
   VISION_MODELS,
   DEFAULT_MODEL,
   MODEL_CONFIGS,
 } from "../constants.js";
-
-// Global max across all models — derived so adding a model auto-updates the bound
-const GLOBAL_MAX_TILE_SIZE = Math.max(
-  ...Object.values(MODEL_CONFIGS).map((c) => c.maxTileSize)
-);
 
 const modelDescriptions = VISION_MODELS.map(
   (m) => `"${m}" (${MODEL_CONFIGS[m].defaultTileSize}px tiles, ~${MODEL_CONFIGS[m].tokensPerTile} tokens/tile)`
@@ -34,14 +29,14 @@ export const TileImageInputSchema = {
   tileSize: z
     .number()
     .int()
-    .min(MIN_TILE_SIZE, `Tile size must be at least ${MIN_TILE_SIZE}px`)
+    .min(1, "Tile size must be a positive integer")
     .max(
-      GLOBAL_MAX_TILE_SIZE,
-      `Tile size must not exceed ${GLOBAL_MAX_TILE_SIZE}px`
+      MAX_IMAGE_DIMENSION,
+      `Tile size must not exceed ${MAX_IMAGE_DIMENSION}px`
     )
     .optional()
     .describe(
-      `Tile size in pixels. If omitted, uses the model's optimal default (${defaultDescriptions}). Clamped to the model's max if it exceeds the model's limit.`
+      `Tile size in pixels. If omitted, uses the model's optimal default (${defaultDescriptions}). Values outside the model's supported range are automatically clamped with a warning.`
     ),
   outputDir: z
     .string()

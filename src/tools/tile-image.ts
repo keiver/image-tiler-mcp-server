@@ -4,22 +4,17 @@ import { TileImageInputSchema } from "../schemas/index.js";
 import { tileImage } from "../services/image-processor.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS } from "../constants.js";
 
-export function registerTileImageTool(server: McpServer): void {
-  server.registerTool(
-    "tiler_tile_image",
-    {
-      title: "Tile Image for LLM Vision",
-      description: (() => {
-        const modelLines = VISION_MODELS.map((m) => {
-          const c = MODEL_CONFIGS[m];
-          const isDefault = m === DEFAULT_MODEL ? " (default)" : "";
-          return `  - "${m}"${isDefault}: ${c.defaultTileSize}px tiles, ~${c.tokensPerTile} tokens/tile`;
-        }).join("\n");
-        const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
-        const exampleLines = VISION_MODELS.filter((m) => m !== DEFAULT_MODEL).map(
-          (m) => `  - Tile for ${MODEL_CONFIGS[m].label}: filePath="/path/to/image.png", model="${m}"`
-        ).join("\n");
-        return `Split a large image into optimally-sized tiles for LLM vision analysis.
+const TILE_IMAGE_DESCRIPTION = (() => {
+  const modelLines = VISION_MODELS.map((m) => {
+    const c = MODEL_CONFIGS[m];
+    const isDefault = m === DEFAULT_MODEL ? " (default)" : "";
+    return `  - "${m}"${isDefault}: ${c.defaultTileSize}px tiles, ~${c.tokensPerTile} tokens/tile`;
+  }).join("\n");
+  const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
+  const exampleLines = VISION_MODELS.filter((m) => m !== DEFAULT_MODEL).map(
+    (m) => `  - Tile for ${MODEL_CONFIGS[m].label}: filePath="/path/to/image.png", model="${m}"`
+  ).join("\n");
+  return `Split a large image into optimally-sized tiles for LLM vision analysis.
 
 Supports ${VISION_MODELS.length} vision models via the "model" parameter:
 ${modelLines}
@@ -45,12 +40,19 @@ Examples:
 ${exampleLines}
   - Custom tile size: filePath="/path/to/image.png", tileSize=800
   - Custom output: filePath="/path/to/image.png", outputDir="/tmp/my-tiles"`;
-      })(),
+})();
+
+export function registerTileImageTool(server: McpServer): void {
+  server.registerTool(
+    "tiler_tile_image",
+    {
+      title: "Tile Image for LLM Vision",
+      description: TILE_IMAGE_DESCRIPTION,
       inputSchema: TileImageInputSchema,
       annotations: {
         readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
     },

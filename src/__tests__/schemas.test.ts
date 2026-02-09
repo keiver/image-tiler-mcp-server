@@ -72,14 +72,14 @@ describe("TileImageInputSchema", () => {
       expect(result.tileSize).toBeUndefined();
     });
 
-    it("accepts minimum value (256)", () => {
-      const result = tileImageSchema.parse({ filePath: "test.png", tileSize: 256 });
-      expect(result.tileSize).toBe(256);
+    it("accepts minimum value (1)", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", tileSize: 1 });
+      expect(result.tileSize).toBe(1);
     });
 
-    it("accepts maximum value (3072)", () => {
-      const result = tileImageSchema.parse({ filePath: "test.png", tileSize: 3072 });
-      expect(result.tileSize).toBe(3072);
+    it("accepts maximum value (65536)", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", tileSize: 65536 });
+      expect(result.tileSize).toBe(65536);
     });
 
     it("accepts mid-range value (1072)", () => {
@@ -87,16 +87,16 @@ describe("TileImageInputSchema", () => {
       expect(result.tileSize).toBe(1072);
     });
 
-    it("rejects below minimum (255)", () => {
+    it("rejects below minimum (0)", () => {
       expect(() =>
-        tileImageSchema.parse({ filePath: "test.png", tileSize: 255 })
-      ).toThrow("at least 256");
+        tileImageSchema.parse({ filePath: "test.png", tileSize: 0 })
+      ).toThrow("positive integer");
     });
 
-    it("rejects above maximum (3073)", () => {
+    it("rejects above maximum (65537)", () => {
       expect(() =>
-        tileImageSchema.parse({ filePath: "test.png", tileSize: 3073 })
-      ).toThrow("must not exceed 3072");
+        tileImageSchema.parse({ filePath: "test.png", tileSize: 65537 })
+      ).toThrow("must not exceed 65536");
     });
 
     it("rejects non-integer", () => {

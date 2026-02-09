@@ -1,14 +1,23 @@
 # image-tiler-mcp-server
 
-MCP server that splits large images into optimally-sized tiles for LLM vision processing. Supports Claude, OpenAI, Gemini, and Gemini 3.
+Split large images into optimally-sized tiles so LLM vision models see every detail — no downscaling, no lost text.
 
-## The Problem
+<!-- TODO: Replace with actual demo image showing the tiling process -->
+![Demo: a large screenshot split into a grid of tiles, each analyzed at full resolution](assets/demo-poster.png)
 
-LLM vision systems automatically downscale large images. A full-page screenshot at 3600x21994 pixels gets resized to ~257x1568 by Claude, making text completely unreadable. You lose all the detail you need the model to analyze.
+## Why tiling matters
 
-## The Solution
+LLM vision systems have a **maximum input resolution**. When you send an image larger than that limit, the model silently downscales it before processing. A 3600×21994 full-page screenshot gets shrunk to ~257×1568 by Claude — text becomes unreadable, UI details disappear, and the model can't analyze what it can't see.
 
-This server splits large images into tiles sized for each model's sweet spot. Each tile is processed at full resolution with no downscaling, preserving text, UI elements, and fine detail.
+**Tiling solves this.** This MCP server:
+
+1. Reads the image dimensions and the target model's vision config
+2. Calculates an optimal grid that keeps every tile within the model's sweet spot
+3. Extracts tiles as individual PNGs and saves them to disk
+4. Returns metadata (grid layout, file paths, estimated token cost)
+5. Serves tiles back as base64 in paginated batches for the LLM to analyze
+
+Each tile is processed at **full resolution** — no downscaling — preserving text, UI elements, and fine detail across the entire image.
 
 ### Supported Models
 
@@ -57,6 +66,8 @@ Returns text labels + image content blocks. Includes pagination hint for the nex
 ```bash
 claude mcp add image-tiler -- npx -y image-tiler-mcp-server
 ```
+
+> `image-tiler` is a local alias — you can name it anything you like. `image-tiler-mcp-server` is the npm package that gets downloaded and run.
 
 See [Claude Code MCP docs](https://docs.anthropic.com/en/docs/claude-code/mcp) for more info.
 
