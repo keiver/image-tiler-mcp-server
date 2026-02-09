@@ -2,6 +2,7 @@ import * as path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TileImageInputSchema } from "../schemas/index.js";
 import { tileImage } from "../services/image-processor.js";
+import { generatePreview } from "../services/preview-generator.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS } from "../constants.js";
 
 const TILE_IMAGE_DESCRIPTION = (() => {
@@ -56,7 +57,7 @@ export function registerTileImageTool(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ filePath, model, tileSize, outputDir }) => {
+    async ({ filePath, model, tileSize, outputDir, cleanup }) => {
       try {
         const ext = path.extname(filePath).toLowerCase().replace(".", "");
         if (ext && !SUPPORTED_FORMATS.includes(ext as typeof SUPPORTED_FORMATS[number])) {
@@ -100,12 +101,32 @@ export function registerTileImageTool(server: McpServer): void {
           config.tokensPerTile
         );
 
+        let previewPath: string | undefined;
+        try {
+          previewPath = await generatePreview(result, filePath, model);
+        } catch (previewError) {
+          const msg = previewError instanceof Error ? previewError.message : String(previewError);
+          warnings.push(`Preview generation failed: ${msg}`);
+        }
+
         const summaryLines = [
           `Tiled ${result.sourceImage.width}×${result.sourceImage.height} ${result.sourceImage.format} image for ${config.label}`,
           `→ ${result.grid.cols}×${result.grid.rows} grid = ${result.grid.totalTiles} tiles of ${result.grid.tileSize}px`,
           `→ Estimated tokens: ~${result.grid.estimatedTokens.toLocaleString()} (all tiles, ${config.tokensPerTile}/tile)`,
           `→ Saved to: ${result.outputDir}`,
         ];
+
+        if (previewPath) {
+          summaryLines.push(
+            `→ Preview: preview.html (open in browser to visualize the grid)`
+          );
+        }
+
+        if (cleanup) {
+          summaryLines.push(
+            `→ Tiles will be cleaned up after last batch is served`
+          );
+        }
 
         if (warnings.length > 0) {
           summaryLines.push("");
@@ -134,6 +155,14 @@ export function registerTileImageTool(server: McpServer): void {
             filePath: t.filePath,
           })),
         };
+
+        if (previewPath) {
+          structuredOutput.previewPath = previewPath;
+        }
+
+        if (cleanup) {
+          structuredOutput.cleanup = true;
+        }
 
         if (warnings.length > 0) {
           structuredOutput.warnings = warnings;

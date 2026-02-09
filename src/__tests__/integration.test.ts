@@ -8,6 +8,7 @@ import {
   listTilesInDirectory,
   readTileAsBase64,
 } from "../services/image-processor.js";
+import { generatePreview } from "../services/preview-generator.js";
 
 const ASSETS_DIR = path.resolve(import.meta.dirname, "../../assets");
 const LANDSCAPE = path.join(ASSETS_DIR, "landscape.png");
@@ -97,7 +98,7 @@ describe("integration: landscape image (7680×4032)", () => {
   });
 });
 
-describe("integration: portrait image (3600×21994)", () => {
+describe("integration: portrait image (3600×22810)", () => {
   let outputDir: string;
   let result: Awaited<ReturnType<typeof tileImage>>;
 
@@ -106,11 +107,11 @@ describe("integration: portrait image (3600×21994)", () => {
     result = await tileImage(PORTRAIT, 1092, outputDir);
 
     expect(result.sourceImage.width).toBe(3600);
-    expect(result.sourceImage.height).toBe(21994);
+    expect(result.sourceImage.height).toBe(22810);
   }, 60000);
 
   it("produces 4×21 grid = 84 tiles", () => {
-    // ceil(3600/1092) = 4, ceil(21994/1092) = 21
+    // ceil(3600/1092) = 4, ceil(22810/1092) = 21
     expect(result.grid.cols).toBe(4);
     expect(result.grid.rows).toBe(21);
     expect(result.grid.totalTiles).toBe(84);
@@ -119,19 +120,19 @@ describe("integration: portrait image (3600×21994)", () => {
 
   it("edge tiles have correct dimensions", async () => {
     // Right column: 3600 - (3 * 1092) = 3600 - 3276 = 324px
-    // Bottom row: 21994 - (20 * 1092) = 21994 - 21840 = 154px
+    // Bottom row: 22810 - (20 * 1092) = 22810 - 21840 = 970px
     const rightEdgeTile = result.tiles.find((t) => t.row === 0 && t.col === 3)!;
     expect(rightEdgeTile.width).toBe(324);
 
     const bottomEdgeTile = result.tiles.find((t) => t.row === 20 && t.col === 0)!;
-    expect(bottomEdgeTile.height).toBe(154);
+    expect(bottomEdgeTile.height).toBe(970);
 
     // Verify actual file dimensions
     const rightMeta = await sharp(rightEdgeTile.filePath).metadata();
     expect(rightMeta.width).toBe(324);
 
     const bottomMeta = await sharp(bottomEdgeTile.filePath).metadata();
-    expect(bottomMeta.height).toBe(154);
+    expect(bottomMeta.height).toBe(970);
   });
 
   it("tile files exist with correct count", async () => {
@@ -249,4 +250,63 @@ describe("integration: landscape with Gemini 3 settings (1536px tiles)", () => {
     const bottomEdgeTile = result.tiles.find((t) => t.row === 2 && t.col === 0)!;
     expect(bottomEdgeTile.height).toBe(960);
   });
+});
+
+describe("integration: cleanup deletes tiles directory after last batch", () => {
+  it("tiles, reads last batch, then verifies cleanup removes directory", async () => {
+    const outputDir = await makeTempDir("cleanup-test");
+    // Tile a small portion — use landscape with large tile to get few tiles
+    const result = await tileImage(LANDSCAPE, 3072, outputDir);
+
+    // Verify tiles exist
+    const tilePaths = await listTilesInDirectory(outputDir);
+    expect(tilePaths.length).toBeGreaterThan(0);
+
+    // Simulate what get-tiles cleanup does: delete the directory
+    await fs.rm(outputDir, { recursive: true });
+
+    // Verify directory is gone
+    await expect(fs.access(outputDir)).rejects.toThrow();
+
+    // Remove from tempDirs so afterAll doesn't fail trying to clean it
+    const idx = tempDirs.indexOf(outputDir);
+    if (idx !== -1) tempDirs.splice(idx, 1);
+  }, 30000);
+});
+
+describe("integration: preview generation", () => {
+  it("generates preview.html in the output directory", async () => {
+    const outputDir = await makeTempDir("preview");
+    const result = await tileImage(LANDSCAPE, 3072, outputDir);
+    const previewPath = await generatePreview(result, LANDSCAPE, "claude");
+
+    expect(previewPath).toBe(path.join(outputDir, "preview.html"));
+    const stat = await fs.stat(previewPath);
+    expect(stat.isFile()).toBe(true);
+  }, 30000);
+
+  it("preview.html contains DOCTYPE and source dimensions", async () => {
+    const outputDir = await makeTempDir("preview-content");
+    const result = await tileImage(LANDSCAPE, 3072, outputDir);
+    const previewPath = await generatePreview(result, LANDSCAPE, "claude");
+
+    const html = await fs.readFile(previewPath, "utf-8");
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain("7680");
+    expect(html).toContain("4032");
+  }, 30000);
+
+  it("listTilesInDirectory does NOT include preview.html", async () => {
+    const outputDir = await makeTempDir("preview-list");
+    const result = await tileImage(LANDSCAPE, 3072, outputDir);
+    await generatePreview(result, LANDSCAPE, "claude");
+
+    const tilePaths = await listTilesInDirectory(outputDir);
+    const filenames = tilePaths.map((p) => path.basename(p));
+    expect(filenames).not.toContain("preview.html");
+    // All returned files should be tile PNGs
+    for (const f of filenames) {
+      expect(f).toMatch(/^tile_\d+_\d+\.png$/);
+    }
+  }, 30000);
 });

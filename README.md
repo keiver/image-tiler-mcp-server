@@ -44,6 +44,7 @@ Splits a large image into tiles and saves them to disk.
 | `model` | string | no | `"claude"` | Target vision model: `"claude"`, `"openai"`, `"gemini"`, `"gemini3"` |
 | `tileSize` | number | no | Model default | Tile size in pixels. Clamped to model min/max with a warning if out of bounds. |
 | `outputDir` | string | no | `./tiles` next to source | Directory to save tiles |
+| `cleanup` | boolean | no | `false` | If `true`, tiles directory is deleted after the last batch is served by `tiler_get_tiles` |
 
 Returns JSON metadata with grid dimensions, tile count, model used, estimated token cost, and per-tile file paths.
 
@@ -56,6 +57,7 @@ Returns tile images as base64 in batches of 5 for the LLM to see directly.
 | `tilesDir` | string | yes | — | Path to tiles directory (from `tiler_tile_image`) |
 | `start` | number | no | 0 | Start tile index (0-based, inclusive) |
 | `end` | number | no | start + 4 | End tile index (0-based, inclusive) |
+| `cleanup` | boolean | no | `false` | If `true`, delete tiles directory after serving the last batch |
 
 Returns text labels + image content blocks. Includes pagination hint for the next batch.
 
@@ -181,6 +183,93 @@ Claude will:
 1. Capture full-page screenshot with your browser extension
 2. Ask Claude: _"Tile `/path/to/screencapture-localhost-3000.png` and review all sections"_
 3. Claude pages through tiles automatically, analyzing each batch
+
+## Tile Output Structure
+
+Example: `assets/landscape.png` (7680x4032) tiled with the default Claude config (1092px tiles) produces an 8x4 grid of 32 tiles.
+
+**Grid layout** — tiles are numbered `tile_ROW_COL.png`, extracted left-to-right, top-to-bottom:
+
+```
+ 7680px
+┌──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬────┐
+│ 000_000  │ 000_001  │ 000_002  │ 000_003  │ 000_004  │ 000_005  │ 000_006  │000 │
+│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│_007│ 4032px
+├──────────┼──────────┼──────────┼──────────┼──────────┼──────────┼──────────┤36x │
+│ 001_000  │ 001_001  │ 001_002  │ 001_003  │ 001_004  │ 001_005  │ 001_006  │1092│
+│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│    │
+├──────────┼──────────┼──────────┼──────────┼──────────┼──────────┼──────────┤    │
+│ 002_000  │ 002_001  │ 002_002  │ 002_003  │ 002_004  │ 002_005  │ 002_006  │    │
+│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│ 1092x1092│    │
+├──────────┼──────────┼──────────┼──────────┼──────────┼──────────┼──────────┤    │
+│ 003_000  │ 003_001  │ 003_002  │ 003_003  │ 003_004  │ 003_005  │ 003_006  │003 │
+│ 1092x756 │ 1092x756 │ 1092x756 │ 1092x756 │ 1092x756 │ 1092x756 │ 1092x756 │_007│
+└──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴────┘
+                                                                              36x756
+```
+
+Edge tiles are smaller: the rightmost column is 36px wide (7680 - 7×1092 = 36), and the bottom row is 756px tall (4032 - 3×1092 = 756).
+
+**Output directory:**
+
+```
+assets/landscape-tiles/
+├── tile_000_000.png    # Row 0, Col 0 — 1092x1092
+├── tile_000_001.png    # Row 0, Col 1 — 1092x1092
+├── tile_000_002.png    # ...
+├── ...
+├── tile_000_007.png    # Row 0, Col 7 — 36x1092 (right edge)
+├── tile_001_000.png    # Row 1, Col 0
+├── ...
+├── tile_003_006.png    # Row 3, Col 6 — 1092x756 (bottom edge)
+└── tile_003_007.png    # Row 3, Col 7 — 36x756 (corner)
+```
+
+**JSON metadata** returned by `tiler_tile_image`:
+
+```json
+{
+  "sourceImage": { "width": 7680, "height": 4032, "format": "png" },
+  "grid": {
+    "cols": 8,
+    "rows": 4,
+    "totalTiles": 32,
+    "tileSize": 1092,
+    "estimatedTokens": 50880
+  },
+  "outputDir": "/path/to/assets/landscape-tiles",
+  "tiles": [
+    { "index": 0, "row": 0, "col": 0, "width": 1092, "height": 1092, "filename": "tile_000_000.png" },
+    { "index": 1, "row": 0, "col": 1, "width": 1092, "height": 1092, "filename": "tile_000_001.png" },
+    "... 30 more tiles"
+  ]
+}
+```
+
+### Portrait example
+
+`assets/portrait.png` (3600x22810) tiled with Claude defaults produces a 4x21 grid of 84 tiles (~133,560 tokens).
+
+**Grid layout:**
+
+```
+ 3600px
+┌──────────┬──────────┬──────────┬────┐
+│ 000_000  │ 000_001  │ 000_002  │000 │
+│ 1092x1092│ 1092x1092│ 1092x1092│_003│
+├──────────┼──────────┼──────────┤324x│
+│ 001_000  │ 001_001  │ 001_002  │1092│
+│ 1092x1092│ 1092x1092│ 1092x1092│    │ 22810px
+├──────────┼──────────┼──────────┤    │
+│   ...    │   ...    │   ...    │    │ (21 rows)
+├──────────┼──────────┼──────────┤    │
+│ 020_000  │ 020_001  │ 020_002  │020 │
+│ 1092x970 │ 1092x970 │ 1092x970 │_003│
+└──────────┴──────────┴──────────┴────┘
+                                  324x970
+```
+
+Edge tiles: rightmost column is 324px wide (3600 - 3×1092 = 324), bottom row is 970px tall (22810 - 20×1092 = 970).
 
 ## Token Cost Reference
 

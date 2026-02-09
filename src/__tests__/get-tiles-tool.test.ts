@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const { mockedRm } = vi.hoisted(() => ({
+  mockedRm: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("node:fs/promises", () => ({
+  rm: mockedRm,
+}));
+
 vi.mock("../services/image-processor.js", () => ({
   listTilesInDirectory: vi.fn(),
   readTileAsBase64: vi.fn(),
@@ -32,6 +40,7 @@ describe("registerGetTilesTool", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedRm.mockResolvedValue(undefined);
     mock = createMockServer();
     registerGetTilesTool(mock.server as any);
     mockedReadBase64.mockResolvedValue("AAAA"); // minimal base64
@@ -235,5 +244,55 @@ describe("registerGetTilesTool", () => {
     expect(labels).toHaveLength(1);
     expect(labels[0].text).toContain("row -1");
     expect(labels[0].text).toContain("col -1");
+  });
+
+  describe("cleanup parameter", () => {
+    it("deletes tiles directory on last batch when cleanup=true", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(3));
+      const tool = mock.getTool("tiler_get_tiles")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 2, cleanup: true },
+        {} as any
+      );
+      const res = result as any;
+      expect(mockedRm).toHaveBeenCalledWith(
+        expect.stringContaining("tiles"),
+        { recursive: true }
+      );
+      const cleanupMsg = res.content.find(
+        (c: any) => c.type === "text" && c.text.includes("cleaned up")
+      );
+      expect(cleanupMsg).toBeDefined();
+    });
+
+    it("does not delete tiles directory on non-last batch when cleanup=true", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(10));
+      const tool = mock.getTool("tiler_get_tiles")!;
+      await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 4, cleanup: true },
+        {} as any
+      );
+      expect(mockedRm).not.toHaveBeenCalled();
+    });
+
+    it("does not delete tiles directory when cleanup=false on last batch", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(3));
+      const tool = mock.getTool("tiler_get_tiles")!;
+      await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 2, cleanup: false },
+        {} as any
+      );
+      expect(mockedRm).not.toHaveBeenCalled();
+    });
+
+    it("does not delete tiles directory when cleanup is omitted", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(3));
+      const tool = mock.getTool("tiler_get_tiles")!;
+      await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 2 },
+        {} as any
+      );
+      expect(mockedRm).not.toHaveBeenCalled();
+    });
   });
 });
