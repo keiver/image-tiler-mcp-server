@@ -49,8 +49,8 @@ ${exampleLines}
       inputSchema: TileImageInputSchema,
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
         openWorldHint: false,
       },
     },

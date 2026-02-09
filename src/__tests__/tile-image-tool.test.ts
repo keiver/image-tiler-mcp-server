@@ -373,5 +373,43 @@ describe("registerTileImageTool", () => {
       expect(res.content[0].text).toContain("4000px exceeds");
       expect(res.content[0].text).toContain("clamped to 3072px");
     });
+
+    it("clamps tileSize below claude min (256) with warning", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", tileSize: 100, outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 256, "/out", 1590);
+
+      const res = result as any;
+      expect(res.content[0].text).toContain("100px is below minimum");
+      expect(res.content[0].text).toContain("clamped to 256px");
+
+      const json = JSON.parse(res.content[1].text);
+      expect(json.warnings).toBeDefined();
+      expect(json.warnings).toHaveLength(1);
+      expect(json.warnings[0]).toContain("clamped");
+    });
+
+    it("clamps tileSize below gemini3 min (384) with warning", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "gemini3", tileSize: 300, outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 384, "/out", 1120);
+
+      const res = result as any;
+      expect(res.content[0].text).toContain("300px is below minimum");
+      expect(res.content[0].text).toContain("clamped to 384px");
+
+      const json = JSON.parse(res.content[1].text);
+      expect(json.warnings).toBeDefined();
+      expect(json.warnings).toHaveLength(1);
+      expect(json.warnings[0]).toContain("clamped");
+    });
   });
 });

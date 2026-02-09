@@ -15,11 +15,15 @@ Published as `image-tiler-mcp-server` on npm. This is a **library/tool** (not an
 | Model | Default tile | Tokens/tile | Max tile |
 |-------|-------------|-------------|----------|
 | Claude (default) | 1092px | 1590 | 1568px |
-| OpenAI | 768px | 765 | 2048px |
+| OpenAI (GPT-4o/o-series) | 768px | 765 | 2048px |
 | Gemini | 768px | 258 | 768px |
 | Gemini 3 | 1536px | 1120 | 3072px |
 
 **Memory:** Expect ~350-400MB peak for large PNGs due to Sharp decompression. Token cost: `totalTiles × tokensPerTile` (model-specific).
+
+**OpenAI pipeline scope:** The `openai` model config targets the GPT-4o / o-series vision pipeline (512px tile patches). GPT-4.1 uses a fundamentally different pipeline (32x32 pixel patches) and would require a separate model config entry if support is desired.
+
+**Gemini 3 trade-off:** Gemini 3 uses a fixed token budget per image (1120 tokens regardless of dimensions), unlike the area/tile-based formulas of other models. Tiling a large image into N pieces costs N × 1120 tokens, which *increases* total cost compared to sending a single image. The trade-off is more tiles = more tokens but better detail preservation. For cases where fine detail isn't critical, consider sending a single image to Gemini 3 instead of tiling.
 
 ## Commands
 

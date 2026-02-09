@@ -204,4 +204,36 @@ describe("registerGetTilesTool", () => {
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain("end index (5) must be >= start index (10)");
   });
+
+  it("returns 5 tiles from non-zero start when end is undefined", async () => {
+    mockedListTiles.mockResolvedValue(makeTilePaths(20));
+    const tool = mock.getTool("tiler_get_tiles")!;
+    const result = await tool.handler(
+      { tilesDir: "/tiles", start: 15, end: undefined },
+      {} as any
+    );
+    const res = result as any;
+    const imageBlocks = res.content.filter((c: any) => c.type === "image");
+    expect(imageBlocks).toHaveLength(5); // tiles 15-19
+    expect(res.content[0].text).toContain("tiles 15-19 of 20 total");
+  });
+
+  it("handles malformed tile filename with row=-1, col=-1", async () => {
+    mockedListTiles.mockResolvedValue([
+      "/tiles/tile_000_000.png",
+      "/tiles/corrupted_file.png",
+    ]);
+    const tool = mock.getTool("tiler_get_tiles")!;
+    const result = await tool.handler(
+      { tilesDir: "/tiles", start: 1, end: 1 },
+      {} as any
+    );
+    const res = result as any;
+    const labels = res.content.filter(
+      (c: any) => c.type === "text" && c.text.includes("Tile 1")
+    );
+    expect(labels).toHaveLength(1);
+    expect(labels[0].text).toContain("row -1");
+    expect(labels[0].text).toContain("col -1");
+  });
 });

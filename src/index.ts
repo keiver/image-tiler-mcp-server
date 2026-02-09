@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerTileImageTool } from "./tools/tile-image.js";
 import { registerGetTilesTool } from "./tools/get-tiles.js";
 
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json") as { version: string };
+
 const server = new McpServer({
   name: "image-tiler-mcp-server",
-  version: "1.0.0",
+  version,
 });
 
 registerTileImageTool(server);

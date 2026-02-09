@@ -1,7 +1,7 @@
 {
   "name": "image-tiler-mcp-server",
-  "version": "1.0.0",
-  "description": "MCP server that splits large screenshots into Claude-optimized 1072x1072 tiles for LLM vision processing",
+  "version": "1.1.2",
+  "description": "MCP server that splits large images into optimally-sized tiles for LLM vision (Claude, OpenAI, Gemini, Gemini 3)",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

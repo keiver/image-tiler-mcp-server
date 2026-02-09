@@ -7,8 +7,10 @@ import {
   MODEL_CONFIGS,
 } from "../constants.js";
 
-// Global max across all models (gemini3 allows up to 3072)
-const GLOBAL_MAX_TILE_SIZE = 3072;
+// Global max across all models — derived so adding a model auto-updates the bound
+const GLOBAL_MAX_TILE_SIZE = Math.max(
+  ...Object.values(MODEL_CONFIGS).map((c) => c.maxTileSize)
+);
 
 const modelDescriptions = VISION_MODELS.map(
   (m) => `"${m}" (${MODEL_CONFIGS[m].defaultTileSize}px tiles, ~${MODEL_CONFIGS[m].tokensPerTile} tokens/tile)`
