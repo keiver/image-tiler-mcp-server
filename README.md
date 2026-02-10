@@ -20,9 +20,11 @@ LLM vision systems have a **maximum input resolution**. When you send an image l
 
 Each tile is processed at **full resolution** — no downscaling — preserving text, UI elements, and fine detail across the entire image.
 
+See [sample of generated tiles here.](https://github.com/keiver/image-tiler-mcp-server/tree/main/assets/tiles/)
+
 ### Supported Models
 
-| Model | Default tile | Tokens/tile | Max tile | Key |
+| Model | Default tile | Tokens/tile | Max tile | ID |
 |-------|-------------|-------------|----------|-----|
 | Claude (default) | 1092px | 1590 | 1568px | `claude` |
 | OpenAI (GPT-4o/o-series) | 768px | 765 | 2048px | `openai` |
