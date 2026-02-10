@@ -121,22 +121,6 @@ describe("TileImageInputSchema", () => {
     });
   });
 
-  describe("cleanup", () => {
-    it("defaults to false when omitted", () => {
-      const result = tileImageSchema.parse({ filePath: "test.png" });
-      expect(result.cleanup).toBe(false);
-    });
-
-    it("accepts explicit true", () => {
-      const result = tileImageSchema.parse({ filePath: "test.png", cleanup: true });
-      expect(result.cleanup).toBe(true);
-    });
-
-    it("accepts explicit false", () => {
-      const result = tileImageSchema.parse({ filePath: "test.png", cleanup: false });
-      expect(result.cleanup).toBe(false);
-    });
-  });
 });
 
 describe("GetTilesInputSchema", () => {
@@ -193,20 +177,4 @@ describe("GetTilesInputSchema", () => {
     });
   });
 
-  describe("cleanup", () => {
-    it("defaults to false when omitted", () => {
-      const result = getTilesSchema.parse({ tilesDir: "/tiles" });
-      expect(result.cleanup).toBe(false);
-    });
-
-    it("accepts explicit true", () => {
-      const result = getTilesSchema.parse({ tilesDir: "/tiles", cleanup: true });
-      expect(result.cleanup).toBe(true);
-    });
-
-    it("accepts explicit false", () => {
-      const result = getTilesSchema.parse({ tilesDir: "/tiles", cleanup: false });
-      expect(result.cleanup).toBe(false);
-    });
-  });
 });

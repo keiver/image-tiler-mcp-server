@@ -282,54 +282,6 @@ describe("registerTileImageTool", () => {
     });
   });
 
-  describe("cleanup parameter", () => {
-    it("includes cleanup in structured output when true", async () => {
-      mockedTileImage.mockResolvedValue(makeTileResult());
-      const tool = mock.getTool("tiler_tile_image")!;
-      const result = await tool.handler(
-        { filePath: "image.png", model: "claude", tileSize: undefined, outputDir: "/out", cleanup: true },
-        {} as any
-      );
-      const res = result as any;
-      const json = JSON.parse(res.content[1].text);
-      expect(json.cleanup).toBe(true);
-    });
-
-    it("omits cleanup from structured output when false", async () => {
-      mockedTileImage.mockResolvedValue(makeTileResult());
-      const tool = mock.getTool("tiler_tile_image")!;
-      const result = await tool.handler(
-        { filePath: "image.png", model: "claude", tileSize: undefined, outputDir: "/out", cleanup: false },
-        {} as any
-      );
-      const res = result as any;
-      const json = JSON.parse(res.content[1].text);
-      expect(json.cleanup).toBeUndefined();
-    });
-
-    it("summary mentions cleanup when true", async () => {
-      mockedTileImage.mockResolvedValue(makeTileResult());
-      const tool = mock.getTool("tiler_tile_image")!;
-      const result = await tool.handler(
-        { filePath: "image.png", model: "claude", tileSize: undefined, outputDir: "/out", cleanup: true },
-        {} as any
-      );
-      const res = result as any;
-      expect(res.content[0].text).toContain("cleaned up after last batch");
-    });
-
-    it("summary does not mention cleanup when false", async () => {
-      mockedTileImage.mockResolvedValue(makeTileResult());
-      const tool = mock.getTool("tiler_tile_image")!;
-      const result = await tool.handler(
-        { filePath: "image.png", model: "claude", tileSize: undefined, outputDir: "/out", cleanup: false },
-        {} as any
-      );
-      const res = result as any;
-      expect(res.content[0].text).not.toContain("cleaned up");
-    });
-  });
-
   describe("tile size clamping", () => {
     it("clamps tileSize above claude max (1568) with warning", async () => {
       mockedTileImage.mockResolvedValue(makeTileResult());

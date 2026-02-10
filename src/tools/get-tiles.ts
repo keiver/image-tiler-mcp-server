@@ -1,5 +1,4 @@
 import * as path from "node:path";
-import * as fs from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GetTilesInputSchema } from "../schemas/index.js";
 import {
@@ -21,8 +20,6 @@ Args:
   - tilesDir (string, required): Path to the tiles directory (from tiler_tile_image output)
   - start (number, optional): Start tile index, 0-based inclusive (default: 0)
   - end (number, optional): End tile index, 0-based inclusive (default: start + ${MAX_TILES_PER_BATCH - 1})
-  - cleanup (boolean, optional): If true, delete the tiles directory after serving the last batch (default: false)
-
 Returns:
   A text summary followed by image content blocks for each tile in the requested range.
   Each image is labeled with its tile index and grid position.
@@ -35,13 +32,13 @@ Pagination example for 21 tiles:
   5. tiler_get_tiles(tilesDir="...", start=20, end=20)  → tile 20`,
       inputSchema: GetTilesInputSchema,
       annotations: {
-        readOnlyHint: false,
+        readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
       },
     },
-    async ({ tilesDir, start, end, cleanup }) => {
+    async ({ tilesDir, start, end }) => {
       try {
         if (end !== undefined && end < start) {
           return {
@@ -119,15 +116,6 @@ Pagination example for 21 tiles:
             type: "image" as const,
             data: base64Data,
             mimeType: "image/png",
-          });
-        }
-
-        if (cleanup && effectiveEnd >= totalTiles - 1) {
-          const resolvedDir = path.resolve(tilesDir);
-          await fs.rm(resolvedDir, { recursive: true });
-          content.push({
-            type: "text" as const,
-            text: "Tiles directory cleaned up.",
           });
         }
 

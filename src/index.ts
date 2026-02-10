@@ -23,6 +23,14 @@ async function runStdio(): Promise<void> {
   console.error("image-tiler-mcp-server running on stdio");
 }
 
+async function shutdown(): Promise<void> {
+  await server.close();
+  process.exit(0);
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
 runStdio().catch((error: unknown) => {
   console.error("Server error:", error);
   process.exit(1);

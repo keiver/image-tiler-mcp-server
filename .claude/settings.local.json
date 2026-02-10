@@ -10,7 +10,8 @@
       "WebFetch(domain:docs.cloud.google.com)",
       "WebFetch(domain:community.openai.com)",
       "WebFetch(domain:openai-hd4n6.mintlify.app)",
-      "Bash(node -e:*)"
+      "Bash(node -e:*)",
+      "Bash(npm ls:*)"
     ]
   }
 }

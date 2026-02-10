@@ -252,28 +252,6 @@ describe("integration: landscape with Gemini 3 settings (1536px tiles)", () => {
   });
 });
 
-describe("integration: cleanup deletes tiles directory after last batch", () => {
-  it("tiles, reads last batch, then verifies cleanup removes directory", async () => {
-    const outputDir = await makeTempDir("cleanup-test");
-    // Tile a small portion — use landscape with large tile to get few tiles
-    const result = await tileImage(LANDSCAPE, 3072, outputDir);
-
-    // Verify tiles exist
-    const tilePaths = await listTilesInDirectory(outputDir);
-    expect(tilePaths.length).toBeGreaterThan(0);
-
-    // Simulate what get-tiles cleanup does: delete the directory
-    await fs.rm(outputDir, { recursive: true });
-
-    // Verify directory is gone
-    await expect(fs.access(outputDir)).rejects.toThrow();
-
-    // Remove from tempDirs so afterAll doesn't fail trying to clean it
-    const idx = tempDirs.indexOf(outputDir);
-    if (idx !== -1) tempDirs.splice(idx, 1);
-  }, 30000);
-});
-
 describe("integration: preview generation", () => {
   it("generates preview.html in the output directory", async () => {
     const outputDir = await makeTempDir("preview");

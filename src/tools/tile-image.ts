@@ -57,7 +57,7 @@ export function registerTileImageTool(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ filePath, model, tileSize, outputDir, cleanup }) => {
+    async ({ filePath, model, tileSize, outputDir }) => {
       try {
         const ext = path.extname(filePath).toLowerCase().replace(".", "");
         if (ext && !SUPPORTED_FORMATS.includes(ext as typeof SUPPORTED_FORMATS[number])) {
@@ -123,12 +123,6 @@ export function registerTileImageTool(server: McpServer): void {
           );
         }
 
-        if (cleanup) {
-          summaryLines.push(
-            `→ Tiles will be cleaned up after last batch is served`
-          );
-        }
-
         if (warnings.length > 0) {
           summaryLines.push("");
           summaryLines.push(`⚠ ${warnings.join("\n⚠ ")}`);
@@ -159,10 +153,6 @@ export function registerTileImageTool(server: McpServer): void {
 
         if (previewPath) {
           structuredOutput.previewPath = previewPath;
-        }
-
-        if (cleanup) {
-          structuredOutput.cleanup = true;
         }
 
         if (warnings.length > 0) {

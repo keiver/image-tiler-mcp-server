@@ -44,12 +44,6 @@ export const TileImageInputSchema = {
     .describe(
       "Directory to save tiles. Defaults to a 'tiles' subfolder next to the source image"
     ),
-  cleanup: z
-    .boolean()
-    .default(false)
-    .describe(
-      "If true, tiles directory will be deleted after the last batch is served by tiler_get_tiles. Default: false (tiles persist on disk)."
-    ),
 };
 
 export const GetTilesInputSchema = {
@@ -72,11 +66,5 @@ export const GetTilesInputSchema = {
     .optional()
     .describe(
       `End tile index (0-based, inclusive). Defaults to start + ${MAX_TILES_PER_BATCH - 1}. Max ${MAX_TILES_PER_BATCH} tiles per batch to stay within MCP response limits`
-    ),
-  cleanup: z
-    .boolean()
-    .default(false)
-    .describe(
-      "If true, delete the tiles directory after serving the last batch. Passed from tiler_tile_image metadata."
     ),
 };
