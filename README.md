@@ -3,7 +3,7 @@
 Split large images into optimally-sized tiles so LLM vision models see every detail — no downscaling, no lost text.
 
 <p align="center">
-  <img src="assets/preview.webp" alt="Preview of image tiling grid" width="100%"/>
+  <img src="assets/preview.webp" alt="Preview of image tiling grid for veguitas.com" width="100%" />
 </p>
 
 ## Why tiling matters
