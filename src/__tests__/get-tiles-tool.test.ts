@@ -236,4 +236,5 @@ describe("registerGetTilesTool", () => {
     expect(labels[0].text).toContain("row -1");
     expect(labels[0].text).toContain("col -1");
   });
+
 });

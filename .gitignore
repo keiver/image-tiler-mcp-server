@@ -1,3 +1,8 @@
 node_modules/
 dist/
 *.tgz
+assets/tiles/
+coverage/
+.DS_Store
+*.log
+.claude

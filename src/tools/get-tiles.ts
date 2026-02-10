@@ -20,7 +20,6 @@ Args:
   - tilesDir (string, required): Path to the tiles directory (from tiler_tile_image output)
   - start (number, optional): Start tile index, 0-based inclusive (default: 0)
   - end (number, optional): End tile index, 0-based inclusive (default: start + ${MAX_TILES_PER_BATCH - 1})
-
 Returns:
   A text summary followed by image content blocks for each tile in the requested range.
   Each image is labeled with its tile index and grid position.

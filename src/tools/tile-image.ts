@@ -2,29 +2,25 @@ import * as path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TileImageInputSchema } from "../schemas/index.js";
 import { tileImage } from "../services/image-processor.js";
+import { generatePreview } from "../services/preview-generator.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS } from "../constants.js";
 
-export function registerTileImageTool(server: McpServer): void {
-  server.registerTool(
-    "tiler_tile_image",
-    {
-      title: "Tile Image for LLM Vision",
-      description: (() => {
-        const modelLines = VISION_MODELS.map((m) => {
-          const c = MODEL_CONFIGS[m];
-          const isDefault = m === DEFAULT_MODEL ? " (default)" : "";
-          return `  - "${m}"${isDefault}: ${c.defaultTileSize}px tiles, ~${c.tokensPerTile} tokens/tile`;
-        }).join("\n");
-        const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
-        const exampleLines = VISION_MODELS.filter((m) => m !== DEFAULT_MODEL).map(
-          (m) => `  - Tile for ${MODEL_CONFIGS[m].label}: filePath="/path/to/image.png", model="${m}"`
-        ).join("\n");
-        return `Split a large image into optimally-sized tiles for LLM vision analysis.
+const TILE_IMAGE_DESCRIPTION = (() => {
+  const modelLines = VISION_MODELS.map((m) => {
+    const c = MODEL_CONFIGS[m];
+    const isDefault = m === DEFAULT_MODEL ? " (default)" : "";
+    return `  - "${m}"${isDefault}: ${c.defaultTileSize}px tiles, ~${c.tokensPerTile} tokens/tile`;
+  }).join("\n");
+  const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
+  const exampleLines = VISION_MODELS.filter((m) => m !== DEFAULT_MODEL).map(
+    (m) => `  - Tile for ${MODEL_CONFIGS[m].label}: filePath="/path/to/image.png", model="${m}"`
+  ).join("\n");
+  return `Split a large image into optimally-sized tiles for LLM vision analysis.
 
 Supports ${VISION_MODELS.length} vision models via the "model" parameter:
 ${modelLines}
 
-Tiles are saved as PNG files to a 'tiles' subfolder next to the source image (or a custom output directory).
+Tiles are saved as PNG files to a 'tiles/{name}' subfolder next to the source image (or a custom output directory).
 
 Supported formats: ${SUPPORTED_FORMATS.join(", ")}
 
@@ -45,12 +41,19 @@ Examples:
 ${exampleLines}
   - Custom tile size: filePath="/path/to/image.png", tileSize=800
   - Custom output: filePath="/path/to/image.png", outputDir="/tmp/my-tiles"`;
-      })(),
+})();
+
+export function registerTileImageTool(server: McpServer): void {
+  server.registerTool(
+    "tiler_tile_image",
+    {
+      title: "Tile Image for LLM Vision",
+      description: TILE_IMAGE_DESCRIPTION,
       inputSchema: TileImageInputSchema,
       annotations: {
         readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
     },
@@ -88,8 +91,9 @@ ${exampleLines}
           effectiveTileSize = config.minTileSize;
         }
 
+        const basename = path.basename(filePath, path.extname(filePath));
         const resolvedOutputDir =
-          outputDir || path.join(path.dirname(path.resolve(filePath)), "tiles");
+          outputDir || path.join(path.dirname(path.resolve(filePath)), "tiles", basename);
 
         const result = await tileImage(
           filePath,
@@ -98,12 +102,26 @@ ${exampleLines}
           config.tokensPerTile
         );
 
+        let previewPath: string | undefined;
+        try {
+          previewPath = await generatePreview(result, filePath, model);
+        } catch (previewError) {
+          const msg = previewError instanceof Error ? previewError.message : String(previewError);
+          warnings.push(`Preview generation failed: ${msg}`);
+        }
+
         const summaryLines = [
           `Tiled ${result.sourceImage.width}×${result.sourceImage.height} ${result.sourceImage.format} image for ${config.label}`,
           `→ ${result.grid.cols}×${result.grid.rows} grid = ${result.grid.totalTiles} tiles of ${result.grid.tileSize}px`,
           `→ Estimated tokens: ~${result.grid.estimatedTokens.toLocaleString()} (all tiles, ${config.tokensPerTile}/tile)`,
           `→ Saved to: ${result.outputDir}`,
         ];
+
+        if (previewPath) {
+          summaryLines.push(
+            `→ Preview: preview.html (open in browser to visualize the grid)`
+          );
+        }
 
         if (warnings.length > 0) {
           summaryLines.push("");
@@ -132,6 +150,10 @@ ${exampleLines}
             filePath: t.filePath,
           })),
         };
+
+        if (previewPath) {
+          structuredOutput.previewPath = previewPath;
+        }
 
         if (warnings.length > 0) {
           structuredOutput.warnings = warnings;

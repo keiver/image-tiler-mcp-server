@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { TileImageResult } from "../types.js";
 
@@ -5,11 +6,17 @@ vi.mock("../services/image-processor.js", () => ({
   tileImage: vi.fn(),
 }));
 
+vi.mock("../services/preview-generator.js", () => ({
+  generatePreview: vi.fn(),
+}));
+
 import { tileImage } from "../services/image-processor.js";
+import { generatePreview } from "../services/preview-generator.js";
 import { registerTileImageTool } from "../tools/tile-image.js";
 import { createMockServer } from "./helpers/mock-server.js";
 
 const mockedTileImage = vi.mocked(tileImage);
+const mockedGeneratePreview = vi.mocked(generatePreview);
 
 function makeTileResult(overrides?: Partial<TileImageResult>): TileImageResult {
   return {
@@ -43,6 +50,7 @@ describe("registerTileImageTool", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedGeneratePreview.mockResolvedValue("/output/tiles/preview.html");
     mock = createMockServer();
     registerTileImageTool(mock.server as any);
   });
@@ -88,7 +96,7 @@ describe("registerTileImageTool", () => {
     expect(mockedTileImage).toHaveBeenCalledWith(
       "/images/photo.png",
       1092,
-      expect.stringContaining("tiles"),
+      expect.stringContaining(path.join("tiles", "photo")),
       1590
     );
   });
@@ -410,6 +418,80 @@ describe("registerTileImageTool", () => {
       expect(json.warnings).toBeDefined();
       expect(json.warnings).toHaveLength(1);
       expect(json.warnings[0]).toContain("clamped");
+    });
+  });
+
+  describe("preview generation", () => {
+    it("includes previewPath in structured JSON when preview succeeds", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      mockedGeneratePreview.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", tileSize: undefined, outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      const json = JSON.parse(res.content[1].text);
+      expect(json.previewPath).toBe("/output/tiles/preview.html");
+    });
+
+    it("summary mentions preview when generation succeeds", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      mockedGeneratePreview.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", tileSize: undefined, outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.content[0].text).toContain("preview.html");
+      expect(res.content[0].text).toContain("open in browser");
+    });
+
+    it("tiling succeeds when preview generation throws", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      mockedGeneratePreview.mockRejectedValue(new Error("Write permission denied"));
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", tileSize: undefined, outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      // Should NOT be an error response
+      expect(res.isError).toBeUndefined();
+      // Should still have summary and JSON
+      expect(res.content).toHaveLength(2);
+      // Should NOT have previewPath in JSON
+      const json = JSON.parse(res.content[1].text);
+      expect(json.previewPath).toBeUndefined();
+      // Should have warning about preview failure
+      expect(json.warnings).toBeDefined();
+      expect(json.warnings).toContainEqual(expect.stringContaining("Preview generation failed"));
+      expect(json.warnings).toContainEqual(expect.stringContaining("Write permission denied"));
+    });
+
+    it("summary does not mention preview when generation fails", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      mockedGeneratePreview.mockRejectedValue(new Error("fail"));
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", tileSize: undefined, outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.content[0].text).not.toContain("Preview: preview.html");
+    });
+
+    it("calls generatePreview with correct arguments", async () => {
+      const tileResult = makeTileResult();
+      mockedTileImage.mockResolvedValue(tileResult);
+      mockedGeneratePreview.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { filePath: "image.png", model: "openai", tileSize: 768, outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedGeneratePreview).toHaveBeenCalledWith(tileResult, "image.png", "openai");
     });
   });
 });

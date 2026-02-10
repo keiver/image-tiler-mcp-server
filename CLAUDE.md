@@ -44,7 +44,7 @@ No linter is configured.
 
 **Two MCP tools registered:**
 
-1. **`tiler_tile_image`** (`src/tools/tile-image.ts`) — Takes an image path and optional `model` param (`"claude"` | `"openai"` | `"gemini"` | `"gemini3"`), splits it into a grid of PNG tiles saved to disk. Returns JSON metadata (grid dimensions, model-specific token estimate, file paths).
+1. **`tiler_tile_image`** (`src/tools/tile-image.ts`) — Takes an image path and optional `model` param (`"claude"` | `"openai"` | `"gemini"` | `"gemini3"`), splits it into a grid of PNG tiles saved to `tiles/{name}/` next to the source image (or a custom output directory). Returns JSON metadata (model, grid dimensions, token estimate, file paths, preview path) and generates an interactive HTML preview of the tile grid.
 
 2. **`tiler_get_tiles`** (`src/tools/get-tiles.ts`) — Reads tiles from disk and returns them as base64 image content blocks in batches of 5. Supports pagination via `start`/`end` indices.
 
@@ -52,6 +52,7 @@ No linter is configured.
 
 - `src/tools/` — Tool registration and MCP response formatting. Each file exports a `register*Tool(server)` function.
 - `src/services/image-processor.ts` — All Sharp image operations: metadata reading, grid calculation, tile extraction, base64 encoding, directory listing.
+- `src/services/preview-generator.ts` — Generates an interactive HTML preview (`preview.html`) visualizing the tile grid layout with overlay annotations.
 - `src/schemas/index.ts` — Zod input schemas for both tools. Shared by tool registration and type inference.
 - `src/types.ts` — TypeScript interfaces (`ImageMetadata`, `TileGridInfo`, `TileInfo`, `TileImageResult`).
 - `src/constants.ts` — Model vision configs (`MODEL_CONFIGS` keyed by `"claude" | "openai" | "gemini" | "gemini3"`), per-model tile sizes and token rates, backward-compatible aliases (`DEFAULT_TILE_SIZE`, `MAX_TILE_SIZE`, etc. point to Claude config), batch limit (5), PNG compression level (6).
@@ -79,7 +80,8 @@ No linter is configured.
 - `image-processor.test.ts` — Core logic with mocked Sharp + fs (calculateGrid, tileImage, readTileAsBase64, listTilesInDirectory)
 - `tile-image-tool.test.ts` — Tool handler: format validation, response formatting, error wrapping
 - `get-tiles-tool.test.ts` — Tool handler: pagination, batch limits, content block structure
-- `integration.test.ts` — Real Sharp + real filesystem using `assets/landscape.png` (7680×4032) and `assets/portrait.png` (3600×21994)
+- `preview-generator.test.ts` — Preview HTML generation: template rendering, file writing, error handling
+- `integration.test.ts` — Real Sharp + real filesystem using `assets/landscape.png` (7680×4032) and `assets/portrait.png` (3600×22810)
 
 **Mocking strategy:** Unit tests mock Sharp (via `vi.hoisted` + `vi.mock`) and `node:fs/promises`. Tool handler tests mock the entire service layer. Integration tests use no mocks.
 
