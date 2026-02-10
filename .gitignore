@@ -5,3 +5,4 @@ assets/tiles/
 coverage/
 .DS_Store
 *.log
+.claude
