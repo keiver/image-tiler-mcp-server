@@ -44,7 +44,7 @@ No linter is configured.
 
 **Two MCP tools registered:**
 
-1. **`tiler_tile_image`** (`src/tools/tile-image.ts`) — Takes an image path and optional `model` param (`"claude"` | `"openai"` | `"gemini"` | `"gemini3"`), splits it into a grid of PNG tiles saved to `tiles/{name}/` next to the source image (or a custom output directory). Returns JSON metadata (model, grid dimensions, token estimate, file paths, preview path) and generates an interactive HTML preview of the tile grid.
+1. **`tiler_tile_image`** (`src/tools/tile-image.ts`) — Takes an image path and optional `model` param (`"claude"` | `"openai"` | `"gemini"` | `"gemini3"`), splits it into a grid of PNG tiles saved to `tiles/{name}/` next to the source image (or a custom output directory). `maxDimension` param (default: 10000px) auto-downscales images so the longest side fits within the given px value before tiling, reducing tile count and token cost. Set `maxDimension=0` to disable auto-downscaling. Returns JSON metadata (model, grid dimensions, token estimate, file paths, preview path, optional resize info) and generates an interactive HTML preview of the tile grid.
 
 2. **`tiler_get_tiles`** (`src/tools/get-tiles.ts`) — Reads tiles from disk and returns them as base64 image content blocks in batches of 5. Supports pagination via `start`/`end` indices.
 

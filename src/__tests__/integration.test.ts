@@ -252,6 +252,92 @@ describe("integration: landscape with Gemini 3 settings (1536px tiles)", () => {
   });
 });
 
+describe("integration: landscape with maxDimension=2000", () => {
+  let outputDir: string;
+  let result: Awaited<ReturnType<typeof tileImage>>;
+
+  it("downscales and tiles the landscape image", async () => {
+    outputDir = await makeTempDir("landscape-maxdim");
+    result = await tileImage(LANDSCAPE, 1092, outputDir, 1590, 2000);
+
+    // Original is 7680×4032, longest side is 7680
+    // scaleFactor = 2000/7680 ≈ 0.260
+    expect(result.resize).toBeDefined();
+    expect(result.resize!.originalWidth).toBe(7680);
+    expect(result.resize!.originalHeight).toBe(4032);
+    expect(result.resize!.resizedWidth).toBeLessThanOrEqual(2000);
+    expect(result.resize!.resizedHeight).toBeLessThanOrEqual(2000);
+    expect(result.resize!.scaleFactor).toBeGreaterThan(0);
+    expect(result.resize!.scaleFactor).toBeLessThan(1);
+  }, 30000);
+
+  it("tiles at the resized dimensions, not original", () => {
+    expect(result.sourceImage.width).toBe(result.resize!.resizedWidth);
+    expect(result.sourceImage.height).toBe(result.resize!.resizedHeight);
+  });
+
+  it("produces fewer tiles than without maxDimension", () => {
+    // Without maxDimension, 7680×4032 at 1092 → 8×4 = 32 tiles
+    // With maxDimension=2000, ~2000×1052 at 1092 → 2×1 = 2 tiles
+    expect(result.grid.totalTiles).toBeLessThan(32);
+  });
+
+  it("tile files exist on disk", async () => {
+    const files = await fs.readdir(outputDir);
+    const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".png"));
+    expect(tileFiles).toHaveLength(result.grid.totalTiles);
+  });
+
+  it("temp resized file is cleaned up", async () => {
+    const files = await fs.readdir(outputDir);
+    const resizedFiles = files.filter((f) => f.startsWith("__resized"));
+    expect(resizedFiles).toHaveLength(0);
+  });
+
+  it("tiles are valid PNGs with correct dimensions via Sharp", async () => {
+    const firstTile = result.tiles[0];
+    const meta = await sharp(firstTile.filePath).metadata();
+    expect(meta.width).toBe(firstTile.width);
+    expect(meta.height).toBe(firstTile.height);
+    expect(meta.format).toBe("png");
+  });
+});
+
+describe("integration: small image with maxDimension (no-op)", () => {
+  it("does not resize when image is already within maxDimension", async () => {
+    const outputDir = await makeTempDir("small-maxdim");
+    // landscape.png is 7680×4032, use maxDimension=10000 which exceeds longest side
+    const result = await tileImage(LANDSCAPE, 1092, outputDir, 1590, 10000);
+
+    expect(result.resize).toBeUndefined();
+    expect(result.sourceImage.width).toBe(7680);
+    expect(result.sourceImage.height).toBe(4032);
+  }, 30000);
+});
+
+describe("integration: portrait with maxDimension=1092", () => {
+  it("dramatically reduces tiles for long-scroll image", async () => {
+    const outputDir = await makeTempDir("portrait-maxdim");
+    // portrait.png is 3600×22810
+    // Without maxDimension: 4×21 = 84 tiles
+    const result = await tileImage(PORTRAIT, 1092, outputDir, 1590, 1092);
+
+    expect(result.resize).toBeDefined();
+    expect(result.resize!.originalWidth).toBe(3600);
+    expect(result.resize!.originalHeight).toBe(22810);
+    // Longest side is 22810, scaleFactor = 1092/22810 ≈ 0.048
+    expect(result.resize!.resizedHeight).toBeLessThanOrEqual(1092);
+    // With such aggressive resize, should be 1×1 grid
+    expect(result.grid.totalTiles).toBeLessThanOrEqual(4);
+    expect(result.grid.totalTiles).toBeLessThan(84);
+
+    // Verify temp file cleanup
+    const files = await fs.readdir(outputDir);
+    const resizedFiles = files.filter((f) => f.startsWith("__resized"));
+    expect(resizedFiles).toHaveLength(0);
+  }, 60000);
+});
+
 describe("integration: preview generation", () => {
   it("generates preview.html in the output directory", async () => {
     const outputDir = await makeTempDir("preview");

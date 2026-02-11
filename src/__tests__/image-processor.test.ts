@@ -3,15 +3,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const {
   mockExtract,
   mockMetadata,
+  mockResize,
   mockSharp,
 } = vi.hoisted(() => {
   const mockToFile = vi.fn().mockResolvedValue({});
   const mockPng = vi.fn().mockReturnValue({ toFile: mockToFile });
   const mockExtract = vi.fn().mockReturnValue({ png: mockPng });
+  const mockResize = vi.fn().mockReturnValue({ png: mockPng });
   const mockMetadata = vi.fn();
   const mockSharpInstance = {
     metadata: mockMetadata,
     extract: mockExtract,
+    resize: mockResize,
     png: mockPng,
     toFile: mockToFile,
   };
@@ -22,7 +25,7 @@ const {
       concurrency: vi.fn(),
     }
   );
-  return { mockToFile, mockPng, mockExtract, mockMetadata, mockSharp };
+  return { mockToFile, mockPng, mockExtract, mockResize, mockMetadata, mockSharp };
 });
 
 vi.mock("sharp", () => ({ default: mockSharp }));
@@ -40,6 +43,7 @@ import * as fs from "node:fs/promises";
 import {
   getImageMetadata,
   calculateGrid,
+  resizeImage,
   tileImage,
   readTileAsBase64,
   listTilesInDirectory,
@@ -544,5 +548,210 @@ describe("listTilesInDirectory", () => {
 
     const result = await listTilesInDirectory("/tiles");
     expect(result[0]).toMatch(/\/tiles\/tile_000_000\.png$/);
+  });
+});
+
+describe("resizeImage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns null when image is already within maxDimension", async () => {
+    mockMetadata.mockResolvedValue({ width: 1000, height: 800 });
+
+    const result = await resizeImage("/test/image.png", 2000, "/output/__resized.png");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when image is exactly at maxDimension", async () => {
+    mockMetadata.mockResolvedValue({ width: 2000, height: 1500 });
+
+    const result = await resizeImage("/test/image.png", 2000, "/output/__resized.png");
+    expect(result).toBeNull();
+  });
+
+  it("resizes landscape image by longest side (width)", async () => {
+    mockMetadata.mockResolvedValue({ width: 4000, height: 2000 });
+
+    const result = await resizeImage("/test/image.png", 2000, "/output/__resized.png");
+    expect(result).not.toBeNull();
+    expect(result!.originalWidth).toBe(4000);
+    expect(result!.originalHeight).toBe(2000);
+    expect(result!.resizedWidth).toBe(2000);
+    expect(result!.resizedHeight).toBe(1000);
+    expect(result!.scaleFactor).toBe(0.5);
+  });
+
+  it("resizes portrait image by longest side (height)", async () => {
+    mockMetadata.mockResolvedValue({ width: 1800, height: 22810 });
+
+    const result = await resizeImage("/test/image.png", 2000, "/output/__resized.png");
+    expect(result).not.toBeNull();
+    expect(result!.originalWidth).toBe(1800);
+    expect(result!.originalHeight).toBe(22810);
+    // scaleFactor = 2000/22810 ≈ 0.088
+    expect(result!.resizedWidth).toBe(Math.round(1800 * (2000 / 22810)));
+    expect(result!.resizedHeight).toBe(Math.round(22810 * (2000 / 22810)));
+    expect(result!.scaleFactor).toBe(Math.round((2000 / 22810) * 1000) / 1000);
+  });
+
+  it("calls sharp resize with fit:inside and withoutEnlargement:true", async () => {
+    mockMetadata.mockResolvedValue({ width: 4000, height: 2000 });
+
+    await resizeImage("/test/image.png", 2000, "/output/__resized.png");
+    expect(mockResize).toHaveBeenCalledWith(2000, 1000, {
+      fit: "inside",
+      withoutEnlargement: true,
+    });
+  });
+
+  it("throws when metadata has no dimensions", async () => {
+    mockMetadata.mockResolvedValue({ format: "png" });
+
+    await expect(
+      resizeImage("/test/image.png", 2000, "/output/__resized.png")
+    ).rejects.toThrow("Unable to read image dimensions");
+  });
+
+  it("rounds scale factor to 3 decimal places", async () => {
+    mockMetadata.mockResolvedValue({ width: 3600, height: 22810 });
+
+    const result = await resizeImage("/test/image.png", 1092, "/output/__resized.png");
+    expect(result).not.toBeNull();
+    // scaleFactor = 1092/22810 = 0.04787... → 0.048
+    expect(result!.scaleFactor).toBe(0.048);
+  });
+});
+
+describe("tileImage with maxDimension", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedFs.access.mockResolvedValue(undefined);
+    mockedFs.mkdir.mockResolvedValue(undefined);
+    mockedFs.unlink.mockResolvedValue(undefined);
+  });
+
+  it("passes through without resize when maxDimension is undefined", async () => {
+    mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
+    mockMetadata.mockResolvedValue({
+      width: 2144,
+      height: 2144,
+      format: "png",
+      channels: 4,
+    });
+
+    const result = await tileImage("/test/image.png", 1072, "/output");
+    expect(result.resize).toBeUndefined();
+  });
+
+  it("passes through without resize when image is within maxDimension", async () => {
+    mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
+    // resizeImage reads metadata first, then getImageMetadata reads it again for the (unchanged) source
+    mockMetadata
+      .mockResolvedValueOnce({ width: 1000, height: 800 }) // resizeImage check
+      .mockResolvedValueOnce({ width: 1000, height: 800, format: "png", channels: 4 }); // getImageMetadata
+
+    const result = await tileImage("/test/image.png", 1072, "/output", 1590, 2000);
+    expect(result.resize).toBeUndefined();
+  });
+
+  it("includes resize info when image exceeds maxDimension", async () => {
+    mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
+    mockMetadata
+      .mockResolvedValueOnce({ width: 4000, height: 2000 }) // resizeImage check
+      .mockResolvedValueOnce({ width: 2000, height: 1000, format: "png", channels: 4 }); // getImageMetadata on resized
+
+    const result = await tileImage("/test/image.png", 1072, "/output", 1590, 2000);
+    expect(result.resize).toBeDefined();
+    expect(result.resize!.originalWidth).toBe(4000);
+    expect(result.resize!.originalHeight).toBe(2000);
+    expect(result.resize!.resizedWidth).toBe(2000);
+    expect(result.resize!.resizedHeight).toBe(1000);
+    expect(result.resize!.scaleFactor).toBe(0.5);
+  });
+
+  it("tiles the resized image dimensions, not the original", async () => {
+    mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
+    mockMetadata
+      .mockResolvedValueOnce({ width: 4000, height: 2000 }) // resizeImage
+      .mockResolvedValueOnce({ width: 2000, height: 1000, format: "png", channels: 4 }); // getImageMetadata
+
+    const result = await tileImage("/test/image.png", 1072, "/output", 1590, 2000);
+    // Resized to 2000x1000, tiled at 1072: ceil(2000/1072)=2 cols, ceil(1000/1072)=1 row
+    expect(result.sourceImage.width).toBe(2000);
+    expect(result.sourceImage.height).toBe(1000);
+    expect(result.grid.cols).toBe(2);
+    expect(result.grid.rows).toBe(1);
+    expect(result.grid.totalTiles).toBe(2);
+  });
+
+  it("cleans up temp resized file after tiling", async () => {
+    mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
+    mockMetadata
+      .mockResolvedValueOnce({ width: 4000, height: 2000 }) // resizeImage
+      .mockResolvedValueOnce({ width: 2000, height: 1000, format: "png", channels: 4 }); // getImageMetadata
+
+    await tileImage("/test/image.png", 1072, "/output", 1590, 2000);
+
+    // Should have called unlink on the __resized.png temp file
+    expect(mockedFs.unlink).toHaveBeenCalledWith(
+      expect.stringMatching(/__resized_[a-f0-9-]+\.png$/)
+    );
+  });
+
+  it("cleans up temp resized file even on tiling error", async () => {
+    mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
+    mockMetadata
+      .mockResolvedValueOnce({ width: 4000, height: 2000 }) // resizeImage
+      .mockResolvedValueOnce({ width: 70000, height: 1000, format: "png", channels: 4 }); // getImageMetadata - exceeds MAX_IMAGE_DIMENSION
+
+    await expect(
+      tileImage("/test/image.png", 1072, "/output", 1590, 2000)
+    ).rejects.toThrow();
+
+    // Temp file should still be cleaned up via finally block
+    expect(mockedFs.unlink).toHaveBeenCalledWith(
+      expect.stringMatching(/__resized_[a-f0-9-]+\.png$/)
+    );
+  });
+
+  it("silently ignores ENOENT when cleaning up temp file", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
+    mockMetadata
+      .mockResolvedValueOnce({ width: 4000, height: 2000 }) // resizeImage
+      .mockResolvedValueOnce({ width: 2000, height: 1000, format: "png", channels: 4 }); // getImageMetadata
+
+    // Simulate ENOENT on unlink (file already gone)
+    const enoentErr = Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
+    mockedFs.unlink.mockRejectedValue(enoentErr);
+
+    const result = await tileImage("/test/image.png", 1072, "/output", 1590, 2000);
+    expect(result.resize).toBeDefined();
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("warns on non-ENOENT errors when cleaning up temp file", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
+    mockMetadata
+      .mockResolvedValueOnce({ width: 4000, height: 2000 }) // resizeImage
+      .mockResolvedValueOnce({ width: 2000, height: 1000, format: "png", channels: 4 }); // getImageMetadata
+
+    // Simulate EPERM on unlink (permission denied)
+    const epermErr = Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+    mockedFs.unlink.mockRejectedValue(epermErr);
+
+    const result = await tileImage("/test/image.png", 1072, "/output", 1590, 2000);
+    expect(result.resize).toBeDefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[image-tiler] Failed to clean up temp file")
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("EPERM")
+    );
+    warnSpy.mockRestore();
   });
 });
