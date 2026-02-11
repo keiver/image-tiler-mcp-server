@@ -290,7 +290,8 @@ describe("integration: landscape with maxDimension=2000", () => {
 
   it("temp resized file is cleaned up", async () => {
     const files = await fs.readdir(outputDir);
-    expect(files).not.toContain("__resized.png");
+    const resizedFiles = files.filter((f) => f.startsWith("__resized"));
+    expect(resizedFiles).toHaveLength(0);
   });
 
   it("tiles are valid PNGs with correct dimensions via Sharp", async () => {
@@ -332,7 +333,8 @@ describe("integration: portrait with maxDimension=1092", () => {
 
     // Verify temp file cleanup
     const files = await fs.readdir(outputDir);
-    expect(files).not.toContain("__resized.png");
+    const resizedFiles = files.filter((f) => f.startsWith("__resized"));
+    expect(resizedFiles).toHaveLength(0);
   }, 60000);
 });
 

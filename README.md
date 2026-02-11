@@ -20,6 +20,8 @@ LLM vision systems have a **maximum input resolution**. When you send an image l
 
 Each tile is processed at **full resolution** — no downscaling — preserving text, UI elements, and fine detail across the entire image.
 
+**Auto-downscaling:** Images over 10,000px on their longest side are automatically downscaled before tiling (configurable via `maxDimension`). This prevents extreme tile counts on very long screenshots — e.g., a 3600×22810 page drops from 84 tiles / ~134K tokens to 20 tiles / ~32K tokens with no visible quality loss. Set `maxDimension=0` to disable.
+
 See [sample of generated tiles here.](https://github.com/keiver/image-tiler-mcp-server/tree/main/assets/tiles/)
 
 ### Supported Models
@@ -46,6 +48,7 @@ Splits a large image into tiles and saves them to disk.
 | `filePath` | string | yes | — | Absolute or relative path to the image file |
 | `model` | string | no | `"claude"` | Target vision model: `"claude"`, `"openai"`, `"gemini"`, `"gemini3"` |
 | `tileSize` | number | no | Model default | Tile size in pixels. Clamped to model min/max with a warning if out of bounds. |
+| `maxDimension` | number | no | `10000` | Max dimension in px (0-65536). Pre-downscales the image so its longest side fits within this value before tiling. Defaults to 10000px. Set to 0 to disable auto-downscaling. No-op if already within bounds. |
 | `outputDir` | string | no | `tiles/{name}` subfolder next to source | Directory to save tiles |
 
 Returns JSON metadata with grid dimensions, tile count, model used, estimated token cost, and per-tile file paths.
@@ -179,6 +182,29 @@ Claude will:
 2. Tiles sized at 768px for OpenAI's vision pipeline
 ```
 
+### Auto-Downscaling
+
+Images over 10,000px are automatically downscaled before tiling. You can customize the limit:
+
+```
+> Tile this 7680x4032 screenshot but downscale to 2048px first to save tokens
+
+Claude will:
+1. Call tiler_tile_image(filePath="./image.png", maxDimension=2048)
+2. Image is downscaled to 2048x1076 before tiling
+3. Fewer tiles = lower token cost (e.g., 4 tiles instead of 32)
+```
+
+To disable auto-downscaling entirely:
+
+```
+> Tile this image at full resolution, no downscaling
+
+Claude will:
+1. Call tiler_tile_image(filePath="./image.png", maxDimension=0)
+2. Image is tiled at its original dimensions
+```
+
 ### Typical Workflow
 
 1. Capture full-page screenshot with your browser extension
@@ -250,9 +276,18 @@ assets/tiles/landscape/
     { "index": 1, "row": 0, "col": 1, "position": "1092,0", "dimensions": "1092×1092", "filePath": "/path/to/assets/tiles/landscape/tile_000_001.png" },
     "... 30 more tiles"
   ],
-  "previewPath": "/path/to/assets/tiles/landscape/preview.html"
+  "previewPath": "/path/to/assets/tiles/landscape/preview.html",
+  "resize": {
+    "originalWidth": 7680,
+    "originalHeight": 4032,
+    "resizedWidth": 2048,
+    "resizedHeight": 1076,
+    "scaleFactor": 0.267
+  }
 }
 ```
+
+> The `resize` field is only present when `maxDimension` triggered an actual downscale. If the image was already within bounds, it's omitted.
 
 ### Portrait example
 

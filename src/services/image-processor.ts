@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   MAX_IMAGE_DIMENSION,
   MAX_TOTAL_TILES,
@@ -119,7 +120,7 @@ export async function tileImage(
   let resizedTempPath: string | null = null;
 
   if (maxDimension !== undefined) {
-    const tempPath = path.join(resolvedOutputDir, "__resized.png");
+    const tempPath = path.join(resolvedOutputDir, `__resized_${randomUUID()}.png`);
     resizeInfo = await resizeImage(resolvedPath, maxDimension, tempPath);
     if (resizeInfo) {
       sourcePath = tempPath;

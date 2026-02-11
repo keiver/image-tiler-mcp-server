@@ -12,6 +12,7 @@ import {
   VISION_MODELS,
   MODEL_CONFIGS,
   DEFAULT_MODEL,
+  DEFAULT_MAX_DIMENSION,
 } from "../constants.js";
 
 
@@ -56,6 +57,10 @@ describe("constants", () => {
 
     it("PNG_COMPRESSION_LEVEL is 6", () => {
       expect(PNG_COMPRESSION_LEVEL).toBe(6);
+    });
+
+    it("DEFAULT_MAX_DIMENSION is 10000", () => {
+      expect(DEFAULT_MAX_DIMENSION).toBe(10000);
     });
   });
 

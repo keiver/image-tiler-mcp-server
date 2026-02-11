@@ -28,7 +28,7 @@ Args:
   - filePath (string, required): Absolute or relative path to the image file
   - model (string, optional): Target vision model — ${modelList} (default: "${DEFAULT_MODEL}")
   - tileSize (number, optional): Override tile size in pixels. If omitted, uses the model's optimal default. Clamped to the model's max with a warning if exceeded.
-  - maxDimension (number, optional): Max dimension in px (256-65536). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. No-op if the image is already within bounds.
+  - maxDimension (number, optional): Max dimension in px (256-65536). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. No-op if the image is already within bounds. Defaults to 10000px. Set to 0 to disable auto-downscaling.
   - outputDir (string, optional): Custom output directory for tiles
 
 Returns:
@@ -41,7 +41,9 @@ Examples:
   - Tile for Claude (default): filePath="/path/to/screenshot.png"
 ${exampleLines}
   - Custom tile size: filePath="/path/to/image.png", tileSize=800
-  - Auto-downscale before tiling: filePath="/path/to/large-screenshot.png", maxDimension=2048
+  - Auto-downscale (default 10000px): images over 10000px on the longest side are automatically downscaled
+  - Custom downscale limit: filePath="/path/to/large-screenshot.png", maxDimension=2048
+  - Disable downscaling: filePath="/path/to/image.png", maxDimension=0
   - Custom output: filePath="/path/to/image.png", outputDir="/tmp/my-tiles"`;
 })();
 
@@ -102,7 +104,7 @@ export function registerTileImageTool(server: McpServer): void {
           effectiveTileSize,
           resolvedOutputDir,
           config.tokensPerTile,
-          maxDimension
+          maxDimension === 0 ? undefined : maxDimension
         );
 
         let previewPath: string | undefined;

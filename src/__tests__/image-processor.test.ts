@@ -695,7 +695,7 @@ describe("tileImage with maxDimension", () => {
 
     // Should have called unlink on the __resized.png temp file
     expect(mockedFs.unlink).toHaveBeenCalledWith(
-      expect.stringContaining("__resized.png")
+      expect.stringMatching(/__resized_[a-f0-9-]+\.png$/)
     );
   });
 
@@ -711,7 +711,7 @@ describe("tileImage with maxDimension", () => {
 
     // Temp file should still be cleaned up via finally block
     expect(mockedFs.unlink).toHaveBeenCalledWith(
-      expect.stringContaining("__resized.png")
+      expect.stringMatching(/__resized_[a-f0-9-]+\.png$/)
     );
   });
 

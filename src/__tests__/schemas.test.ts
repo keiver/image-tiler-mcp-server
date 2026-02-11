@@ -107,12 +107,22 @@ describe("TileImageInputSchema", () => {
   });
 
   describe("maxDimension", () => {
-    it("is undefined when omitted", () => {
+    it("defaults to 10000 when omitted", () => {
       const result = tileImageSchema.parse({ filePath: "test.png" });
-      expect(result.maxDimension).toBeUndefined();
+      expect(result.maxDimension).toBe(10000);
     });
 
-    it("accepts minimum value (256)", () => {
+    it("accepts 0 (disables auto-downscaling)", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", maxDimension: 0 });
+      expect(result.maxDimension).toBe(0);
+    });
+
+    it("accepts minimum positive value (1)", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", maxDimension: 1 });
+      expect(result.maxDimension).toBe(1);
+    });
+
+    it("accepts value (256)", () => {
       const result = tileImageSchema.parse({ filePath: "test.png", maxDimension: 256 });
       expect(result.maxDimension).toBe(256);
     });
@@ -127,10 +137,10 @@ describe("TileImageInputSchema", () => {
       expect(result.maxDimension).toBe(2048);
     });
 
-    it("rejects below minimum (255)", () => {
+    it("rejects negative values (-1)", () => {
       expect(() =>
-        tileImageSchema.parse({ filePath: "test.png", maxDimension: 255 })
-      ).toThrow("at least 256");
+        tileImageSchema.parse({ filePath: "test.png", maxDimension: -1 })
+      ).toThrow("maxDimension must be >= 0");
     });
 
     it("rejects above maximum (65537)", () => {

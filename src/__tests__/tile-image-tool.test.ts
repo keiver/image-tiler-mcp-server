@@ -439,11 +439,11 @@ describe("registerTileImageTool", () => {
       );
     });
 
-    it("passes undefined maxDimension when not specified", async () => {
+    it("passes undefined to tileImage when maxDimension is 0 (disabled)", async () => {
       mockedTileImage.mockResolvedValue(makeTileResult());
       const tool = mock.getTool("tiler_tile_image")!;
       await tool.handler(
-        { filePath: "image.png", model: "claude", tileSize: undefined, maxDimension: undefined, outputDir: "/out" },
+        { filePath: "image.png", model: "claude", tileSize: undefined, maxDimension: 0, outputDir: "/out" },
         {} as any
       );
       expect(mockedTileImage).toHaveBeenCalledWith(
@@ -452,6 +452,22 @@ describe("registerTileImageTool", () => {
         "/out",
         1590,
         undefined
+      );
+    });
+
+    it("passes default maxDimension (10000) through to tileImage", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { filePath: "image.png", model: "claude", tileSize: undefined, maxDimension: 10000, outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedTileImage).toHaveBeenCalledWith(
+        "image.png",
+        1092,
+        "/out",
+        1590,
+        10000
       );
     });
 

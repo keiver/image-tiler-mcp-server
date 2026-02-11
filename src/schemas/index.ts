@@ -5,6 +5,7 @@ import {
   VISION_MODELS,
   DEFAULT_MODEL,
   MODEL_CONFIGS,
+  DEFAULT_MAX_DIMENSION,
 } from "../constants.js";
 
 const modelDescriptions = VISION_MODELS.map(
@@ -41,11 +42,11 @@ export const TileImageInputSchema = {
   maxDimension: z
     .number()
     .int()
-    .min(256, "maxDimension must be at least 256px")
+    .min(0, "maxDimension must be >= 0 (0 disables auto-downscaling)")
     .max(MAX_IMAGE_DIMENSION, `maxDimension must not exceed ${MAX_IMAGE_DIMENSION}px`)
-    .optional()
+    .default(DEFAULT_MAX_DIMENSION)
     .describe(
-      `Max dimension in px (256-${MAX_IMAGE_DIMENSION}). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. Both Claude and OpenAI auto-downscale internally, so pre-tiling downscale avoids sending redundant resolution.`
+      `Max dimension in px (256-${MAX_IMAGE_DIMENSION}). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. Defaults to ${DEFAULT_MAX_DIMENSION}px. Set to 0 to disable auto-downscaling.`
     ),
   outputDir: z
     .string()

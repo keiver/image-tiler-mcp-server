@@ -53,3 +53,4 @@ export const MAX_TOTAL_TILES = 10000;
 export const MAX_TILES_PER_BATCH = 5;
 export const SUPPORTED_FORMATS = ["png", "jpeg", "jpg", "webp", "tiff", "gif"] as const;
 export const PNG_COMPRESSION_LEVEL = 6;
+export const DEFAULT_MAX_DIMENSION = 10000;
