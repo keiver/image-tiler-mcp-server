@@ -26,9 +26,18 @@ export interface TileInfo {
   filePath: string;
 }
 
+export interface ResizeInfo {
+  originalWidth: number;
+  originalHeight: number;
+  resizedWidth: number;
+  resizedHeight: number;
+  scaleFactor: number; // 0-1, e.g. 0.5 = half size
+}
+
 export interface TileImageResult {
   sourceImage: ImageMetadata;
   grid: TileGridInfo;
   outputDir: string;
   tiles: TileInfo[];
+  resize?: ResizeInfo; // present only when downscaling occurred
 }

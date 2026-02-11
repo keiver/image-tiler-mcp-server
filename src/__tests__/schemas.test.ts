@@ -106,6 +106,52 @@ describe("TileImageInputSchema", () => {
     });
   });
 
+  describe("maxDimension", () => {
+    it("is undefined when omitted", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png" });
+      expect(result.maxDimension).toBeUndefined();
+    });
+
+    it("accepts minimum value (256)", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", maxDimension: 256 });
+      expect(result.maxDimension).toBe(256);
+    });
+
+    it("accepts maximum value (65536)", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", maxDimension: 65536 });
+      expect(result.maxDimension).toBe(65536);
+    });
+
+    it("accepts mid-range value (2048)", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", maxDimension: 2048 });
+      expect(result.maxDimension).toBe(2048);
+    });
+
+    it("rejects below minimum (255)", () => {
+      expect(() =>
+        tileImageSchema.parse({ filePath: "test.png", maxDimension: 255 })
+      ).toThrow("at least 256");
+    });
+
+    it("rejects above maximum (65537)", () => {
+      expect(() =>
+        tileImageSchema.parse({ filePath: "test.png", maxDimension: 65537 })
+      ).toThrow("must not exceed 65536");
+    });
+
+    it("rejects non-integer", () => {
+      expect(() =>
+        tileImageSchema.parse({ filePath: "test.png", maxDimension: 1024.5 })
+      ).toThrow();
+    });
+
+    it("rejects non-number", () => {
+      expect(() =>
+        tileImageSchema.parse({ filePath: "test.png", maxDimension: "2048" })
+      ).toThrow();
+    });
+  });
+
   describe("outputDir", () => {
     it("is optional and undefined by default", () => {
       const result = tileImageSchema.parse({ filePath: "test.png" });

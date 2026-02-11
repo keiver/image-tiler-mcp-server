@@ -38,6 +38,15 @@ export const TileImageInputSchema = {
     .describe(
       `Tile size in pixels. If omitted, uses the model's optimal default (${defaultDescriptions}). Values outside the model's supported range are automatically clamped with a warning.`
     ),
+  maxDimension: z
+    .number()
+    .int()
+    .min(256, "maxDimension must be at least 256px")
+    .max(MAX_IMAGE_DIMENSION, `maxDimension must not exceed ${MAX_IMAGE_DIMENSION}px`)
+    .optional()
+    .describe(
+      `Max dimension in px (256-${MAX_IMAGE_DIMENSION}). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. Both Claude and OpenAI auto-downscale internally, so pre-tiling downscale avoids sending redundant resolution.`
+    ),
   outputDir: z
     .string()
     .optional()
