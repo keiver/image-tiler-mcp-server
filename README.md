@@ -45,11 +45,16 @@ Splits a large image into tiles and saves them to disk.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `filePath` | string | yes | — | Absolute or relative path to the image file |
+| `filePath` | string | no* | — | Absolute or relative path to the image file |
+| `sourceUrl` | string | no* | — | HTTPS URL to download the image from (max 50MB, 30s timeout) |
+| `dataUrl` | string | no* | — | Data URL with base64-encoded image |
+| `imageBase64` | string | no* | — | Raw base64-encoded image data |
 | `model` | string | no | `"claude"` | Target vision model: `"claude"`, `"openai"`, `"gemini"`, `"gemini3"` |
 | `tileSize` | number | no | Model default | Tile size in pixels. Clamped to model min/max with a warning if out of bounds. |
 | `maxDimension` | number | no | `10000` | Max dimension in px (0-65536). Pre-downscales the image so its longest side fits within this value before tiling. Defaults to 10000px. Set to 0 to disable auto-downscaling. No-op if already within bounds. |
 | `outputDir` | string | no | `tiles/{name}` subfolder next to source | Directory to save tiles |
+
+*At least one image source (`filePath`, `sourceUrl`, `dataUrl`, or `imageBase64`) is required.
 
 Returns JSON metadata with grid dimensions, tile count, model used, estimated token cost, and per-tile file paths.
 
@@ -64,6 +69,46 @@ Returns tile images as base64 in batches of 5 for the LLM to see directly.
 | `end` | number | no | start + 4 | End tile index (0-based, inclusive) |
 
 Returns text labels + image content blocks. Includes pagination hint for the next batch.
+
+### `tiler_recommend_settings`
+
+Dry-run estimator: reads image dimensions and returns cost estimates **without tiling**.
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `filePath` | string | no* | — | Path to image file |
+| `sourceUrl` | string | no* | — | HTTPS URL to download from |
+| `dataUrl` | string | no* | — | Data URL with base64 image |
+| `imageBase64` | string | no* | — | Raw base64 image data |
+| `model` | string | no | `"claude"` | Target vision model |
+| `tileSize` | number | no | Model default | Override tile size (skips heuristics) |
+| `maxDimension` | number | no | — | Override max dimension (skips heuristics) |
+| `intent` | string | no | — | `"text_heavy"`, `"ui_screenshot"`, `"diagram"`, `"photo"`, `"general"` |
+| `budget` | string | no | — | `"low"`, `"default"`, `"max_detail"` |
+
+*At least one image source required.
+
+Returns JSON with recommended settings, rationale, image info, grid estimate, and a comparison across all 4 models.
+
+### `tiler_prepare_image`
+
+One-shot convenience tool: tiles an image AND returns the first batch of tiles in a single call.
+
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `filePath` | string | no* | — | Path to image file |
+| `sourceUrl` | string | no* | — | HTTPS URL to download from |
+| `dataUrl` | string | no* | — | Data URL with base64 image |
+| `imageBase64` | string | no* | — | Raw base64 image data |
+| `model` | string | no | `"claude"` | Target vision model |
+| `tileSize` | number | no | Model default | Override tile size |
+| `maxDimension` | number | no | `10000` | Max dimension for auto-downscaling |
+| `outputDir` | string | no | `tiles/{name}` subfolder | Directory to save tiles |
+| `page` | number | no | `0` | Tile page (0 = tiles 0-4, 1 = tiles 5-9, etc.) |
+
+*At least one image source required.
+
+Returns tiling metadata + up to 5 tile images inline. Saves a round-trip compared to calling `tiler_tile_image` then `tiler_get_tiles` separately.
 
 ## Installation
 
@@ -203,6 +248,54 @@ To disable auto-downscaling entirely:
 Claude will:
 1. Call tiler_tile_image(filePath="./image.png", maxDimension=0)
 2. Image is tiled at its original dimensions
+```
+
+### Estimating Costs
+
+Use `tiler_recommend_settings` to preview token costs before tiling:
+
+```
+> How many tokens would it cost to tile this 3600x22810 screenshot?
+
+Claude will:
+1. Call tiler_recommend_settings(filePath="./screenshot.png")
+2. See cost estimates for all 4 models
+3. Make an informed decision before committing to tiling
+```
+
+With intent and budget hints:
+
+```
+> Estimate costs for this long document screenshot, keeping tokens low
+
+Claude will:
+1. Call tiler_recommend_settings(filePath="./doc.png", intent="text_heavy", budget="low")
+2. Get optimized maxDimension recommendation for text-heavy content
+```
+
+### Using URLs / Base64
+
+All image-accepting tools (`tiler_tile_image`, `tiler_recommend_settings`, `tiler_prepare_image`) support multiple input sources:
+
+```
+> Tile this image from a URL
+→ tiler_tile_image(sourceUrl="https://example.com/screenshot.png")
+
+> Tile this base64 image
+→ tiler_tile_image(imageBase64="iVBORw0KGgo...")
+```
+
+### One-Shot Usage
+
+Use `tiler_prepare_image` to tile and get the first batch in one call:
+
+```
+> Analyze this screenshot
+
+Claude will:
+1. Call tiler_prepare_image(filePath="./screenshot.png")
+2. Get tiling metadata + first 5 tiles in a single response
+3. Continue with tiler_get_tiles for remaining tiles if needed
 ```
 
 ### Typical Workflow
@@ -376,7 +469,7 @@ PNG, JPEG, WebP, TIFF, GIF
 
 This is a **local MCP server** that runs on your machine via stdio. It operates with the same filesystem permissions as the MCP client process that spawns it. File paths provided to the tools are resolved and accessed directly — there is no sandboxing or path restriction beyond your OS-level permissions.
 
-This is by design: MCP tools run in the user's security context, same as any CLI tool. No network access, no remote connections, no data sent externally.
+**URL downloads:** When using `sourceUrl`, the server fetches images over HTTPS only (no HTTP). Downloads are limited to 50MB with a 30-second timeout. Downloaded files are written to a temp directory and cleaned up after processing. The server does not send any data externally — it only receives.
 
 ## Requirements
 

@@ -10,13 +10,23 @@ vi.mock("../services/preview-generator.js", () => ({
   generatePreview: vi.fn(),
 }));
 
+vi.mock("../services/image-source-resolver.js", () => ({
+  resolveImageSource: vi.fn(),
+}));
+
+vi.mock("node:fs/promises", () => ({
+  copyFile: vi.fn(),
+}));
+
 import { tileImage } from "../services/image-processor.js";
 import { generatePreview } from "../services/preview-generator.js";
+import { resolveImageSource } from "../services/image-source-resolver.js";
 import { registerTileImageTool } from "../tools/tile-image.js";
 import { createMockServer } from "./helpers/mock-server.js";
 
 const mockedTileImage = vi.mocked(tileImage);
 const mockedGeneratePreview = vi.mocked(generatePreview);
+const mockedResolveSource = vi.mocked(resolveImageSource);
 
 function makeTileResult(overrides?: Partial<TileImageResult>): TileImageResult {
   return {
@@ -51,6 +61,12 @@ describe("registerTileImageTool", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedGeneratePreview.mockResolvedValue("/output/tiles/preview.html");
+    // Default: resolveImageSource passes through filePath as-is for file sources
+    mockedResolveSource.mockImplementation(async (params) => ({
+      localPath: params.filePath ?? "/tmp/resolved.png",
+      sourceType: "file",
+      originalSource: params.filePath ?? "unknown",
+    }));
     mock = createMockServer();
     registerTileImageTool(mock.server as any);
   });
@@ -61,6 +77,17 @@ describe("registerTileImageTool", () => {
       expect.any(Object),
       expect.any(Function)
     );
+  });
+
+  it("returns error when no source provided", async () => {
+    const tool = mock.getTool("tiler_tile_image")!;
+    const result = await tool.handler(
+      { model: "claude", tileSize: undefined, outputDir: undefined },
+      {} as any
+    );
+    const res = result as any;
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("No image source provided");
   });
 
   it("rejects unsupported image format", async () => {
@@ -190,6 +217,77 @@ describe("registerTileImageTool", () => {
     expect(res.content[0].text).toContain("Unsupported image format");
   });
 
+  describe("image source resolution", () => {
+    it("calls resolveImageSource with all source params", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { filePath: "image.png", sourceUrl: "https://example.com/img.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedResolveSource).toHaveBeenCalledWith({
+        filePath: "image.png",
+        sourceUrl: "https://example.com/img.png",
+        dataUrl: undefined,
+        imageBase64: undefined,
+      });
+    });
+
+    it("calls cleanup on source after success", async () => {
+      const cleanup = vi.fn().mockResolvedValue(undefined);
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      mockedTileImage.mockResolvedValue(makeTileResult());
+
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    it("calls cleanup even on error", async () => {
+      const cleanup = vi.fn().mockResolvedValue(undefined);
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      mockedTileImage.mockRejectedValue(new Error("fail"));
+
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses cwd-based outputDir for non-file sources when no outputDir given", async () => {
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+      });
+      mockedTileImage.mockResolvedValue(makeTileResult());
+
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        {} as any
+      );
+      const callArgs = mockedTileImage.mock.calls[0];
+      // outputDir should contain "tiles/tiled_" prefix
+      expect(callArgs[2]).toMatch(/tiles[\\/]tiled_\d+/);
+    });
+  });
+
   describe("model support", () => {
     it("defaults to claude tile size (1092) when tileSize is undefined", async () => {
       mockedTileImage.mockResolvedValue(makeTileResult());
@@ -291,15 +389,12 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "claude", tileSize: 2000, outputDir: "/out" },
         {} as any
       );
-      // Should have called tileImage with clamped value
       expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1568, "/out", 1590, undefined);
 
       const res = result as any;
-      // Summary should contain warning
       expect(res.content[0].text).toContain("2000px exceeds");
       expect(res.content[0].text).toContain("clamped to 1568px");
 
-      // Structured output should contain warnings array
       const json = JSON.parse(res.content[1].text);
       expect(json.warnings).toBeDefined();
       expect(json.warnings).toHaveLength(1);
@@ -563,14 +658,10 @@ describe("registerTileImageTool", () => {
         {} as any
       );
       const res = result as any;
-      // Should NOT be an error response
       expect(res.isError).toBeUndefined();
-      // Should still have summary and JSON
       expect(res.content).toHaveLength(2);
-      // Should NOT have previewPath in JSON
       const json = JSON.parse(res.content[1].text);
       expect(json.previewPath).toBeUndefined();
-      // Should have warning about preview failure
       expect(json.warnings).toBeDefined();
       expect(json.warnings).toContainEqual(expect.stringContaining("Preview generation failed"));
       expect(json.warnings).toContainEqual(expect.stringContaining("Write permission denied"));

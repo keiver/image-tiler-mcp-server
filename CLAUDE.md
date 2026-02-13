@@ -36,26 +36,36 @@ npm test             # Run test suite (vitest)
 npm run test:watch   # Run tests in watch mode
 ```
 
+Run a single test file:
+```bash
+npx vitest run src/__tests__/schemas.test.ts
+```
+
 No linter is configured.
 
 ## Architecture
 
 **Transport:** stdio only (single-session, local). Entry point is `src/index.ts` which creates an `McpServer` and connects via `StdioServerTransport`.
 
-**Two MCP tools registered:**
+**Four MCP tools registered:**
 
-1. **`tiler_tile_image`** (`src/tools/tile-image.ts`) — Takes an image path and optional `model` param (`"claude"` | `"openai"` | `"gemini"` | `"gemini3"`), splits it into a grid of PNG tiles saved to `tiles/{name}/` next to the source image (or a custom output directory). `maxDimension` param (default: 10000px) auto-downscales images so the longest side fits within the given px value before tiling, reducing tile count and token cost. Set `maxDimension=0` to disable auto-downscaling. Returns JSON metadata (model, grid dimensions, token estimate, file paths, preview path, optional resize info) and generates an interactive HTML preview of the tile grid.
+1. **`tiler_tile_image`** (`src/tools/tile-image.ts`) — Accepts an image from file path, URL, data URL, or base64. Splits it into a grid of PNG tiles saved to `tiles/{name}/` next to the source image (or a custom output directory). `maxDimension` param (default: 10000px) auto-downscales images so the longest side fits within the given px value before tiling. Returns JSON metadata (model, grid dimensions, token estimate, file paths, preview path, optional resize info) and generates an interactive HTML preview.
 
 2. **`tiler_get_tiles`** (`src/tools/get-tiles.ts`) — Reads tiles from disk and returns them as base64 image content blocks in batches of 5. Supports pagination via `start`/`end` indices.
+
+3. **`tiler_recommend_settings`** (`src/tools/recommend-settings.ts`) — Dry-run estimator: reads image dimensions and returns cost estimates without tiling. Includes heuristic-based recommendations (intent/budget), per-model comparison across all 4 models, and grid dimensions. Read-only — no tiles are created.
+
+4. **`tiler_prepare_image`** (`src/tools/prepare-image.ts`) — One-shot convenience: chains tile-image + get-tiles into a single tool call. Returns tiling metadata plus the first batch of tile images inline. Supports pagination via `page` param.
 
 **Key layers:**
 
 - `src/tools/` — Tool registration and MCP response formatting. Each file exports a `register*Tool(server)` function.
 - `src/services/image-processor.ts` — All Sharp image operations: metadata reading, grid calculation, tile extraction, base64 encoding, directory listing.
+- `src/services/image-source-resolver.ts` — Resolves image sources (file path, URL, data URL, base64) to a local file path with cleanup. Used by tile-image, recommend-settings, and prepare-image tools.
 - `src/services/preview-generator.ts` — Generates an interactive HTML preview (`preview.html`) visualizing the tile grid layout with overlay annotations.
-- `src/schemas/index.ts` — Zod input schemas for both tools. Shared by tool registration and type inference.
-- `src/types.ts` — TypeScript interfaces (`ImageMetadata`, `TileGridInfo`, `TileInfo`, `TileImageResult`).
-- `src/constants.ts` — Model vision configs (`MODEL_CONFIGS` keyed by `"claude" | "openai" | "gemini" | "gemini3"`), per-model tile sizes and token rates, backward-compatible aliases (`DEFAULT_TILE_SIZE`, `MAX_TILE_SIZE`, etc. point to Claude config), batch limit (5), PNG compression level (6).
+- `src/schemas/index.ts` — Zod input schemas for all tools. Shared `imageSourceFields` used by tile-image, recommend-settings, and prepare-image.
+- `src/types.ts` — TypeScript interfaces (`ImageMetadata`, `TileGridInfo`, `TileInfo`, `TileImageResult`, `ResolvedImageSource`, `RecommendationResult`).
+- `src/constants.ts` — Model vision configs (`MODEL_CONFIGS` keyed by `"claude" | "openai" | "gemini" | "gemini3"`), per-model tile sizes and token rates, backward-compatible aliases, batch limit (5), PNG compression level (6), download limits, intent/budget enums.
 
 **Sharp configuration** (in `image-processor.ts`): Cache limited to 10 items / 200MB, concurrency set to 2. Tiles are extracted sequentially row-by-row, left-to-right.
 
@@ -76,10 +86,13 @@ No linter is configured.
 **Test structure:**
 
 - `constants.test.ts` — Value snapshot tests for all exported constants
-- `schemas.test.ts` — Zod schema boundary validation (min/max, defaults, required fields)
+- `schemas.test.ts` — Zod schema boundary validation (min/max, defaults, required fields) for all 4 schemas
 - `image-processor.test.ts` — Core logic with mocked Sharp + fs (calculateGrid, tileImage, readTileAsBase64, listTilesInDirectory)
-- `tile-image-tool.test.ts` — Tool handler: format validation, response formatting, error wrapping
+- `image-source-resolver.test.ts` — Source resolution: file passthrough, data URL parsing, base64 decoding, cleanup idempotency
+- `tile-image-tool.test.ts` — Tool handler: format validation, response formatting, error wrapping, source resolution integration
 - `get-tiles-tool.test.ts` — Tool handler: pagination, batch limits, content block structure
+- `recommend-settings-tool.test.ts` — Recommend tool: heuristic rules, all-model comparison, intent/budget effects
+- `prepare-image-tool.test.ts` — Prepare tool: combined tile+get response, pagination, cleanup
 - `preview-generator.test.ts` — Preview HTML generation: template rendering, file writing, error handling
 - `integration.test.ts` — Real Sharp + real filesystem using `assets/landscape.png` (7680×4032) and `assets/portrait.png` (3600×22810)
 

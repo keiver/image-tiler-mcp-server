@@ -54,3 +54,16 @@ export const MAX_TILES_PER_BATCH = 5;
 export const SUPPORTED_FORMATS = ["png", "jpeg", "jpg", "webp", "tiff", "gif"] as const;
 export const PNG_COMPRESSION_LEVEL = 6;
 export const DEFAULT_MAX_DIMENSION = 10000;
+
+// Image source resolution
+export const MAX_DOWNLOAD_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
+export const DOWNLOAD_TIMEOUT_MS = 30_000; // 30 seconds
+export const ALLOWED_URL_PROTOCOLS = ["https:"] as const;
+export const MAX_BASE64_LENGTH = 67_108_864; // ~50MB decoded (base64 is ~4/3x)
+
+// Intent and budget enums for recommend-settings
+export const IMAGE_INTENTS = ["text_heavy", "ui_screenshot", "diagram", "photo", "general"] as const;
+export type ImageIntent = (typeof IMAGE_INTENTS)[number];
+
+export const BUDGET_LEVELS = ["low", "default", "max_detail"] as const;
+export type BudgetLevel = (typeof BUDGET_LEVELS)[number];

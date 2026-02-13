@@ -5,6 +5,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerTileImageTool } from "./tools/tile-image.js";
 import { registerGetTilesTool } from "./tools/get-tiles.js";
+import { registerRecommendSettingsTool } from "./tools/recommend-settings.js";
+import { registerPrepareImageTool } from "./tools/prepare-image.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
@@ -16,6 +18,8 @@ const server = new McpServer({
 
 registerTileImageTool(server);
 registerGetTilesTool(server);
+registerRecommendSettingsTool(server);
+registerPrepareImageTool(server);
 
 async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();
