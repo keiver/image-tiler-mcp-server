@@ -61,8 +61,10 @@ No linter is configured.
 
 - `src/tools/` — Tool registration and MCP response formatting. Each file exports a `register*Tool(server)` function.
 - `src/services/image-processor.ts` — All Sharp image operations: metadata reading, grid calculation, tile extraction, base64 encoding, directory listing.
-- `src/services/image-source-resolver.ts` — Resolves image sources (file path, URL, data URL, base64) to a local file path with cleanup. Used by tile-image, recommend-settings, and prepare-image tools.
-- `src/services/preview-generator.ts` — Generates an interactive HTML preview (`preview.html`) visualizing the tile grid layout with overlay annotations.
+- `src/services/image-source-resolver.ts` — Resolves image sources (file path, URL, data URL, base64) to a local file path with cleanup. Includes Content-Type validation for URL downloads, buffer size checks, base64 input validation, and exported helper functions (`isImageContentType`, `getImageMagicBytes`, `isImageSubtype`). Used by tile-image, recommend-settings, and prepare-image tools.
+- `src/services/preview-generator.ts` — Generates a static HTML preview (`preview.html`) visualizing the tile grid layout with overlay annotations.
+- `src/services/interactive-preview-generator.ts` — Generates an interactive HTML preview with per-model tabs showing grid overlays, token estimates, and model comparison.
+- `src/utils.ts` — Shared utilities: `escapeHtml()` for safe HTML output in preview generators.
 - `src/schemas/index.ts` — Zod input schemas for all tools. Shared `imageSourceFields` used by tile-image, recommend-settings, and prepare-image.
 - `src/types.ts` — TypeScript interfaces (`ImageMetadata`, `TileGridInfo`, `TileInfo`, `TileImageResult`, `ResolvedImageSource`, `RecommendationResult`).
 - `src/constants.ts` — Model vision configs (`MODEL_CONFIGS` keyed by `"claude" | "openai" | "gemini" | "gemini3"`), per-model tile sizes and token rates, backward-compatible aliases, batch limit (5), PNG compression level (6), download limits, intent/budget enums.
@@ -88,12 +90,14 @@ No linter is configured.
 - `constants.test.ts` — Value snapshot tests for all exported constants
 - `schemas.test.ts` — Zod schema boundary validation (min/max, defaults, required fields) for all 4 schemas
 - `image-processor.test.ts` — Core logic with mocked Sharp + fs (calculateGrid, tileImage, readTileAsBase64, listTilesInDirectory)
-- `image-source-resolver.test.ts` — Source resolution: file passthrough, data URL parsing, base64 decoding, cleanup idempotency
+- `image-source-resolver.test.ts` — Source resolution: file passthrough, data URL parsing, base64 decoding, cleanup idempotency, URL resolution (success, HTTP errors, timeout, size limits, Content-Type validation), helper function tests (`isImageContentType`, `getImageMagicBytes`, `isImageSubtype`)
 - `tile-image-tool.test.ts` — Tool handler: format validation, response formatting, error wrapping, source resolution integration
 - `get-tiles-tool.test.ts` — Tool handler: pagination, batch limits, content block structure
 - `recommend-settings-tool.test.ts` — Recommend tool: heuristic rules, all-model comparison, intent/budget effects
 - `prepare-image-tool.test.ts` — Prepare tool: combined tile+get response, pagination, cleanup
 - `preview-generator.test.ts` — Preview HTML generation: template rendering, file writing, error handling
+- `utils.test.ts` — `escapeHtml` unit tests covering HTML entities, mixed content, empty strings
+- `interactive-preview-generator.test.ts` — Interactive preview HTML generation: model tabs, grid rendering, token estimates
 - `integration.test.ts` — Real Sharp + real filesystem using `assets/landscape.png` (7680×4032) and `assets/portrait.png` (3600×22810)
 
 **Mocking strategy:** Unit tests mock Sharp (via `vi.hoisted` + `vi.mock`) and `node:fs/promises`. Tool handler tests mock the entire service layer. Integration tests use no mocks.

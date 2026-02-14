@@ -7,6 +7,7 @@ import {
   MODEL_CONFIGS,
   DEFAULT_MAX_DIMENSION,
   MAX_BASE64_LENGTH,
+  MAX_DATA_URL_LENGTH,
   IMAGE_INTENTS,
   BUDGET_LEVELS,
 } from "../constants.js";
@@ -33,6 +34,7 @@ export const imageSourceFields = {
     .describe("HTTPS URL to download the image from (max 50MB, 30s timeout)"),
   dataUrl: z
     .string()
+    .max(MAX_DATA_URL_LENGTH, `Data URL must not exceed ${MAX_DATA_URL_LENGTH} characters`)
     .optional()
     .describe('Data URL with base64-encoded image (e.g. "data:image/png;base64,...")'),
   imageBase64: z

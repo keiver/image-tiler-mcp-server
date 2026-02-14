@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.5.0] - 2026-02-13
+
+### Added
+- `tiler_recommend_settings` tool — dry-run estimator with cost estimates for all 4 models, heuristic recommendations (intent/budget hints), and interactive HTML preview with model-switching tabs
+- `tiler_prepare_image` tool — one-shot convenience combining tile + get-tiles in a single call with pagination
+- Multi-source image input — `sourceUrl`, `dataUrl`, `imageBase64` as alternatives to `filePath` for all image-accepting tools
+- Heuristic engine for `tiler_recommend_settings`: `intent` (text_heavy, ui_screenshot, diagram, photo, general) and `budget` (low, default, max_detail) parameters
+- Interactive HTML preview generation with per-model tabs showing grid overlays
+- Remainder absorption in grid calculation — thin edge strips (<15% of tileSize) absorbed into the last tile to reduce tile count
+- `escapeHtml()` utility for safe HTML output in preview generators
+- `MIN_REMAINDER_RATIO`, `IMAGE_INTENTS`, `BUDGET_LEVELS`, `MAX_DATA_URL_LENGTH` constants
+
+### Security
+- Decoded buffer size validation after base64/data URL decode (defense-in-depth against oversized payloads)
+- Content-Type validation on URL downloads — rejects non-image responses (text/html, application/json, etc.)
+- Base64 input validation — reject invalid characters, handle whitespace-only strings
+- Data URL length limit enforced in schema (`MAX_DATA_URL_LENGTH`)
+### Fixed
+- URL downloads of non-image content (e.g. HTML error pages) now fail with a clear error instead of a cryptic Sharp decode error
+
+## [1.4.0] - 2026-02-12
+
+### Changed
+- Version bump release (no functional changes from v1.3.0)
+
 ## [1.3.0] - 2026-02-11
 
 ### Added

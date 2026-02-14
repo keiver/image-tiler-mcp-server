@@ -169,6 +169,81 @@ describe("calculateGrid", () => {
   });
 });
 
+describe("calculateGrid with remainder absorption", () => {
+  it("absorbs thin column remainder (7680/1092 → 7 cols instead of 8)", () => {
+    // 7680 / 1092 = 7 * 1092 + 36 remainder; 36/1092 = 0.033 < 0.15
+    // 1092 + 36 = 1128 <= 1568 (claude maxTileSize)
+    const grid = calculateGrid(7680, 4032, 1092, 1590, 1568);
+    expect(grid.cols).toBe(7);
+    expect(grid.rows).toBe(4);
+    expect(grid.totalTiles).toBe(28);
+  });
+
+  it("does NOT absorb when remainder > 15% threshold", () => {
+    // 3600 / 1092 = 3 * 1092 + 324 remainder; 324/1092 = 0.297 > 0.15
+    const grid = calculateGrid(3600, 4032, 1092, 1590, 1568);
+    expect(grid.cols).toBe(4);
+  });
+
+  it("does NOT absorb when merged > maxTileSize (Gemini: 768+64 > 768)", () => {
+    // 1600 / 768 = 2 * 768 + 64; 64/768 = 0.083 < 0.15
+    // but 768 + 64 = 832 > 768 (gemini maxTileSize)
+    const grid = calculateGrid(1600, 768, 768, 258, 768);
+    expect(grid.cols).toBe(3); // can't absorb, stays at ceil(1600/768) = 3
+  });
+
+  it("absorbs 1px remainder (1093/1092 → 1 col)", () => {
+    // 1093 / 1092 = 1 * 1092 + 1 remainder; 1/1092 ≈ 0.0009 < 0.15
+    // 1092 + 1 = 1093 <= 1568
+    const grid = calculateGrid(1093, 1092, 1092, 1590, 1568);
+    expect(grid.cols).toBe(1);
+    expect(grid.rows).toBe(1);
+  });
+
+  it("does NOT absorb single column (cols must be > 1)", () => {
+    // 500 / 1092 → ceil = 1, remainder = 500, but cols = 1, can't reduce to 0
+    const grid = calculateGrid(500, 500, 1092, 1590, 1568);
+    expect(grid.cols).toBe(1);
+    expect(grid.rows).toBe(1);
+  });
+
+  it("absorbs both axes independently", () => {
+    // Width: 1093 / 1092 = ceil → 2 cols, remainder = 1; 1/1092 < 0.15, 1092 + 1 = 1093 <= 1568 → absorb → 1 col
+    // Height: 1093 / 1092 = same → absorb → 1 row
+    const grid = calculateGrid(1093, 1093, 1092, 1590, 1568);
+    expect(grid.cols).toBe(1);
+    expect(grid.rows).toBe(1);
+  });
+
+  it("absorbs one axis but not the other", () => {
+    // Width: 7680 / 1092 → 36 remainder → absorb → 7 cols
+    // Height: 3600 / 1092 → 324 remainder → 0.297 > 0.15 → no absorption → 4 rows
+    const grid = calculateGrid(7680, 3600, 1092, 1590, 1568);
+    expect(grid.cols).toBe(7);
+    expect(grid.rows).toBe(4);
+  });
+
+  it("strict < comparison (exactly at threshold = NOT absorbed)", () => {
+    // Need remainder / tileSize = exactly 0.15
+    // tileSize = 1000, remainder = 150, width = 2150; 150/1000 = 0.15, NOT < 0.15
+    const grid = calculateGrid(2150, 1000, 1000, 1590, 2000);
+    expect(grid.cols).toBe(3); // not absorbed
+  });
+
+  it("backward compatible without maxTileSize (no absorption)", () => {
+    // Same 7680 scenario but no maxTileSize → no absorption
+    const grid = calculateGrid(7680, 4032, 1092, 1590);
+    expect(grid.cols).toBe(8);
+    expect(grid.rows).toBe(4);
+    expect(grid.totalTiles).toBe(32);
+  });
+
+  it("tileSize in output remains nominal", () => {
+    const grid = calculateGrid(7680, 4032, 1092, 1590, 1568);
+    expect(grid.tileSize).toBe(1092);
+  });
+});
+
 describe("getImageMetadata", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -467,6 +542,72 @@ describe("tileImage", () => {
 
     // Should have cleaned up the 2 successfully created tiles
     expect(mockedFs.unlink).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("tileImage with remainder absorption", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedFs.access.mockResolvedValue(undefined);
+    mockedFs.mkdir.mockResolvedValue(undefined);
+    mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
+  });
+
+  it("last column tile extends to image edge (width > tileSize)", async () => {
+    // 7680 / 1092 with maxTileSize=1568 → 7 cols, last col covers 7680 - 6*1092 = 1128px
+    mockMetadata.mockResolvedValue({
+      width: 7680,
+      height: 1092,
+      format: "png",
+      channels: 4,
+    });
+
+    const result = await tileImage("/test/image.png", 1092, "/output", 1590, undefined, 1568);
+    expect(result.grid.cols).toBe(7);
+    expect(result.grid.rows).toBe(1);
+
+    const lastColTile = result.tiles.find((t) => t.col === 6)!;
+    expect(lastColTile.width).toBe(1128); // 7680 - 6*1092 = 1128
+    expect(lastColTile.x).toBe(6 * 1092);
+
+    // Interior tiles remain at nominal tileSize
+    const interiorTile = result.tiles.find((t) => t.col === 0)!;
+    expect(interiorTile.width).toBe(1092);
+  });
+
+  it("last row tile extends to image edge (height > tileSize)", async () => {
+    // 1093 / 1092 → ceil = 2 rows, remainder = 1; absorb → 1 row
+    // Single row covers full height of 1093px
+    mockMetadata.mockResolvedValue({
+      width: 1092,
+      height: 1093,
+      format: "png",
+      channels: 4,
+    });
+
+    const result = await tileImage("/test/image.png", 1092, "/output", 1590, undefined, 1568);
+    expect(result.grid.rows).toBe(1);
+
+    const tile = result.tiles[0];
+    expect(tile.height).toBe(1093); // extends to image edge
+  });
+
+  it("interior tiles remain at nominal tileSize", async () => {
+    mockMetadata.mockResolvedValue({
+      width: 7680,
+      height: 4032,
+      format: "png",
+      channels: 4,
+    });
+
+    const result = await tileImage("/test/image.png", 1092, "/output", 1590, undefined, 1568);
+    // With absorption: 7 cols x 4 rows
+    expect(result.grid.cols).toBe(7);
+
+    // Check an interior tile (not last col, not last row)
+    const interiorTile = result.tiles.find((t) => t.col === 0 && t.row === 0)!;
+    expect(interiorTile.width).toBe(1092);
+    expect(interiorTile.height).toBe(1092);
   });
 });
 

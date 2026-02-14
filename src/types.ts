@@ -55,7 +55,10 @@ export interface ResolvedImageSource {
 // Recommend-settings output
 export interface ModelEstimate {
   model: string;
+  label: string;
   tileSize: number;
+  cols: number;
+  rows: number;
   tiles: number;
   tokens: number;
 }
@@ -81,4 +84,5 @@ export interface RecommendationResult {
   };
   allModels: ModelEstimate[];
   warnings: string[];
+  previewPath?: string;
 }

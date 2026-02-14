@@ -5,10 +5,11 @@ vi.mock("../services/image-processor.js", () => ({
   tileImage: vi.fn(),
   listTilesInDirectory: vi.fn(),
   readTileAsBase64: vi.fn(),
+  computeEstimateForModel: vi.fn(),
 }));
 
-vi.mock("../services/preview-generator.js", () => ({
-  generatePreview: vi.fn(),
+vi.mock("../services/interactive-preview-generator.js", () => ({
+  generateInteractivePreview: vi.fn(),
 }));
 
 vi.mock("../services/image-source-resolver.js", () => ({
@@ -19,8 +20,8 @@ vi.mock("node:fs/promises", () => ({
   copyFile: vi.fn(),
 }));
 
-import { tileImage, listTilesInDirectory, readTileAsBase64 } from "../services/image-processor.js";
-import { generatePreview } from "../services/preview-generator.js";
+import { tileImage, listTilesInDirectory, readTileAsBase64, computeEstimateForModel } from "../services/image-processor.js";
+import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { registerPrepareImageTool } from "../tools/prepare-image.js";
 import { createMockServer } from "./helpers/mock-server.js";
@@ -28,7 +29,8 @@ import { createMockServer } from "./helpers/mock-server.js";
 const mockedTileImage = vi.mocked(tileImage);
 const mockedListTiles = vi.mocked(listTilesInDirectory);
 const mockedReadBase64 = vi.mocked(readTileAsBase64);
-const mockedGeneratePreview = vi.mocked(generatePreview);
+const mockedGeneratePreview = vi.mocked(generateInteractivePreview);
+const mockedComputeEstimate = vi.mocked(computeEstimateForModel);
 const mockedResolveSource = vi.mocked(resolveImageSource);
 
 function makeTileResult(overrides?: Partial<TileImageResult>): TileImageResult {
@@ -84,7 +86,10 @@ describe("registerPrepareImageTool", () => {
       originalSource: "/images/photo.png",
     });
     mockedTileImage.mockResolvedValue(makeTileResult());
-    mockedGeneratePreview.mockResolvedValue("/output/tiles/preview.html");
+    mockedGeneratePreview.mockResolvedValue("/output/tiles/photo-preview.html");
+    mockedComputeEstimate.mockReturnValue({
+      model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 2, tiles: 4, tokens: 6360,
+    });
     mockedListTiles.mockResolvedValue(makeTilePaths(4));
     mockedReadBase64.mockResolvedValue("AAAA");
   });

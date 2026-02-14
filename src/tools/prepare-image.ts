@@ -2,14 +2,15 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PrepareImageInputSchema } from "../schemas/index.js";
-import { tileImage, listTilesInDirectory, readTileAsBase64 } from "../services/image-processor.js";
-import { generatePreview } from "../services/preview-generator.js";
+import { tileImage, listTilesInDirectory, readTileAsBase64, computeEstimateForModel } from "../services/image-processor.js";
+import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
-import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, MAX_TILES_PER_BATCH } from "../constants.js";
+import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, MAX_TILES_PER_BATCH, DEFAULT_MAX_DIMENSION } from "../constants.js";
+import type { ModelEstimate } from "../types.js";
 
 const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
 
-const PREPARE_IMAGE_DESCRIPTION = `IMPORTANT: Call tiler_recommend_settings first to show the user token cost estimates. Only use this after the user has confirmed model and settings.
+const PREPARE_IMAGE_DESCRIPTION = `IMPORTANT: Call tiler_recommend_settings first to show the user token cost estimates. Only use this after the user has confirmed a preset and settings.
 
 Convenience tool for when the user has already confirmed settings via tiler_recommend_settings and wants tiling + first batch of tiles in one call. Combines tiler_tile_image + tiler_get_tiles into one round-trip.
 
@@ -22,7 +23,7 @@ Args:
   - sourceUrl (string, optional): HTTPS URL to download the image from
   - dataUrl (string, optional): Data URL with base64-encoded image
   - imageBase64 (string, optional): Raw base64-encoded image data
-  - model (string, optional): Target vision model — ${modelList} (default: "${DEFAULT_MODEL}")
+  - model (string, optional): Tiling preset — selects tile size and token cost optimized for a specific vision pipeline. Options: ${modelList} (default: "${DEFAULT_MODEL}")
   - tileSize (number, optional): Override tile size in pixels
   - maxDimension (number, optional): Max dimension for auto-downscaling (default: 10000, 0 to disable)
   - outputDir (string, optional): Custom output directory
@@ -111,7 +112,8 @@ export function registerPrepareImageTool(server: McpServer): void {
           effectiveTileSize,
           resolvedOutputDir,
           config.tokensPerTile,
-          maxDimension === 0 ? undefined : maxDimension
+          maxDimension === 0 ? undefined : maxDimension,
+          config.maxTileSize
         );
 
         // Copy source image for non-file sources so preview works
@@ -127,9 +129,26 @@ export function registerPrepareImageTool(server: McpServer): void {
           }
         }
 
+        // Compute all-model estimates using effective (post-resize) dimensions
+        const allModels: ModelEstimate[] = VISION_MODELS.map((m) =>
+          computeEstimateForModel(m, result.sourceImage.width, result.sourceImage.height)
+        );
+
         let previewPath: string | undefined;
         try {
-          previewPath = await generatePreview(result, previewSourcePath, model);
+          previewPath = await generateInteractivePreview(
+            {
+              sourceImagePath: previewSourcePath,
+              effectiveWidth: result.sourceImage.width,
+              effectiveHeight: result.sourceImage.height,
+              originalWidth: result.resize ? result.resize.originalWidth : result.sourceImage.width,
+              originalHeight: result.resize ? result.resize.originalHeight : result.sourceImage.height,
+              maxDimension: maxDimension ?? DEFAULT_MAX_DIMENSION,
+              recommendedModel: model,
+              models: allModels,
+            },
+            result.outputDir
+          );
         } catch (previewError) {
           const msg = previewError instanceof Error ? previewError.message : String(previewError);
           warnings.push(`Preview generation failed: ${msg}`);
@@ -150,7 +169,7 @@ export function registerPrepareImageTool(server: McpServer): void {
           `→ Saved to: ${result.outputDir}`,
         );
         if (previewPath) {
-          summaryLines.push(`→ Preview: preview.html (open in browser to visualize the grid)`);
+          summaryLines.push(`→ Preview: ${path.basename(previewPath)} (open in browser to visualize the grid)`);
         }
         if (warnings.length > 0) {
           summaryLines.push("", `⚠ ${warnings.join("\n⚠ ")}`);

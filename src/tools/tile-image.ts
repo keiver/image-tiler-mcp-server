@@ -2,10 +2,11 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TileImageInputSchema } from "../schemas/index.js";
-import { tileImage } from "../services/image-processor.js";
-import { generatePreview } from "../services/preview-generator.js";
+import { tileImage, computeEstimateForModel } from "../services/image-processor.js";
+import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
-import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS } from "../constants.js";
+import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, DEFAULT_MAX_DIMENSION } from "../constants.js";
+import type { ModelEstimate } from "../types.js";
 
 const TILE_IMAGE_DESCRIPTION = (() => {
   const modelLines = VISION_MODELS.map((m) => {
@@ -15,13 +16,13 @@ const TILE_IMAGE_DESCRIPTION = (() => {
   }).join("\n");
   const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
   const exampleLines = VISION_MODELS.filter((m) => m !== DEFAULT_MODEL).map(
-    (m) => `  - Tile for ${MODEL_CONFIGS[m].label}: filePath="/path/to/image.png", model="${m}"`
+    (m) => `  - ${MODEL_CONFIGS[m].label} preset: filePath="/path/to/image.png", model="${m}"`
   ).join("\n");
-  return `IMPORTANT: Call tiler_recommend_settings first to show the user token cost estimates for all models. Only call this tool after the user has reviewed the estimates and confirmed their preferred model and settings.
+  return `IMPORTANT: Call tiler_recommend_settings first to show the user token cost estimates for all presets. Only call this tool after the user has reviewed the estimates and confirmed their preferred preset and settings.
 
-Split a large image into optimally-sized tiles for LLM vision analysis.
+Split a large image into optimally-sized tiles for LLM vision analysis. The "model" parameter selects a tiling preset (tile size + token cost) optimized for a specific vision pipeline — it does NOT switch which LLM processes the tiles. Your current LLM is always the one that will analyze the output.
 
-Supports ${VISION_MODELS.length} vision models via the "model" parameter:
+${VISION_MODELS.length} tiling presets available via the "model" parameter:
 ${modelLines}
 
 Tiles are saved as PNG files to a 'tiles/{name}' subfolder next to the source image (or a custom output directory).
@@ -33,8 +34,8 @@ Args:
   - sourceUrl (string, optional): HTTPS URL to download the image from (max 50MB, 30s timeout)
   - dataUrl (string, optional): Data URL with base64-encoded image
   - imageBase64 (string, optional): Raw base64-encoded image data
-  - model (string, optional): Target vision model — ${modelList} (default: "${DEFAULT_MODEL}")
-  - tileSize (number, optional): Override tile size in pixels. If omitted, uses the model's optimal default. Clamped to the model's max with a warning if exceeded.
+  - model (string, optional): Tiling preset — selects tile size and token cost optimized for a specific vision pipeline. Options: ${modelList} (default: "${DEFAULT_MODEL}")
+  - tileSize (number, optional): Override tile size in pixels. If omitted, uses the preset's optimal default. Clamped to the preset's max with a warning if exceeded.
   - maxDimension (number, optional): Max dimension in px (256-65536). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. No-op if the image is already within bounds. Defaults to 10000px. Set to 0 to disable auto-downscaling.
   - outputDir (string, optional): Custom output directory for tiles
 
@@ -42,12 +43,12 @@ At least one image source (filePath, sourceUrl, dataUrl, or imageBase64) is requ
 
 Returns:
   JSON metadata with source image dimensions, grid layout (rows × cols), total tile count,
-  estimated token cost, model used, output directory path, and per-tile details (index, position, dimensions, file path).
+  estimated token cost, preset used, output directory path, and per-tile details (index, position, dimensions, file path).
 
 After tiling, use tiler_get_tiles to retrieve tile images in batches for visual analysis.
 
 Examples:
-  - Tile for Claude (default): filePath="/path/to/screenshot.png"
+  - Tile for Claude preset (default): filePath="/path/to/screenshot.png"
 ${exampleLines}
   - Tile from URL: sourceUrl="https://example.com/image.png"
   - Custom tile size: filePath="/path/to/image.png", tileSize=800
@@ -138,7 +139,8 @@ export function registerTileImageTool(server: McpServer): void {
           effectiveTileSize,
           resolvedOutputDir,
           config.tokensPerTile,
-          maxDimension === 0 ? undefined : maxDimension
+          maxDimension === 0 ? undefined : maxDimension,
+          config.maxTileSize
         );
 
         // For non-file sources, copy the source image (or resized version) to outputDir
@@ -156,9 +158,26 @@ export function registerTileImageTool(server: McpServer): void {
           }
         }
 
+        // Compute all-model estimates using effective (post-resize) dimensions
+        const allModels: ModelEstimate[] = VISION_MODELS.map((m) =>
+          computeEstimateForModel(m, result.sourceImage.width, result.sourceImage.height)
+        );
+
         let previewPath: string | undefined;
         try {
-          previewPath = await generatePreview(result, previewSourcePath, model);
+          previewPath = await generateInteractivePreview(
+            {
+              sourceImagePath: previewSourcePath,
+              effectiveWidth: result.sourceImage.width,
+              effectiveHeight: result.sourceImage.height,
+              originalWidth: result.resize ? result.resize.originalWidth : result.sourceImage.width,
+              originalHeight: result.resize ? result.resize.originalHeight : result.sourceImage.height,
+              maxDimension: maxDimension ?? DEFAULT_MAX_DIMENSION,
+              recommendedModel: model,
+              models: allModels,
+            },
+            result.outputDir
+          );
         } catch (previewError) {
           const msg = previewError instanceof Error ? previewError.message : String(previewError);
           warnings.push(`Preview generation failed: ${msg}`);
@@ -182,7 +201,7 @@ export function registerTileImageTool(server: McpServer): void {
 
         if (previewPath) {
           summaryLines.push(
-            `→ Preview: preview.html (open in browser to visualize the grid)`
+            `→ Preview: ${path.basename(previewPath)} (open in browser to visualize the grid)`
           );
         }
 

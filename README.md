@@ -3,10 +3,10 @@
 Split large images into optimally-sized tiles so LLM vision models see every detail — no downscaling, no lost text.
 
 <p align="center">
-  <img src="assets/preview.webp" alt="Preview of image tiling grid for veguitas.com" width="100%" />
+  <img src="assets/preview.gif" alt="Preview of image tiling grid with advised vision models size and token estimates" width="100%" />
 </p>
 
-## Why tiling matters
+## Tiling for LLM Vision
 
 LLM vision systems have a **maximum input resolution**. When you send an image larger than that limit, the model silently downscales it before processing. A 3600×22810 full-page screenshot gets shrunk to ~247×1568 by Claude — text becomes unreadable, UI details disappear, and the model can't analyze what it can't see.
 
@@ -21,8 +21,6 @@ LLM vision systems have a **maximum input resolution**. When you send an image l
 Each tile is processed at **full resolution** — no downscaling — preserving text, UI elements, and fine detail across the entire image.
 
 **Auto-downscaling:** Images over 10,000px on their longest side are automatically downscaled before tiling (configurable via `maxDimension`). This prevents extreme tile counts on very long screenshots — e.g., a 3600×22810 page drops from 84 tiles / ~134K tokens to 20 tiles / ~32K tokens with no visible quality loss. Set `maxDimension=0` to disable.
-
-See [sample of generated tiles here.](https://github.com/keiver/image-tiler-mcp-server/tree/main/assets/tiles/)
 
 ### Supported Models
 
@@ -467,9 +465,13 @@ PNG, JPEG, WebP, TIFF, GIF
 
 ## Security
 
-This is a **local MCP server** that runs on your machine via stdio. It operates with the same filesystem permissions as the MCP client process that spawns it. File paths provided to the tools are resolved and accessed directly — there is no sandboxing or path restriction beyond your OS-level permissions.
+This is a **local MCP server** designed to run on your machine via stdio. It operates with the same filesystem permissions as the MCP client process that spawns it.
 
-**URL downloads:** When using `sourceUrl`, the server fetches images over HTTPS only (no HTTP). Downloads are limited to 50MB with a 30-second timeout. Downloaded files are written to a temp directory and cleaned up after processing. The server does not send any data externally — it only receives.
+**Trust model:** This server trusts its MCP client. Path parameters (`filePath`, `outputDir`, `tilesDir`) are resolved and accessed directly — there is no sandboxing or path restriction beyond your OS-level permissions. This is expected for local MCP tools where the client (e.g. Claude Code) already has filesystem access.
+
+**URL downloads:** When using `sourceUrl`, the server fetches images over HTTPS only (no HTTP). Downloads are limited to 50MB with a 30-second timeout. Content-Type is validated — non-image responses (text/html, application/json, etc.) are rejected with a clear error. Downloaded files are written to a temp directory and cleaned up after processing. The server does not send any data externally — it only receives. No private/internal IP validation is performed on URLs.
+
+**If deploying remotely:** This server is not designed for multi-tenant or network-exposed environments. If you expose it beyond local stdio, you should add path validation (restrict to allowed directories), SSRF protection (block private IP ranges like 127.0.0.0/8, 10.0.0.0/8, 169.254.169.254), and authentication.
 
 ## Requirements
 

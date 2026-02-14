@@ -29,6 +29,10 @@ function makeIdempotentCleanup(tempPath: string): () => Promise<void> {
   };
 }
 
+// Note: No private-IP / SSRF hostname validation is performed here. This is intentional
+// for a local stdio MCP server where the client is trusted. If this server is ever
+// exposed over a network transport, add hostname blocklisting for private IP ranges
+// (10.x, 172.16-31.x, 192.168.x, 169.254.x, localhost, ::1).
 async function resolveUrl(url: string): Promise<ResolvedImageSource> {
   const parsed = new URL(url);
   if (!ALLOWED_URL_PROTOCOLS.includes(parsed.protocol as typeof ALLOWED_URL_PROTOCOLS[number])) {
@@ -57,6 +61,17 @@ async function resolveUrl(url: string): Promise<ResolvedImageSource> {
 
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} fetching ${url}`);
+  }
+
+  // Reject clearly non-image Content-Types (e.g. text/html, application/json)
+  const contentType = response.headers.get("content-type");
+  if (contentType) {
+    const lower = contentType.toLowerCase();
+    if (!lower.startsWith("image/") && !lower.startsWith("application/octet-stream")) {
+      throw new Error(
+        `URL returned non-image Content-Type "${contentType}". Expected an image/* MIME type.`
+      );
+    }
   }
 
   const contentLength = response.headers.get("content-length");
@@ -97,6 +112,12 @@ async function resolveDataUrl(dataUrl: string): Promise<ResolvedImageSource> {
   const base64Data = match[2];
   const buffer = Buffer.from(base64Data, "base64");
 
+  if (buffer.length > MAX_DOWNLOAD_SIZE_BYTES) {
+    throw new Error(
+      `Decoded data URL is ${buffer.length} bytes, exceeding the ${MAX_DOWNLOAD_SIZE_BYTES} byte limit.`
+    );
+  }
+
   const ext = mimeSubtypeToExtension(mimeSubtype);
   const tempPath = makeTempPath(ext);
   await fs.writeFile(tempPath, buffer);
@@ -110,9 +131,22 @@ async function resolveDataUrl(dataUrl: string): Promise<ResolvedImageSource> {
 }
 
 async function resolveBase64(base64: string): Promise<ResolvedImageSource> {
-  const buffer = Buffer.from(base64, "base64");
+  const trimmed = base64.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Base64 string is empty.");
+  }
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(trimmed)) {
+    throw new Error("Base64 string contains invalid characters.");
+  }
+
+  const buffer = Buffer.from(trimmed, "base64");
   if (buffer.length === 0) {
     throw new Error("Base64 string decoded to zero bytes.");
+  }
+  if (buffer.length > MAX_DOWNLOAD_SIZE_BYTES) {
+    throw new Error(
+      `Decoded base64 data is ${buffer.length} bytes, exceeding the ${MAX_DOWNLOAD_SIZE_BYTES} byte limit.`
+    );
   }
 
   const ext = guessExtensionFromMagicBytes(buffer) || ".png";
@@ -127,7 +161,7 @@ async function resolveBase64(base64: string): Promise<ResolvedImageSource> {
   };
 }
 
-function guessExtensionFromContentType(ct: string | null): string | undefined {
+export function guessExtensionFromContentType(ct: string | null): string | undefined {
   if (!ct) return undefined;
   const lower = ct.toLowerCase();
   if (lower.includes("png")) return ".png";
@@ -138,7 +172,7 @@ function guessExtensionFromContentType(ct: string | null): string | undefined {
   return undefined;
 }
 
-function mimeSubtypeToExtension(subtype: string): string {
+export function mimeSubtypeToExtension(subtype: string): string {
   const lower = subtype.toLowerCase();
   if (lower === "jpeg" || lower === "jpg") return ".jpg";
   if (lower === "png") return ".png";
@@ -148,7 +182,7 @@ function mimeSubtypeToExtension(subtype: string): string {
   return `.${lower}`;
 }
 
-function guessExtensionFromMagicBytes(buf: Buffer): string | undefined {
+export function guessExtensionFromMagicBytes(buf: Buffer): string | undefined {
   if (buf.length < 4) return undefined;
   if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return ".png";
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return ".jpg";

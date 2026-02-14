@@ -19,6 +19,7 @@ import {
   MAX_BASE64_LENGTH,
   IMAGE_INTENTS,
   BUDGET_LEVELS,
+  MIN_REMAINDER_RATIO,
 } from "../constants.js";
 
 
@@ -67,6 +68,10 @@ describe("constants", () => {
 
     it("DEFAULT_MAX_DIMENSION is 10000", () => {
       expect(DEFAULT_MAX_DIMENSION).toBe(10000);
+    });
+
+    it("MIN_REMAINDER_RATIO is 0.15", () => {
+      expect(MIN_REMAINDER_RATIO).toBe(0.15);
     });
   });
 

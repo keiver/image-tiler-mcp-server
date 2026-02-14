@@ -1,7 +1,11 @@
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { RecommendSettingsInputSchema } from "../schemas/index.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
-import { getImageMetadata, calculateGrid } from "../services/image-processor.js";
+import { getImageMetadata, calculateGrid, computeEstimateForModel } from "../services/image-processor.js";
+import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import {
   VISION_MODELS,
   MODEL_CONFIGS,
@@ -77,50 +81,16 @@ function applyHeuristics(
   return { tileSize, maxDimension, rationale };
 }
 
-function computeEstimateForModel(
-  modelKey: string,
-  imageWidth: number,
-  imageHeight: number,
-  overrideTileSize?: number,
-  effectiveMaxDimension?: number
-): ModelEstimate {
-  const config = MODEL_CONFIGS[modelKey as keyof typeof MODEL_CONFIGS];
-  let tileSize = overrideTileSize ?? config.defaultTileSize;
-
-  // Clamp to model bounds
-  tileSize = Math.max(config.minTileSize, Math.min(tileSize, config.maxTileSize));
-
-  // Simulate downscale
-  let w = imageWidth;
-  let h = imageHeight;
-  if (effectiveMaxDimension && effectiveMaxDimension > 0) {
-    const longestSide = Math.max(w, h);
-    if (longestSide > effectiveMaxDimension) {
-      const scale = effectiveMaxDimension / longestSide;
-      w = Math.round(w * scale);
-      h = Math.round(h * scale);
-    }
-  }
-
-  const grid = calculateGrid(w, h, tileSize, config.tokensPerTile);
-  return {
-    model: modelKey,
-    tileSize,
-    tiles: grid.totalTiles,
-    tokens: grid.estimatedTokens,
-  };
-}
-
 const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
 
 const RECOMMEND_DESCRIPTION = `IMPORTANT: Always call this tool FIRST before tiling any image. This is the mandatory first step in the tiling workflow.
 
 Workflow:
-  1. Call tiler_recommend_settings with the image → get cost estimates for all models
-  2. Present the allModels comparison to the user and wait for them to choose a model and confirm the tile count before proceeding
+  1. Call tiler_recommend_settings with the image → get cost estimates for all tiling presets
+  2. Present the allModels comparison to the user and wait for them to choose a preset and confirm the tile count before proceeding
   3. Only after user confirmation, call tiler_tile_image or tiler_prepare_image with the confirmed settings
 
-Reads image dimensions and returns cost estimates WITHOUT creating any tiles. Returns recommended settings, per-model comparison, and grid dimensions so the user can make an informed decision before committing tokens.
+Reads image dimensions and returns cost estimates WITHOUT creating any tiles. Each "model" entry in the response is a tiling preset (tile size + token cost) optimized for a specific vision pipeline — it does NOT switch which LLM processes the tiles. Your current LLM is always the one that will analyze the output. Pick the preset that matches your LLM's vision pipeline.
 
 Inputs: At least one image source (filePath, sourceUrl, dataUrl, or imageBase64). Optional: model, tileSize, maxDimension, intent, budget.
 
@@ -134,7 +104,8 @@ Returns JSON with:
   - rationale: why these settings were chosen
   - imageInfo: { width, height, megapixels, aspectRatio }
   - estimate: { gridCols, gridRows, totalTiles, estimatedTokens }
-  - allModels: comparison across all ${VISION_MODELS.length} models (${modelList})
+  - allModels: comparison across all ${VISION_MODELS.length} tiling presets (${modelList})
+  - previewPath: path to an interactive HTML preview with preset-switching tabs
   - warnings: any issues detected`;
 
 export function registerRecommendSettingsTool(server: McpServer): void {
@@ -145,7 +116,7 @@ export function registerRecommendSettingsTool(server: McpServer): void {
       description: RECOMMEND_DESCRIPTION,
       inputSchema: RecommendSettingsInputSchema,
       annotations: {
-        readOnlyHint: true,
+        readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: true,
@@ -186,7 +157,43 @@ export function registerRecommendSettingsTool(server: McpServer): void {
           }
         }
         const recConfig = MODEL_CONFIGS[effectiveModel as keyof typeof MODEL_CONFIGS];
-        const grid = calculateGrid(simW, simH, recTileSize, recConfig.tokensPerTile);
+        const grid = calculateGrid(simW, simH, recTileSize, recConfig.tokensPerTile, recConfig.maxTileSize);
+
+        // Generate interactive preview
+        let previewPath: string | undefined;
+        try {
+          let previewOutputDir: string;
+          let previewSourcePath: string;
+
+          if (source.sourceType === "file") {
+            previewOutputDir = path.dirname(path.resolve(source.localPath));
+            previewSourcePath = source.localPath;
+          } else {
+            previewOutputDir = await fs.mkdtemp(path.join(os.tmpdir(), "tiler-recommend-"));
+            // Copy source to output dir so preview.html can reference it
+            const sourceExt = path.extname(source.localPath) || ".png";
+            const copiedPath = path.join(previewOutputDir, `source${sourceExt}`);
+            await fs.copyFile(source.localPath, copiedPath);
+            previewSourcePath = copiedPath;
+          }
+
+          previewPath = await generateInteractivePreview(
+            {
+              sourceImagePath: previewSourcePath,
+              effectiveWidth: simW,
+              effectiveHeight: simH,
+              originalWidth: metadata.width,
+              originalHeight: metadata.height,
+              maxDimension: recMaxDim,
+              recommendedModel: effectiveModel,
+              models: allModels,
+            },
+            previewOutputDir
+          );
+        } catch (previewError) {
+          const msg = previewError instanceof Error ? previewError.message : String(previewError);
+          warnings.push(`Preview generation failed: ${msg}`);
+        }
 
         const result: RecommendationResult = {
           recommended: {
@@ -209,6 +216,7 @@ export function registerRecommendSettingsTool(server: McpServer): void {
           },
           allModels,
           warnings,
+          previewPath,
         };
 
         return {

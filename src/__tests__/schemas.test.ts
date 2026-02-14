@@ -6,6 +6,7 @@ import {
   RecommendSettingsInputSchema,
   PrepareImageInputSchema,
 } from "../schemas/index.js";
+import { MAX_DATA_URL_LENGTH } from "../constants.js";
 
 const tileImageSchema = z.object(TileImageInputSchema);
 const getTilesSchema = z.object(GetTilesInputSchema);
@@ -53,6 +54,19 @@ describe("TileImageInputSchema", () => {
     it("accepts imageBase64", () => {
       const result = tileImageSchema.parse({ imageBase64: "AAAA" });
       expect(result.imageBase64).toBe("AAAA");
+    });
+
+    it("rejects dataUrl exceeding max length", () => {
+      const oversized = "data:image/png;base64," + "A".repeat(MAX_DATA_URL_LENGTH);
+      expect(() => tileImageSchema.parse({ dataUrl: oversized })).toThrow(
+        "Data URL must not exceed"
+      );
+    });
+
+    it("accepts dataUrl within max length", () => {
+      const valid = "data:image/png;base64,AAAA";
+      const result = tileImageSchema.parse({ dataUrl: valid });
+      expect(result.dataUrl).toBe(valid);
     });
 
     it("all source fields are optional", () => {

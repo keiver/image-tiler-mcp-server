@@ -7,8 +7,11 @@ import {
   tileImage,
   listTilesInDirectory,
   readTileAsBase64,
+  computeEstimateForModel,
 } from "../services/image-processor.js";
-import { generatePreview } from "../services/preview-generator.js";
+import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
+import { VISION_MODELS } from "../constants.js";
+import type { ModelEstimate } from "../types.js";
 
 const ASSETS_DIR = path.resolve(import.meta.dirname, "../../assets");
 const LANDSCAPE = path.join(ASSETS_DIR, "landscape.png");
@@ -156,6 +159,63 @@ describe("integration: portrait image (3600×22810)", () => {
 
   it("estimated tokens match formula", () => {
     expect(result.grid.estimatedTokens).toBe(84 * 1590);
+  });
+});
+
+describe("integration: landscape with remainder absorption (Claude)", () => {
+  let outputDir: string;
+  let result: Awaited<ReturnType<typeof tileImage>>;
+
+  it("tiles with absorption enabled (maxTileSize=1568)", async () => {
+    outputDir = await makeTempDir("landscape-absorb");
+    result = await tileImage(LANDSCAPE, 1092, outputDir, 1590, undefined, 1568);
+
+    expect(result.sourceImage.width).toBe(7680);
+    expect(result.sourceImage.height).toBe(4032);
+  }, 30000);
+
+  it("produces 7×4 grid = 28 tiles (absorbed thin column)", () => {
+    // Without absorption: ceil(7680/1092)=8, with absorption: 7 (36px remainder absorbed)
+    // Bottom row: 4032 - 3*1092 = 756px, 756/1092 = 0.69 > 0.15, not absorbed → 4 rows
+    expect(result.grid.cols).toBe(7);
+    expect(result.grid.rows).toBe(4);
+    expect(result.grid.totalTiles).toBe(28);
+    expect(result.tiles).toHaveLength(28);
+  });
+
+  it("last column tiles are 1128px wide (absorbed remainder)", async () => {
+    // 7680 - 6*1092 = 1128px
+    const lastColTile = result.tiles.find((t) => t.row === 0 && t.col === 6)!;
+    expect(lastColTile.width).toBe(1128);
+    expect(lastColTile.height).toBe(1092);
+
+    // Verify actual file dimensions via Sharp
+    const meta = await sharp(lastColTile.filePath).metadata();
+    expect(meta.width).toBe(1128);
+    expect(meta.height).toBe(1092);
+  });
+
+  it("interior tiles remain at nominal tileSize", async () => {
+    const interiorTile = result.tiles.find((t) => t.row === 0 && t.col === 0)!;
+    expect(interiorTile.width).toBe(1092);
+    expect(interiorTile.height).toBe(1092);
+
+    const meta = await sharp(interiorTile.filePath).metadata();
+    expect(meta.width).toBe(1092);
+  });
+
+  it("saves 4 tiles / ~6,360 tokens vs non-absorbed", () => {
+    expect(result.grid.totalTiles).toBe(28);
+    expect(result.grid.estimatedTokens).toBe(28 * 1590);
+  });
+
+  it("tile files exist with correct count", async () => {
+    const files = await fs.readdir(outputDir);
+    const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".png"));
+    expect(tileFiles).toHaveLength(28);
+    // Last tile should be tile_003_006 (not tile_003_007)
+    expect(tileFiles).toContain("tile_003_006.png");
+    expect(tileFiles).not.toContain("tile_003_007.png");
   });
 });
 
@@ -338,21 +398,69 @@ describe("integration: portrait with maxDimension=1092", () => {
   }, 60000);
 });
 
-describe("integration: preview generation", () => {
-  it("generates preview.html in the output directory", async () => {
+describe("integration: error handling", () => {
+  it("throws a descriptive error for a corrupt image file", async () => {
+    const outputDir = await makeTempDir("corrupt");
+    const corruptPath = path.join(outputDir, "corrupt.png");
+    // Write invalid data that is not a valid image
+    await fs.writeFile(corruptPath, Buffer.from("this is not an image file at all"));
+
+    await expect(tileImage(corruptPath, 1092, outputDir)).rejects.toThrow();
+  });
+
+  it("throws for a nonexistent file path", async () => {
+    const outputDir = await makeTempDir("missing");
+    const missingPath = path.join(outputDir, "does-not-exist.png");
+
+    await expect(tileImage(missingPath, 1092, outputDir)).rejects.toThrow();
+  });
+});
+
+describe("integration: interactive preview generation", () => {
+  it("generates {basename}-preview.html in the output directory", async () => {
     const outputDir = await makeTempDir("preview");
     const result = await tileImage(LANDSCAPE, 3072, outputDir);
-    const previewPath = await generatePreview(result, LANDSCAPE, "claude");
+    const allModels: ModelEstimate[] = VISION_MODELS.map((m) =>
+      computeEstimateForModel(m, result.sourceImage.width, result.sourceImage.height)
+    );
+    const previewPath = await generateInteractivePreview(
+      {
+        sourceImagePath: LANDSCAPE,
+        effectiveWidth: result.sourceImage.width,
+        effectiveHeight: result.sourceImage.height,
+        originalWidth: result.sourceImage.width,
+        originalHeight: result.sourceImage.height,
+        maxDimension: 10000,
+        recommendedModel: "claude",
+        models: allModels,
+      },
+      outputDir
+    );
 
-    expect(previewPath).toBe(path.join(outputDir, "preview.html"));
+    expect(previewPath).toBe(path.join(outputDir, "landscape-preview.html"));
     const stat = await fs.stat(previewPath);
     expect(stat.isFile()).toBe(true);
   }, 30000);
 
-  it("preview.html contains DOCTYPE and source dimensions", async () => {
+  it("preview HTML contains DOCTYPE and source dimensions", async () => {
     const outputDir = await makeTempDir("preview-content");
     const result = await tileImage(LANDSCAPE, 3072, outputDir);
-    const previewPath = await generatePreview(result, LANDSCAPE, "claude");
+    const allModels: ModelEstimate[] = VISION_MODELS.map((m) =>
+      computeEstimateForModel(m, result.sourceImage.width, result.sourceImage.height)
+    );
+    const previewPath = await generateInteractivePreview(
+      {
+        sourceImagePath: LANDSCAPE,
+        effectiveWidth: result.sourceImage.width,
+        effectiveHeight: result.sourceImage.height,
+        originalWidth: result.sourceImage.width,
+        originalHeight: result.sourceImage.height,
+        maxDimension: 10000,
+        recommendedModel: "claude",
+        models: allModels,
+      },
+      outputDir
+    );
 
     const html = await fs.readFile(previewPath, "utf-8");
     expect(html).toContain("<!DOCTYPE html>");
@@ -360,14 +468,29 @@ describe("integration: preview generation", () => {
     expect(html).toContain("4032");
   }, 30000);
 
-  it("listTilesInDirectory does NOT include preview.html", async () => {
+  it("listTilesInDirectory does NOT include preview HTML", async () => {
     const outputDir = await makeTempDir("preview-list");
     const result = await tileImage(LANDSCAPE, 3072, outputDir);
-    await generatePreview(result, LANDSCAPE, "claude");
+    const allModels: ModelEstimate[] = VISION_MODELS.map((m) =>
+      computeEstimateForModel(m, result.sourceImage.width, result.sourceImage.height)
+    );
+    await generateInteractivePreview(
+      {
+        sourceImagePath: LANDSCAPE,
+        effectiveWidth: result.sourceImage.width,
+        effectiveHeight: result.sourceImage.height,
+        originalWidth: result.sourceImage.width,
+        originalHeight: result.sourceImage.height,
+        maxDimension: 10000,
+        recommendedModel: "claude",
+        models: allModels,
+      },
+      outputDir
+    );
 
     const tilePaths = await listTilesInDirectory(outputDir);
     const filenames = tilePaths.map((p) => path.basename(p));
-    expect(filenames).not.toContain("preview.html");
+    expect(filenames).not.toContain("landscape-preview.html");
     // All returned files should be tile PNGs
     for (const f of filenames) {
       expect(f).toMatch(/^tile_\d+_\d+\.png$/);
