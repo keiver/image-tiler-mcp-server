@@ -7,8 +7,10 @@ import {
   MAX_TOTAL_TILES,
   PNG_COMPRESSION_LEVEL,
   TOKENS_PER_TILE,
+  MIN_REMAINDER_RATIO,
+  MODEL_CONFIGS,
 } from "../constants.js";
-import type { ImageMetadata, ResizeInfo, TileGridInfo, TileInfo, TileImageResult } from "../types.js";
+import type { ImageMetadata, ResizeInfo, TileGridInfo, TileInfo, TileImageResult, ModelEstimate } from "../types.js";
 
 sharp.cache({ items: 10, memory: 200 });
 sharp.concurrency(2);
@@ -45,10 +47,30 @@ export function calculateGrid(
   width: number,
   height: number,
   tileSize: number,
-  tokensPerTile: number = TOKENS_PER_TILE
+  tokensPerTile: number = TOKENS_PER_TILE,
+  maxTileSize?: number
 ): TileGridInfo {
-  const cols = Math.ceil(width / tileSize);
-  const rows = Math.ceil(height / tileSize);
+  let cols = Math.ceil(width / tileSize);
+  let rows = Math.ceil(height / tileSize);
+
+  // Absorb thin remainder strips into the last column/row when possible.
+  // A remainder < MIN_REMAINDER_RATIO of tileSize wastes a full tile worth of tokens.
+  if (maxTileSize !== undefined) {
+    const colRemainder = width % tileSize;
+    if (colRemainder > 0 && colRemainder < MIN_REMAINDER_RATIO * tileSize && cols > 1) {
+      if (tileSize + colRemainder <= maxTileSize) {
+        cols--;
+      }
+    }
+
+    const rowRemainder = height % tileSize;
+    if (rowRemainder > 0 && rowRemainder < MIN_REMAINDER_RATIO * tileSize && rows > 1) {
+      if (tileSize + rowRemainder <= maxTileSize) {
+        rows--;
+      }
+    }
+  }
+
   const totalTiles = cols * rows;
 
   return {
@@ -57,6 +79,43 @@ export function calculateGrid(
     totalTiles,
     tileSize,
     estimatedTokens: totalTiles * tokensPerTile,
+  };
+}
+
+export function computeEstimateForModel(
+  modelKey: string,
+  imageWidth: number,
+  imageHeight: number,
+  overrideTileSize?: number,
+  effectiveMaxDimension?: number
+): ModelEstimate {
+  const config = MODEL_CONFIGS[modelKey as keyof typeof MODEL_CONFIGS];
+  let tileSize = overrideTileSize ?? config.defaultTileSize;
+
+  // Clamp to model bounds
+  tileSize = Math.max(config.minTileSize, Math.min(tileSize, config.maxTileSize));
+
+  // Simulate downscale
+  let w = imageWidth;
+  let h = imageHeight;
+  if (effectiveMaxDimension && effectiveMaxDimension > 0) {
+    const longestSide = Math.max(w, h);
+    if (longestSide > effectiveMaxDimension) {
+      const scale = effectiveMaxDimension / longestSide;
+      w = Math.round(w * scale);
+      h = Math.round(h * scale);
+    }
+  }
+
+  const grid = calculateGrid(w, h, tileSize, config.tokensPerTile, config.maxTileSize);
+  return {
+    model: modelKey,
+    label: config.label,
+    tileSize,
+    cols: grid.cols,
+    rows: grid.rows,
+    tiles: grid.totalTiles,
+    tokens: grid.estimatedTokens,
   };
 }
 
@@ -100,7 +159,8 @@ export async function tileImage(
   tileSize: number,
   outputDir: string,
   tokensPerTile: number = TOKENS_PER_TILE,
-  maxDimension?: number
+  maxDimension?: number,
+  maxTileSize?: number
 ): Promise<TileImageResult> {
   const resolvedPath = path.resolve(filePath);
 
@@ -134,7 +194,8 @@ export async function tileImage(
       imageMetadata.width,
       imageMetadata.height,
       tileSize,
-      tokensPerTile
+      tokensPerTile,
+      maxTileSize
     );
 
     if (grid.totalTiles > MAX_TOTAL_TILES) {
@@ -152,8 +213,9 @@ export async function tileImage(
         for (let col = 0; col < grid.cols; col++) {
           const x = col * tileSize;
           const y = row * tileSize;
-          const tileWidth = Math.min(tileSize, imageMetadata.width - x);
-          const tileHeight = Math.min(tileSize, imageMetadata.height - y);
+          // Last column/row extends to the image edge (covers absorbed remainders)
+          const tileWidth = col === grid.cols - 1 ? imageMetadata.width - x : tileSize;
+          const tileHeight = row === grid.rows - 1 ? imageMetadata.height - y : tileSize;
 
           const filename = `tile_${String(row).padStart(3, "0")}_${String(col).padStart(3, "0")}.png`;
           const tilePath = path.join(resolvedOutputDir, filename);

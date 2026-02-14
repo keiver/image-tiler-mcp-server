@@ -13,6 +13,13 @@ import {
   MODEL_CONFIGS,
   DEFAULT_MODEL,
   DEFAULT_MAX_DIMENSION,
+  MAX_DOWNLOAD_SIZE_BYTES,
+  DOWNLOAD_TIMEOUT_MS,
+  ALLOWED_URL_PROTOCOLS,
+  MAX_BASE64_LENGTH,
+  IMAGE_INTENTS,
+  BUDGET_LEVELS,
+  MIN_REMAINDER_RATIO,
 } from "../constants.js";
 
 
@@ -61,6 +68,10 @@ describe("constants", () => {
 
     it("DEFAULT_MAX_DIMENSION is 10000", () => {
       expect(DEFAULT_MAX_DIMENSION).toBe(10000);
+    });
+
+    it("MIN_REMAINDER_RATIO is 0.15", () => {
+      expect(MIN_REMAINDER_RATIO).toBe(0.15);
     });
   });
 
@@ -173,6 +184,34 @@ describe("constants", () => {
 
     it("TOKENS_PER_TILE matches claude config", () => {
       expect(TOKENS_PER_TILE).toBe(MODEL_CONFIGS.claude.tokensPerTile);
+    });
+  });
+
+  describe("image source resolution constants", () => {
+    it("MAX_DOWNLOAD_SIZE_BYTES is 50MB", () => {
+      expect(MAX_DOWNLOAD_SIZE_BYTES).toBe(50 * 1024 * 1024);
+    });
+
+    it("DOWNLOAD_TIMEOUT_MS is 30 seconds", () => {
+      expect(DOWNLOAD_TIMEOUT_MS).toBe(30_000);
+    });
+
+    it("ALLOWED_URL_PROTOCOLS only includes https:", () => {
+      expect(ALLOWED_URL_PROTOCOLS).toEqual(["https:"]);
+    });
+
+    it("MAX_BASE64_LENGTH is ~50MB decoded", () => {
+      expect(MAX_BASE64_LENGTH).toBe(67_108_864);
+    });
+  });
+
+  describe("intent and budget enums", () => {
+    it("IMAGE_INTENTS has 5 values", () => {
+      expect(IMAGE_INTENTS).toEqual(["text_heavy", "ui_screenshot", "diagram", "photo", "general"]);
+    });
+
+    it("BUDGET_LEVELS has 3 values", () => {
+      expect(BUDGET_LEVELS).toEqual(["low", "default", "max_detail"]);
     });
   });
 });

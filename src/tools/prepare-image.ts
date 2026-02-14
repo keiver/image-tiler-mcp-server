@@ -1,70 +1,47 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { TileImageInputSchema } from "../schemas/index.js";
-import { tileImage, computeEstimateForModel } from "../services/image-processor.js";
+import { PrepareImageInputSchema } from "../schemas/index.js";
+import { tileImage, listTilesInDirectory, readTileAsBase64, computeEstimateForModel } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
-import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, DEFAULT_MAX_DIMENSION } from "../constants.js";
+import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, MAX_TILES_PER_BATCH, DEFAULT_MAX_DIMENSION } from "../constants.js";
 import type { ModelEstimate } from "../types.js";
 
-const TILE_IMAGE_DESCRIPTION = (() => {
-  const modelLines = VISION_MODELS.map((m) => {
-    const c = MODEL_CONFIGS[m];
-    const isDefault = m === DEFAULT_MODEL ? " (default)" : "";
-    return `  - "${m}"${isDefault}: ${c.defaultTileSize}px tiles, ~${c.tokensPerTile} tokens/tile`;
-  }).join("\n");
-  const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
-  const exampleLines = VISION_MODELS.filter((m) => m !== DEFAULT_MODEL).map(
-    (m) => `  - ${MODEL_CONFIGS[m].label} preset: filePath="/path/to/image.png", model="${m}"`
-  ).join("\n");
-  return `IMPORTANT: Call tiler_recommend_settings first to show the user token cost estimates for all presets. Only call this tool after the user has reviewed the estimates and confirmed their preferred preset and settings.
+const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
 
-Split a large image into optimally-sized tiles for LLM vision analysis. The "model" parameter selects a tiling preset (tile size + token cost) optimized for a specific vision pipeline — it does NOT switch which LLM processes the tiles. Your current LLM is always the one that will analyze the output.
+const PREPARE_IMAGE_DESCRIPTION = `IMPORTANT: Call tiler_recommend_settings first to show the user token cost estimates. Only use this after the user has confirmed a preset and settings.
 
-${VISION_MODELS.length} tiling presets available via the "model" parameter:
-${modelLines}
+Convenience tool for when the user has already confirmed settings via tiler_recommend_settings and wants tiling + first batch of tiles in one call. Combines tiler_tile_image + tiler_get_tiles into one round-trip.
 
-Tiles are saved as PNG files to a 'tiles/{name}' subfolder next to the source image (or a custom output directory).
+Accepts image from: filePath, sourceUrl, dataUrl, or imageBase64 (at least one required).
 
 Supported formats: ${SUPPORTED_FORMATS.join(", ")}
 
 Args:
-  - filePath (string, optional): Absolute or relative path to the image file
-  - sourceUrl (string, optional): HTTPS URL to download the image from (max 50MB, 30s timeout)
+  - filePath (string, optional): Path to the image file
+  - sourceUrl (string, optional): HTTPS URL to download the image from
   - dataUrl (string, optional): Data URL with base64-encoded image
   - imageBase64 (string, optional): Raw base64-encoded image data
   - model (string, optional): Tiling preset — selects tile size and token cost optimized for a specific vision pipeline. Options: ${modelList} (default: "${DEFAULT_MODEL}")
-  - tileSize (number, optional): Override tile size in pixels. If omitted, uses the preset's optimal default. Clamped to the preset's max with a warning if exceeded.
-  - maxDimension (number, optional): Max dimension in px (256-65536). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. No-op if the image is already within bounds. Defaults to 10000px. Set to 0 to disable auto-downscaling.
-  - outputDir (string, optional): Custom output directory for tiles
-
-At least one image source (filePath, sourceUrl, dataUrl, or imageBase64) is required.
+  - tileSize (number, optional): Override tile size in pixels
+  - maxDimension (number, optional): Max dimension for auto-downscaling (default: 10000, 0 to disable)
+  - outputDir (string, optional): Custom output directory
+  - page (number, optional): Tile page to return (0 = tiles 0-4, 1 = tiles 5-9, etc.). Default: 0
 
 Returns:
-  JSON metadata with source image dimensions, grid layout (rows × cols), total tile count,
-  estimated token cost, preset used, output directory path, and per-tile details (index, position, dimensions, file path).
+  1. Text summary (same as tiler_tile_image)
+  2. JSON metadata with tiling result + page info
+  3. Up to ${MAX_TILES_PER_BATCH} tile images as base64 content blocks
+  4. Pagination hint if more tiles exist`;
 
-After tiling, use tiler_get_tiles to retrieve tile images in batches for visual analysis.
-
-Examples:
-  - Tile for Claude preset (default): filePath="/path/to/screenshot.png"
-${exampleLines}
-  - Tile from URL: sourceUrl="https://example.com/image.png"
-  - Custom tile size: filePath="/path/to/image.png", tileSize=800
-  - Auto-downscale (default 10000px): images over 10000px on the longest side are automatically downscaled
-  - Custom downscale limit: filePath="/path/to/large-screenshot.png", maxDimension=2048
-  - Disable downscaling: filePath="/path/to/image.png", maxDimension=0
-  - Custom output: filePath="/path/to/image.png", outputDir="/tmp/my-tiles"`;
-})();
-
-export function registerTileImageTool(server: McpServer): void {
+export function registerPrepareImageTool(server: McpServer): void {
   server.registerTool(
-    "tiler_tile_image",
+    "tiler_prepare_image",
     {
-      title: "Tile Image for LLM Vision",
-      description: TILE_IMAGE_DESCRIPTION,
-      inputSchema: TileImageInputSchema,
+      title: "Prepare Image (Tile + Get)",
+      description: PREPARE_IMAGE_DESCRIPTION,
+      inputSchema: PrepareImageInputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -72,8 +49,7 @@ export function registerTileImageTool(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ filePath, sourceUrl, dataUrl, imageBase64, model, tileSize, maxDimension, outputDir }) => {
-      // Validate at least one source is provided
+    async ({ filePath, sourceUrl, dataUrl, imageBase64, model, tileSize, maxDimension, outputDir, page }) => {
       if (!filePath && !sourceUrl && !dataUrl && !imageBase64) {
         return {
           isError: true,
@@ -107,8 +83,6 @@ export function registerTileImageTool(server: McpServer): void {
         const warnings: string[] = [];
 
         let effectiveTileSize = tileSize ?? config.defaultTileSize;
-
-        // Clamp to model bounds (per project philosophy: clamp, don't reject)
         if (effectiveTileSize > config.maxTileSize) {
           warnings.push(
             `Tile size ${effectiveTileSize}px exceeds ${config.label}'s maximum of ${config.maxTileSize}px — clamped to ${config.maxTileSize}px`
@@ -130,7 +104,6 @@ export function registerTileImageTool(server: McpServer): void {
           const basename = path.basename(localPath, path.extname(localPath));
           resolvedOutputDir = path.join(path.dirname(path.resolve(localPath)), "tiles", basename);
         } else {
-          // Non-file sources: use cwd/tiles/tiled_<timestamp>
           resolvedOutputDir = path.join(process.cwd(), "tiles", `tiled_${Date.now()}`);
         }
 
@@ -143,8 +116,7 @@ export function registerTileImageTool(server: McpServer): void {
           config.maxTileSize
         );
 
-        // For non-file sources, copy the source image (or resized version) to outputDir
-        // so preview.html can reference it with a relative path
+        // Copy source image for non-file sources so preview works
         let previewSourcePath = localPath;
         if (source.sourceType !== "file") {
           const sourceExt = path.extname(localPath) || ".png";
@@ -153,7 +125,6 @@ export function registerTileImageTool(server: McpServer): void {
             await fs.copyFile(localPath, copiedPath);
             previewSourcePath = copiedPath;
           } catch {
-            // If copy fails, preview background may not work, but tiling still succeeds
             warnings.push("Could not copy source image to output directory — preview background may not display");
           }
         }
@@ -183,41 +154,42 @@ export function registerTileImageTool(server: McpServer): void {
           warnings.push(`Preview generation failed: ${msg}`);
         }
 
+        // Build summary
         const summaryLines: string[] = [];
-
         if (result.resize) {
           const r = result.resize;
           summaryLines.push(
             `Downscaled from ${r.originalWidth}×${r.originalHeight} → ${r.resizedWidth}×${r.resizedHeight} (${r.scaleFactor}x) before tiling`
           );
         }
-
         summaryLines.push(
           `Tiled ${result.sourceImage.width}×${result.sourceImage.height} ${result.sourceImage.format} image for ${config.label}`,
           `→ ${result.grid.cols}×${result.grid.rows} grid = ${result.grid.totalTiles} tiles of ${result.grid.tileSize}px`,
           `→ Estimated tokens: ~${result.grid.estimatedTokens.toLocaleString()} (all tiles, ${config.tokensPerTile}/tile)`,
           `→ Saved to: ${result.outputDir}`,
         );
-
         if (previewPath) {
-          summaryLines.push(
-            `→ Preview: ${path.basename(previewPath)} (open in browser to visualize the grid)`
-          );
+          summaryLines.push(`→ Preview: ${path.basename(previewPath)} (open in browser to visualize the grid)`);
         }
-
         if (warnings.length > 0) {
-          summaryLines.push("");
-          summaryLines.push(`⚠ ${warnings.join("\n⚠ ")}`);
+          summaryLines.push("", `⚠ ${warnings.join("\n⚠ ")}`);
         }
 
-        summaryLines.push(
-          "",
-          `Use tiler_get_tiles with tilesDir="${result.outputDir}" to retrieve tiles in batches.`,
-          `Tiles are numbered 0-${result.grid.totalTiles - 1}, reading left-to-right, top-to-bottom.`
-        );
+        // Read tiles for requested page
+        const tilePaths = await listTilesInDirectory(result.outputDir);
+        const totalTiles = tilePaths.length;
+        const start = page * MAX_TILES_PER_BATCH;
+        const end = Math.min(start + MAX_TILES_PER_BATCH - 1, totalTiles - 1);
+        const hasMore = end < totalTiles - 1;
 
-        const summary = summaryLines.join("\n");
+        const content: Array<
+          | { type: "text"; text: string }
+          | { type: "image"; data: string; mimeType: string }
+        > = [];
 
+        content.push({ type: "text" as const, text: summaryLines.join("\n") });
+
+        // Structured JSON with page info
         const structuredOutput: Record<string, unknown> = {
           model,
           sourceImage: result.sourceImage,
@@ -231,38 +203,62 @@ export function registerTileImageTool(server: McpServer): void {
             dimensions: `${t.width}×${t.height}`,
             filePath: t.filePath,
           })),
+          page: {
+            current: page,
+            tilesReturned: start <= end ? end - start + 1 : 0,
+            totalTiles,
+            hasMore,
+          },
         };
+        if (result.resize) structuredOutput.resize = result.resize;
+        if (previewPath) structuredOutput.previewPath = previewPath;
+        if (warnings.length > 0) structuredOutput.warnings = warnings;
 
-        if (result.resize) {
-          structuredOutput.resize = result.resize;
-        }
+        content.push({
+          type: "text" as const,
+          text: JSON.stringify(structuredOutput, null, 2),
+        });
 
-        if (previewPath) {
-          structuredOutput.previewPath = previewPath;
-        }
+        // Add tile images for this page
+        if (start < totalTiles) {
+          for (let i = start; i <= end; i++) {
+            const tilePath = tilePaths[i];
+            const filename = path.basename(tilePath);
+            const match = filename.match(/tile_(\d+)_(\d+)\.png/);
+            const row = match ? parseInt(match[1], 10) : -1;
+            const col = match ? parseInt(match[2], 10) : -1;
 
-        if (warnings.length > 0) {
-          structuredOutput.warnings = warnings;
-        }
-
-        return {
-          content: [
-            { type: "text" as const, text: summary },
-            {
+            content.push({
               type: "text" as const,
-              text: JSON.stringify(structuredOutput, null, 2),
-            },
-          ],
-        };
+              text: `--- Tile ${i} (row ${row}, col ${col}) ---`,
+            });
+
+            const base64Data = await readTileAsBase64(tilePath);
+            content.push({
+              type: "image" as const,
+              data: base64Data,
+              mimeType: "image/png",
+            });
+          }
+        }
+
+        // Pagination hint
+        if (hasMore) {
+          content.push({
+            type: "text" as const,
+            text: `Next page: tiler_get_tiles(tilesDir="${result.outputDir}", start=${end + 1}) or tiler_prepare_image(..., page=${page + 1})`,
+          });
+        }
+
+        return { content };
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         return {
           isError: true,
           content: [
             {
               type: "text" as const,
-              text: `Error tiling image: ${message}`,
+              text: `Error preparing image: ${message}`,
             },
           ],
         };

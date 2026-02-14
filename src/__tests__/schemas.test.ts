@@ -1,9 +1,17 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { TileImageInputSchema, GetTilesInputSchema } from "../schemas/index.js";
+import {
+  TileImageInputSchema,
+  GetTilesInputSchema,
+  RecommendSettingsInputSchema,
+  PrepareImageInputSchema,
+} from "../schemas/index.js";
+import { MAX_DATA_URL_LENGTH } from "../constants.js";
 
 const tileImageSchema = z.object(TileImageInputSchema);
 const getTilesSchema = z.object(GetTilesInputSchema);
+const recommendSettingsSchema = z.object(RecommendSettingsInputSchema);
+const prepareImageSchema = z.object(PrepareImageInputSchema);
 
 describe("TileImageInputSchema", () => {
   describe("filePath", () => {
@@ -18,12 +26,55 @@ describe("TileImageInputSchema", () => {
       );
     });
 
-    it("rejects missing filePath", () => {
-      expect(() => tileImageSchema.parse({})).toThrow();
+    it("is optional (no filePath does not throw)", () => {
+      const result = tileImageSchema.parse({});
+      expect(result.filePath).toBeUndefined();
     });
 
     it("rejects non-string filePath", () => {
       expect(() => tileImageSchema.parse({ filePath: 123 })).toThrow();
+    });
+  });
+
+  describe("image source fields", () => {
+    it("accepts sourceUrl", () => {
+      const result = tileImageSchema.parse({ sourceUrl: "https://example.com/image.png" });
+      expect(result.sourceUrl).toBe("https://example.com/image.png");
+    });
+
+    it("rejects invalid URL for sourceUrl", () => {
+      expect(() => tileImageSchema.parse({ sourceUrl: "not-a-url" })).toThrow("url");
+    });
+
+    it("accepts dataUrl", () => {
+      const result = tileImageSchema.parse({ dataUrl: "data:image/png;base64,AAAA" });
+      expect(result.dataUrl).toBe("data:image/png;base64,AAAA");
+    });
+
+    it("accepts imageBase64", () => {
+      const result = tileImageSchema.parse({ imageBase64: "AAAA" });
+      expect(result.imageBase64).toBe("AAAA");
+    });
+
+    it("rejects dataUrl exceeding max length", () => {
+      const oversized = "data:image/png;base64," + "A".repeat(MAX_DATA_URL_LENGTH);
+      expect(() => tileImageSchema.parse({ dataUrl: oversized })).toThrow(
+        "Data URL must not exceed"
+      );
+    });
+
+    it("accepts dataUrl within max length", () => {
+      const valid = "data:image/png;base64,AAAA";
+      const result = tileImageSchema.parse({ dataUrl: valid });
+      expect(result.dataUrl).toBe(valid);
+    });
+
+    it("all source fields are optional", () => {
+      const result = tileImageSchema.parse({});
+      expect(result.filePath).toBeUndefined();
+      expect(result.sourceUrl).toBeUndefined();
+      expect(result.dataUrl).toBeUndefined();
+      expect(result.imageBase64).toBeUndefined();
     });
   });
 
@@ -176,7 +227,6 @@ describe("TileImageInputSchema", () => {
       expect(result.outputDir).toBe("/tmp/tiles");
     });
   });
-
 });
 
 describe("GetTilesInputSchema", () => {
@@ -232,5 +282,103 @@ describe("GetTilesInputSchema", () => {
       ).toThrow("End index must be >= 0");
     });
   });
+});
 
+describe("RecommendSettingsInputSchema", () => {
+  it("accepts filePath only", () => {
+    const result = recommendSettingsSchema.parse({ filePath: "test.png" });
+    expect(result.filePath).toBe("test.png");
+    expect(result.model).toBeUndefined();
+  });
+
+  it("accepts sourceUrl", () => {
+    const result = recommendSettingsSchema.parse({ sourceUrl: "https://example.com/img.png" });
+    expect(result.sourceUrl).toBe("https://example.com/img.png");
+  });
+
+  it("model is optional (no default)", () => {
+    const result = recommendSettingsSchema.parse({ filePath: "test.png" });
+    expect(result.model).toBeUndefined();
+  });
+
+  it("accepts all vision models", () => {
+    for (const m of ["claude", "openai", "gemini", "gemini3"]) {
+      const result = recommendSettingsSchema.parse({ filePath: "test.png", model: m });
+      expect(result.model).toBe(m);
+    }
+  });
+
+  it("intent accepts all valid values", () => {
+    for (const intent of ["text_heavy", "ui_screenshot", "diagram", "photo", "general"]) {
+      const result = recommendSettingsSchema.parse({ filePath: "test.png", intent });
+      expect(result.intent).toBe(intent);
+    }
+  });
+
+  it("rejects invalid intent", () => {
+    expect(() =>
+      recommendSettingsSchema.parse({ filePath: "test.png", intent: "unknown" })
+    ).toThrow();
+  });
+
+  it("budget accepts all valid values", () => {
+    for (const budget of ["low", "default", "max_detail"]) {
+      const result = recommendSettingsSchema.parse({ filePath: "test.png", budget });
+      expect(result.budget).toBe(budget);
+    }
+  });
+
+  it("rejects invalid budget", () => {
+    expect(() =>
+      recommendSettingsSchema.parse({ filePath: "test.png", budget: "balanced" })
+    ).toThrow();
+  });
+
+  it("tileSize and maxDimension are optional with no defaults", () => {
+    const result = recommendSettingsSchema.parse({ filePath: "test.png" });
+    expect(result.tileSize).toBeUndefined();
+    expect(result.maxDimension).toBeUndefined();
+  });
+});
+
+describe("PrepareImageInputSchema", () => {
+  it("accepts filePath and defaults", () => {
+    const result = prepareImageSchema.parse({ filePath: "test.png" });
+    expect(result.filePath).toBe("test.png");
+    expect(result.model).toBe("claude");
+    expect(result.maxDimension).toBe(10000);
+    expect(result.page).toBe(0);
+  });
+
+  it("accepts sourceUrl", () => {
+    const result = prepareImageSchema.parse({ sourceUrl: "https://example.com/img.png" });
+    expect(result.sourceUrl).toBe("https://example.com/img.png");
+  });
+
+  it("page defaults to 0", () => {
+    const result = prepareImageSchema.parse({ filePath: "test.png" });
+    expect(result.page).toBe(0);
+  });
+
+  it("accepts custom page", () => {
+    const result = prepareImageSchema.parse({ filePath: "test.png", page: 3 });
+    expect(result.page).toBe(3);
+  });
+
+  it("rejects negative page", () => {
+    expect(() =>
+      prepareImageSchema.parse({ filePath: "test.png", page: -1 })
+    ).toThrow("Page must be >= 0");
+  });
+
+  it("model defaults to claude", () => {
+    const result = prepareImageSchema.parse({ filePath: "test.png" });
+    expect(result.model).toBe("claude");
+  });
+
+  it("all source fields are optional", () => {
+    const result = prepareImageSchema.parse({});
+    expect(result.filePath).toBeUndefined();
+    expect(result.sourceUrl).toBeUndefined();
+  });
 });
