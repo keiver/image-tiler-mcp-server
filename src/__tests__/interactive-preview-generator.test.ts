@@ -215,6 +215,35 @@ describe("generateInteractivePreview", () => {
       expect(html).toContain("screenshot-preview-bg.webp");
     });
 
+    it("downsizes when longest dimension exceeds 10,000px even if under 16M pixels", async () => {
+      mockMetadata.mockResolvedValueOnce({ width: 1200, height: 12000 }); // 14.4M pixels (under 16M), but height > 10k
+      const data = makePreviewData({ sourceImagePath: "/images/tall-page.png" });
+      await generateInteractivePreview(data, "/output");
+
+      expect(mockSharp).toHaveBeenCalledTimes(2);
+      expect(mockResize).toHaveBeenCalledTimes(1);
+
+      const [resizeW, resizeH] = mockResize.mock.calls[0];
+      // Height should be clamped to 10,000 (scale = 10000/12000 ≈ 0.8333)
+      expect(resizeH).toBe(10000);
+      expect(resizeW).toBe(Math.round(1200 * (10000 / 12000)));
+
+      expect(mockToFile).toHaveBeenCalledWith("/output/tall-page-preview-bg.webp");
+    });
+
+    it("uses the more restrictive limit when both pixel count and dimension exceed caps", async () => {
+      mockMetadata.mockResolvedValueOnce({ width: 5000, height: 20000 }); // 100M pixels, height > 10k
+      const data = makePreviewData({ sourceImagePath: "/images/huge.png" });
+      await generateInteractivePreview(data, "/output");
+
+      expect(mockResize).toHaveBeenCalledTimes(1);
+
+      const [resizeW, resizeH] = mockResize.mock.calls[0];
+      // Both constraints apply — the more restrictive one wins
+      expect(Math.max(resizeW, resizeH)).toBeLessThanOrEqual(10000);
+      expect(resizeW * resizeH).toBeLessThanOrEqual(16_000_000);
+    });
+
     it("preserves SVG viewBox using effectiveWidth/Height even when preview is downsized", async () => {
       mockMetadata.mockResolvedValueOnce({ width: 5000, height: 20000 }); // 100M pixels
       await generateInteractivePreview(makePreviewData(), "/output");

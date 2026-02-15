@@ -23,6 +23,7 @@ vi.mock("../services/tile-analyzer.js", () => ({
 vi.mock("../utils.js", () => ({
   getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
   escapeHtml: vi.fn((s: string) => s),
+  getVersionedOutputDir: vi.fn(async (baseDir: string) => `${baseDir}_v1`),
 }));
 
 vi.mock("node:fs/promises", () => ({

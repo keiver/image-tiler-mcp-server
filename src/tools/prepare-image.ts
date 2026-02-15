@@ -7,7 +7,7 @@ import { generateInteractivePreview } from "../services/interactive-preview-gene
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, MAX_TILES_PER_BATCH, DEFAULT_MAX_DIMENSION } from "../constants.js";
-import { getDefaultOutputBase } from "../utils.js";
+import { getDefaultOutputBase, getVersionedOutputDir } from "../utils.js";
 import type { ModelEstimate } from "../types.js";
 
 const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
@@ -104,7 +104,8 @@ export function registerPrepareImageTool(server: McpServer): void {
           resolvedOutputDir = outputDir;
         } else if (source.sourceType === "file") {
           const basename = path.basename(localPath, path.extname(localPath));
-          resolvedOutputDir = path.join(path.dirname(path.resolve(localPath)), "tiles", basename);
+          const baseOutputDir = path.join(path.dirname(path.resolve(localPath)), "tiles", basename);
+          resolvedOutputDir = await getVersionedOutputDir(baseOutputDir);
         } else {
           resolvedOutputDir = path.join(getDefaultOutputBase(), "tiles", `tiled_${Date.now()}`);
         }

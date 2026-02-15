@@ -22,6 +22,7 @@ vi.mock("../services/tile-analyzer.js", () => ({
 vi.mock("../utils.js", () => ({
   getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
   escapeHtml: vi.fn((s: string) => s),
+  getVersionedOutputDir: vi.fn(async (baseDir: string) => `${baseDir}_v1`),
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -129,7 +130,7 @@ describe("registerTileImageTool", () => {
     expect(res.isError).toBeUndefined();
   });
 
-  it("defaults outputDir to tiles subfolder next to source", async () => {
+  it("defaults outputDir to versioned tiles subfolder next to source", async () => {
     mockedTileImage.mockResolvedValue(makeTileResult());
     const tool = mock.getTool("tiler_tile_image")!;
     await tool.handler(
@@ -139,7 +140,7 @@ describe("registerTileImageTool", () => {
     expect(mockedTileImage).toHaveBeenCalledWith(
       "/images/photo.png",
       1092,
-      expect.stringContaining(path.join("tiles", "photo")),
+      expect.stringContaining(path.join("tiles", "photo") + "_v1"),
       1590,
       undefined,
       1568,
