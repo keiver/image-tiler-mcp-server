@@ -23,7 +23,7 @@ Args:
   - viewportWidth (number, optional): Browser viewport width in pixels (default: ${CAPTURE_DEFAULT_VIEWPORT_WIDTH}, range: 320-3840)
   - waitUntil (string, optional): When to consider the page loaded: ${waitOptions} (default: "load")
   - delay (number, optional): Additional delay in ms after page load, before capturing (default: 0, max: 30000)
-  - outputDir (string, optional): Directory to save the screenshot (default: cwd/captures/)
+  - outputDir (string, optional): Directory to save the screenshot (default: ~/Desktop/captures/ (or ~/Downloads/captures/, ~/captures/))
   - format (string, optional): Output format — "webp" (smaller, default) or "png" (lossless)
 
 Returns:
