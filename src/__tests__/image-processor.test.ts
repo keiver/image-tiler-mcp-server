@@ -7,15 +7,25 @@ const {
   mockSharp,
 } = vi.hoisted(() => {
   const mockToFile = vi.fn().mockResolvedValue({});
+
+  // Extract pipeline: extract() returns a fluent object where webp/png return itself
+  // This mirrors Sharp's real behavior where pipeline methods mutate in-place
+  const extractPipeline: any = { toFile: mockToFile };
+  extractPipeline.png = vi.fn().mockReturnValue(extractPipeline);
+  extractPipeline.webp = vi.fn().mockReturnValue(extractPipeline);
+  const mockExtract = vi.fn().mockReturnValue(extractPipeline);
+
+  // Resize chain: resize() → png() → toFile() (used in chained calls)
   const mockPng = vi.fn().mockReturnValue({ toFile: mockToFile });
-  const mockExtract = vi.fn().mockReturnValue({ png: mockPng });
   const mockResize = vi.fn().mockReturnValue({ png: mockPng });
+
   const mockMetadata = vi.fn();
   const mockSharpInstance = {
     metadata: mockMetadata,
     extract: mockExtract,
     resize: mockResize,
     png: mockPng,
+    webp: vi.fn().mockReturnValue({ toFile: mockToFile }),
     toFile: mockToFile,
   };
   const mockSharp = Object.assign(
@@ -368,10 +378,10 @@ describe("tileImage", () => {
 
   it("uses zero-padded filenames", async () => {
     const result = await tileImage("/test/image.png", 1072, "/output");
-    expect(result.tiles[0].filename).toBe("tile_000_000.png");
-    expect(result.tiles[1].filename).toBe("tile_000_001.png");
-    expect(result.tiles[2].filename).toBe("tile_001_000.png");
-    expect(result.tiles[3].filename).toBe("tile_001_001.png");
+    expect(result.tiles[0].filename).toBe("tile_000_000.webp");
+    expect(result.tiles[1].filename).toBe("tile_000_001.webp");
+    expect(result.tiles[2].filename).toBe("tile_001_000.webp");
+    expect(result.tiles[3].filename).toBe("tile_001_001.webp");
   });
 
   it("assigns sequential indices", async () => {
@@ -522,17 +532,19 @@ describe("tileImage", () => {
 
     // Succeed on first 2 tiles, fail on 3rd
     let callCount = 0;
-    mockExtract.mockImplementation(() => ({
-      png: () => ({
-        toFile: () => {
-          callCount++;
-          if (callCount === 3) {
-            return Promise.reject(new Error("Sharp extract failed"));
-          }
-          return Promise.resolve({});
-        },
-      }),
-    }));
+    const toFileImpl = () => {
+      callCount++;
+      if (callCount === 3) {
+        return Promise.reject(new Error("Sharp extract failed"));
+      }
+      return Promise.resolve({});
+    };
+    mockExtract.mockImplementation(() => {
+      const p: any = { toFile: toFileImpl };
+      p.png = () => p;
+      p.webp = () => p;
+      return p;
+    });
 
     mockedFs.unlink.mockResolvedValue(undefined);
 
@@ -689,6 +701,20 @@ describe("listTilesInDirectory", () => {
 
     const result = await listTilesInDirectory("/tiles");
     expect(result[0]).toMatch(/\/tiles\/tile_000_000\.png$/);
+  });
+
+  it("includes webp tile files", async () => {
+    mockedFs.access.mockResolvedValue(undefined);
+    mockedFs.readdir.mockResolvedValue([
+      "tile_000_000.webp",
+      "tile_000_001.webp",
+      "other.txt",
+    ] as any);
+
+    const result = await listTilesInDirectory("/tiles");
+    expect(result).toHaveLength(2);
+    expect(result[0]).toContain("tile_000_000.webp");
+    expect(result[1]).toContain("tile_000_001.webp");
   });
 });
 

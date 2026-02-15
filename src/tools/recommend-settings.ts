@@ -93,6 +93,7 @@ Workflow:
 Reads image dimensions and returns cost estimates WITHOUT creating any tiles. Each "model" entry in the response is a tiling preset (tile size + token cost) optimized for a specific vision pipeline — it does NOT switch which LLM processes the tiles. Your current LLM is always the one that will analyze the output. Pick the preset that matches your LLM's vision pipeline.
 
 Inputs: At least one image source (filePath, sourceUrl, dataUrl, or imageBase64). Optional: model, tileSize, maxDimension, intent, budget.
+Works with any image source including screenshots from tiler_capture_url.
 
 Supported formats: ${SUPPORTED_FORMATS.join(", ")}
 
@@ -116,7 +117,7 @@ export function registerRecommendSettingsTool(server: McpServer): void {
       description: RECOMMEND_DESCRIPTION,
       inputSchema: RecommendSettingsInputSchema,
       annotations: {
-        readOnlyHint: false,
+        readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: true,
@@ -219,14 +220,21 @@ export function registerRecommendSettingsTool(server: McpServer): void {
           previewPath,
         };
 
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
+        const content: Array<{ type: "text"; text: string }> = [];
+
+        if (previewPath) {
+          content.push({
+            type: "text" as const,
+            text: `Preview: ${previewPath}`,
+          });
+        }
+
+        content.push({
+          type: "text" as const,
+          text: JSON.stringify(result, null, 2),
+        });
+
+        return { content };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {

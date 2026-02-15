@@ -10,6 +10,8 @@ import {
   MAX_DATA_URL_LENGTH,
   IMAGE_INTENTS,
   BUDGET_LEVELS,
+  TILE_OUTPUT_FORMATS,
+  WAIT_UNTIL_OPTIONS,
 } from "../constants.js";
 
 const modelDescriptions = VISION_MODELS.map(
@@ -79,6 +81,14 @@ export const TileImageInputSchema = {
     .describe(
       "Directory to save tiles. Defaults to a 'tiles' subfolder next to the source image"
     ),
+  format: z
+    .enum(TILE_OUTPUT_FORMATS)
+    .default("webp")
+    .describe('Output format for tiles: "webp" (smaller, default) or "png" (lossless)'),
+  includeMetadata: z
+    .boolean()
+    .default(false)
+    .describe("When true, analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats"),
 };
 
 export const GetTilesInputSchema = {
@@ -172,4 +182,93 @@ export const PrepareImageInputSchema = {
     .min(0, "Page must be >= 0")
     .default(0)
     .describe("Tile page to return (0 = first 5, 1 = next 5, etc.). Default: 0"),
+  format: z
+    .enum(TILE_OUTPUT_FORMATS)
+    .default("webp")
+    .describe('Output format for tiles: "webp" (smaller, default) or "png" (lossless)'),
+  includeMetadata: z
+    .boolean()
+    .default(false)
+    .describe("When true, analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats"),
+};
+
+// Shared capture fields — used by capture-url and capture-and-tile
+export const captureFields = {
+  url: z.string().url("Must be a valid URL").describe("URL of the web page to capture"),
+  viewportWidth: z
+    .number()
+    .int()
+    .min(320, "Viewport width must be >= 320px")
+    .max(3840, "Viewport width must be <= 3840px")
+    .optional()
+    .describe("Browser viewport width in pixels. Auto-detects screen width if omitted, falls back to 1280."),
+  waitUntil: z
+    .enum(WAIT_UNTIL_OPTIONS)
+    .default("load")
+    .describe('When to consider the page loaded: "load" (default), "networkidle", or "domcontentloaded"'),
+  delay: z
+    .number()
+    .int()
+    .min(0, "Delay must be >= 0")
+    .max(30000, "Delay must be <= 30000ms")
+    .default(0)
+    .describe("Additional delay in ms after the page is loaded, before capturing (default: 0)"),
+};
+
+export const CaptureUrlInputSchema = {
+  ...captureFields,
+  outputDir: z
+    .string()
+    .optional()
+    .describe("Directory to save the screenshot. Defaults to ~/Desktop/captures/ (or ~/Downloads/captures/, ~/captures/)"),
+  format: z
+    .enum(TILE_OUTPUT_FORMATS)
+    .default("webp")
+    .describe('Output format for the screenshot: "webp" (smaller, default) or "png" (lossless)'),
+};
+
+export const CaptureAndTileInputSchema = {
+  ...captureFields,
+  model: z
+    .enum(VISION_MODELS)
+    .default(DEFAULT_MODEL)
+    .describe(
+      `Target vision model: ${modelDescriptions}. Default: "${DEFAULT_MODEL}"`
+    ),
+  tileSize: z
+    .number()
+    .int()
+    .min(1, "Tile size must be a positive integer")
+    .max(MAX_IMAGE_DIMENSION, `Tile size must not exceed ${MAX_IMAGE_DIMENSION}px`)
+    .optional()
+    .describe(
+      `Tile size in pixels. If omitted, uses the model's optimal default (${defaultDescriptions}).`
+    ),
+  maxDimension: z
+    .number()
+    .int()
+    .min(0, "maxDimension must be >= 0 (0 disables auto-downscaling)")
+    .max(MAX_IMAGE_DIMENSION, `maxDimension must not exceed ${MAX_IMAGE_DIMENSION}px`)
+    .default(DEFAULT_MAX_DIMENSION)
+    .describe(
+      `Max dimension in px. Defaults to ${DEFAULT_MAX_DIMENSION}px. Set to 0 to disable.`
+    ),
+  format: z
+    .enum(TILE_OUTPUT_FORMATS)
+    .default("webp")
+    .describe('Output format for tiles: "webp" (smaller, default) or "png" (lossless)'),
+  outputDir: z
+    .string()
+    .optional()
+    .describe("Directory to save tiles. Defaults to ~/Desktop/tiles/capture_<timestamp>/ (or ~/Downloads, ~)"),
+  page: z
+    .number()
+    .int()
+    .min(0, "Page must be >= 0")
+    .default(0)
+    .describe("Tile page to return (0 = first 5, 1 = next 5, etc.). Default: 0"),
+  includeMetadata: z
+    .boolean()
+    .default(false)
+    .describe("When true, analyze each tile and return content hints and brightness stats"),
 };

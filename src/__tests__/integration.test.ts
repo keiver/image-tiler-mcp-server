@@ -75,10 +75,10 @@ describe("integration: landscape image (7680×4032)", () => {
 
   it("tile files exist with correct naming", async () => {
     const files = await fs.readdir(outputDir);
-    const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".png"));
+    const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".webp"));
     expect(tileFiles).toHaveLength(32);
-    expect(tileFiles).toContain("tile_000_000.png");
-    expect(tileFiles).toContain("tile_003_007.png"); // last tile
+    expect(tileFiles).toContain("tile_000_000.webp");
+    expect(tileFiles).toContain("tile_003_007.webp"); // last tile
   });
 
   it("lists tiles and reads them as base64", async () => {
@@ -87,13 +87,11 @@ describe("integration: landscape image (7680×4032)", () => {
 
     const base64 = await readTileAsBase64(tilePaths[0]);
     expect(base64.length).toBeGreaterThan(0);
-    // Verify it's valid base64 that decodes to a PNG
+    // Verify it's valid base64 that decodes to a WebP
     const buf = Buffer.from(base64, "base64");
-    // PNG magic bytes: 137 80 78 71
-    expect(buf[0]).toBe(137);
-    expect(buf[1]).toBe(80);
-    expect(buf[2]).toBe(78);
-    expect(buf[3]).toBe(71);
+    // WebP files: RIFF container (bytes 0-3) + WEBP signature (bytes 8-11)
+    expect(buf.toString("ascii", 0, 4)).toBe("RIFF");
+    expect(buf.toString("ascii", 8, 12)).toBe("WEBP");
   });
 
   it("estimated tokens match formula", () => {
@@ -140,11 +138,11 @@ describe("integration: portrait image (3600×22810)", () => {
 
   it("tile files exist with correct count", async () => {
     const files = await fs.readdir(outputDir);
-    const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".png"));
+    const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".webp"));
     expect(tileFiles).toHaveLength(84);
   });
 
-  it("end-to-end: tile → list → base64 → verify PNG", async () => {
+  it("end-to-end: tile → list → base64 → verify WebP", async () => {
     const tilePaths = await listTilesInDirectory(outputDir);
     expect(tilePaths).toHaveLength(84);
 
@@ -152,9 +150,9 @@ describe("integration: portrait image (3600×22810)", () => {
     const lastTile = tilePaths[tilePaths.length - 1];
     const base64 = await readTileAsBase64(lastTile);
     const buf = Buffer.from(base64, "base64");
-    // PNG magic bytes
-    expect(buf[0]).toBe(137);
-    expect(buf[1]).toBe(80);
+    // WebP files: RIFF container (bytes 0-3) + WEBP signature (bytes 8-11)
+    expect(buf.toString("ascii", 0, 4)).toBe("RIFF");
+    expect(buf.toString("ascii", 8, 12)).toBe("WEBP");
   });
 
   it("estimated tokens match formula", () => {
@@ -211,11 +209,11 @@ describe("integration: landscape with remainder absorption (Claude)", () => {
 
   it("tile files exist with correct count", async () => {
     const files = await fs.readdir(outputDir);
-    const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".png"));
+    const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".webp"));
     expect(tileFiles).toHaveLength(28);
     // Last tile should be tile_003_006 (not tile_003_007)
-    expect(tileFiles).toContain("tile_003_006.png");
-    expect(tileFiles).not.toContain("tile_003_007.png");
+    expect(tileFiles).toContain("tile_003_006.webp");
+    expect(tileFiles).not.toContain("tile_003_007.webp");
   });
 });
 
@@ -344,7 +342,7 @@ describe("integration: landscape with maxDimension=2000", () => {
 
   it("tile files exist on disk", async () => {
     const files = await fs.readdir(outputDir);
-    const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".png"));
+    const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".webp"));
     expect(tileFiles).toHaveLength(result.grid.totalTiles);
   });
 
@@ -359,7 +357,7 @@ describe("integration: landscape with maxDimension=2000", () => {
     const meta = await sharp(firstTile.filePath).metadata();
     expect(meta.width).toBe(firstTile.width);
     expect(meta.height).toBe(firstTile.height);
-    expect(meta.format).toBe("png");
+    expect(meta.format).toBe("webp");
   });
 });
 
@@ -493,7 +491,7 @@ describe("integration: interactive preview generation", () => {
     expect(filenames).not.toContain("landscape-preview.html");
     // All returned files should be tile PNGs
     for (const f of filenames) {
-      expect(f).toMatch(/^tile_\d+_\d+\.png$/);
+      expect(f).toMatch(/^tile_\d+_\d+\.(png|webp)$/);
     }
   }, 30000);
 });

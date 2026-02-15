@@ -1,6 +1,8 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import sharp from "sharp";
 import { escapeHtml } from "../utils.js";
+import { DEFAULT_MAX_DIMENSION, MAX_PREVIEW_PIXELS, WEBP_QUALITY } from "../constants.js";
 import type { ModelEstimate } from "../types.js";
 
 export interface InteractivePreviewData {
@@ -27,12 +29,38 @@ export async function generateInteractivePreview(
     models,
   } = data;
 
-  const relativeSourcePath = path.relative(
-    outputDir,
-    path.resolve(sourceImagePath)
-  );
-
   const filename = path.basename(sourceImagePath);
+
+  // Downsize large images for browser-safe preview (Safari caps at ~16M pixels)
+  const sharpMeta = await sharp(path.resolve(sourceImagePath)).metadata();
+  const sourcePixels = (sharpMeta.width ?? 0) * (sharpMeta.height ?? 0);
+  let previewImagePath = sourceImagePath;
+
+  let scale = 1;
+  if (sourcePixels > MAX_PREVIEW_PIXELS && sharpMeta.width && sharpMeta.height) {
+    scale = Math.min(scale, Math.sqrt(MAX_PREVIEW_PIXELS / sourcePixels));
+  }
+  const maxDim = Math.max(sharpMeta.width ?? 0, sharpMeta.height ?? 0);
+  if (maxDim > DEFAULT_MAX_DIMENSION) {
+    scale = Math.min(scale, DEFAULT_MAX_DIMENSION / maxDim);
+  }
+
+  if (scale < 1 && sharpMeta.width && sharpMeta.height) {
+    const previewW = Math.round(sharpMeta.width * scale);
+    const previewH = Math.round(sharpMeta.height * scale);
+    const previewFilename = `${path.basename(sourceImagePath, path.extname(sourceImagePath))}-preview-bg.webp`;
+    const previewBgPath = path.join(outputDir, previewFilename);
+    await sharp(path.resolve(sourceImagePath))
+      .resize(previewW, previewH)
+      .webp({ quality: WEBP_QUALITY })
+      .toFile(previewBgPath);
+    previewImagePath = previewBgPath;
+  }
+
+  const relativePreviewImagePath = path.relative(
+    outputDir,
+    path.resolve(previewImagePath)
+  );
   const wasResized = effectiveWidth !== originalWidth || effectiveHeight !== originalHeight;
 
   const modelsJson = JSON.stringify(
@@ -86,7 +114,7 @@ export async function generateInteractivePreview(
 <div class="tabs" id="model-tabs"></div>
 
 <div class="source-container">
-  <img src="${escapeHtml(relativeSourcePath)}" alt="Source image" />
+  <img src="${escapeHtml(relativePreviewImagePath)}" alt="Source image" />
   <svg id="grid-overlay" viewBox="0 0 ${effectiveWidth} ${effectiveHeight}" preserveAspectRatio="xMinYMin meet"></svg>
 </div>
 

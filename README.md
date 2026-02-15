@@ -115,7 +115,7 @@ Then point your MCP config to the built file:
 
 ## Tiling for LLM Vision
 
-LLM vision systems have a **maximum input resolution**. When you send an image larger than that limit, the model silently downscales it before processing. A 3600×22810 full-page screenshot gets shrunk to ~247×1568 by Claude - text becomes unreadable, UI details disappear, and the model can't analyze what it can't see.
+LLM vision systems have a **maximum input resolution**. When you send an image larger than that limit, the model downscales it before processing. A 3600×22810 full-page screenshot gets shrunk to ~247×1568 by Claude - text becomes unreadable, UI details disappear, and the model can't analyze what it can't see.
 
 **Tiling solves this.** This MCP server:
 

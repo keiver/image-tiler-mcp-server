@@ -16,6 +16,16 @@ vi.mock("../services/image-source-resolver.js", () => ({
   resolveImageSource: vi.fn(),
 }));
 
+vi.mock("../services/tile-analyzer.js", () => ({
+  analyzeTiles: vi.fn(),
+}));
+
+vi.mock("../utils.js", () => ({
+  getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
+  escapeHtml: vi.fn((s: string) => s),
+  getVersionedOutputDir: vi.fn(async (baseDir: string) => `${baseDir}_v1`),
+}));
+
 vi.mock("node:fs/promises", () => ({
   copyFile: vi.fn(),
 }));
@@ -214,6 +224,30 @@ describe("registerPrepareImageTool", () => {
     );
     const json = JSON.parse(jsonBlock.text);
     expect(json.page.hasMore).toBe(false);
+  });
+
+  it("includes separate preview content block", async () => {
+    const tool = mock.getTool("tiler_prepare_image")!;
+    const result = await tool.handler(
+      { filePath: "/images/photo.png", model: "claude", page: 0 },
+      {} as any
+    );
+    const res = result as any;
+    const previewBlock = res.content.find(
+      (c: any) => c.type === "text" && c.text.startsWith("Preview: ") && c.text.includes("/")
+    );
+    expect(previewBlock).toBeDefined();
+    expect(previewBlock.text).toBe("Preview: /output/tiles/photo-preview.html");
+  });
+
+  it("does not include preview basename in summary", async () => {
+    const tool = mock.getTool("tiler_prepare_image")!;
+    const result = await tool.handler(
+      { filePath: "/images/photo.png", model: "claude", page: 0 },
+      {} as any
+    );
+    const res = result as any;
+    expect(res.content[0].text).not.toContain("→ Preview:");
   });
 
   it("wraps errors from tileImage", async () => {

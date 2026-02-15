@@ -6,10 +6,12 @@ import {
   MAX_IMAGE_DIMENSION,
   MAX_TOTAL_TILES,
   PNG_COMPRESSION_LEVEL,
+  WEBP_QUALITY,
   TOKENS_PER_TILE,
   MIN_REMAINDER_RATIO,
   MODEL_CONFIGS,
 } from "../constants.js";
+import type { TileOutputFormat } from "../constants.js";
 import type { ImageMetadata, ResizeInfo, TileGridInfo, TileInfo, TileImageResult, ModelEstimate } from "../types.js";
 
 sharp.cache({ items: 10, memory: 200 });
@@ -160,7 +162,8 @@ export async function tileImage(
   outputDir: string,
   tokensPerTile: number = TOKENS_PER_TILE,
   maxDimension?: number,
-  maxTileSize?: number
+  maxTileSize?: number,
+  format: TileOutputFormat = "webp"
 ): Promise<TileImageResult> {
   const resolvedPath = path.resolve(filePath);
 
@@ -217,13 +220,20 @@ export async function tileImage(
           const tileWidth = col === grid.cols - 1 ? imageMetadata.width - x : tileSize;
           const tileHeight = row === grid.rows - 1 ? imageMetadata.height - y : tileSize;
 
-          const filename = `tile_${String(row).padStart(3, "0")}_${String(col).padStart(3, "0")}.png`;
+          const ext = format === "webp" ? "webp" : "png";
+          const filename = `tile_${String(row).padStart(3, "0")}_${String(col).padStart(3, "0")}.${ext}`;
           const tilePath = path.join(resolvedOutputDir, filename);
 
-          await sharp(sourcePath)
-            .extract({ left: x, top: y, width: tileWidth, height: tileHeight })
-            .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
-            .toFile(tilePath);
+          const pipeline = sharp(sourcePath)
+            .extract({ left: x, top: y, width: tileWidth, height: tileHeight });
+
+          if (format === "webp") {
+            pipeline.webp({ quality: WEBP_QUALITY });
+          } else {
+            pipeline.png({ compressionLevel: PNG_COMPRESSION_LEVEL });
+          }
+
+          await pipeline.toFile(tilePath);
 
           tiles.push({
             index,
@@ -295,7 +305,7 @@ export async function listTilesInDirectory(
 
   const entries = await fs.readdir(resolvedDir);
   const tileFiles = entries
-    .filter((f) => f.startsWith("tile_") && f.endsWith(".png"))
+    .filter((f) => f.startsWith("tile_") && (f.endsWith(".png") || f.endsWith(".webp")))
     .sort();
 
   if (tileFiles.length === 0) {

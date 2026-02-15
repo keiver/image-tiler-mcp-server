@@ -5,6 +5,8 @@ import {
   GetTilesInputSchema,
   RecommendSettingsInputSchema,
   PrepareImageInputSchema,
+  CaptureUrlInputSchema,
+  CaptureAndTileInputSchema,
 } from "../schemas/index.js";
 import { MAX_DATA_URL_LENGTH } from "../constants.js";
 
@@ -12,6 +14,8 @@ const tileImageSchema = z.object(TileImageInputSchema);
 const getTilesSchema = z.object(GetTilesInputSchema);
 const recommendSettingsSchema = z.object(RecommendSettingsInputSchema);
 const prepareImageSchema = z.object(PrepareImageInputSchema);
+const captureUrlSchema = z.object(CaptureUrlInputSchema);
+const captureAndTileSchema = z.object(CaptureAndTileInputSchema);
 
 describe("TileImageInputSchema", () => {
   describe("filePath", () => {
@@ -227,6 +231,39 @@ describe("TileImageInputSchema", () => {
       expect(result.outputDir).toBe("/tmp/tiles");
     });
   });
+
+  describe("format", () => {
+    it("defaults to webp when omitted", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png" });
+      expect(result.format).toBe("webp");
+    });
+
+    it("accepts png", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", format: "png" });
+      expect(result.format).toBe("png");
+    });
+
+    it("accepts webp", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", format: "webp" });
+      expect(result.format).toBe("webp");
+    });
+
+    it("rejects invalid format", () => {
+      expect(() => tileImageSchema.parse({ filePath: "test.png", format: "jpg" })).toThrow();
+    });
+  });
+
+  describe("includeMetadata", () => {
+    it("defaults to false when omitted", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png" });
+      expect(result.includeMetadata).toBe(false);
+    });
+
+    it("accepts true", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", includeMetadata: true });
+      expect(result.includeMetadata).toBe(true);
+    });
+  });
 });
 
 describe("GetTilesInputSchema", () => {
@@ -380,5 +417,108 @@ describe("PrepareImageInputSchema", () => {
     const result = prepareImageSchema.parse({});
     expect(result.filePath).toBeUndefined();
     expect(result.sourceUrl).toBeUndefined();
+  });
+
+  it("format defaults to webp", () => {
+    const result = prepareImageSchema.parse({ filePath: "test.png" });
+    expect(result.format).toBe("webp");
+  });
+
+  it("includeMetadata defaults to false", () => {
+    const result = prepareImageSchema.parse({ filePath: "test.png" });
+    expect(result.includeMetadata).toBe(false);
+  });
+});
+
+describe("CaptureUrlInputSchema", () => {
+  it("requires url", () => {
+    expect(() => captureUrlSchema.parse({})).toThrow();
+  });
+
+  it("accepts valid URL", () => {
+    const result = captureUrlSchema.parse({ url: "https://example.com" });
+    expect(result.url).toBe("https://example.com");
+  });
+
+  it("rejects invalid URL", () => {
+    expect(() => captureUrlSchema.parse({ url: "not-a-url" })).toThrow("url");
+  });
+
+  it("viewportWidth is optional (undefined when omitted)", () => {
+    const result = captureUrlSchema.parse({ url: "https://example.com" });
+    expect(result.viewportWidth).toBeUndefined();
+  });
+
+  it("rejects viewportWidth below 320", () => {
+    expect(() =>
+      captureUrlSchema.parse({ url: "https://example.com", viewportWidth: 100 })
+    ).toThrow("320");
+  });
+
+  it("rejects viewportWidth above 3840", () => {
+    expect(() =>
+      captureUrlSchema.parse({ url: "https://example.com", viewportWidth: 5000 })
+    ).toThrow("3840");
+  });
+
+  it("waitUntil defaults to load", () => {
+    const result = captureUrlSchema.parse({ url: "https://example.com" });
+    expect(result.waitUntil).toBe("load");
+  });
+
+  it("accepts networkidle", () => {
+    const result = captureUrlSchema.parse({ url: "https://example.com", waitUntil: "networkidle" });
+    expect(result.waitUntil).toBe("networkidle");
+  });
+
+  it("rejects invalid waitUntil", () => {
+    expect(() =>
+      captureUrlSchema.parse({ url: "https://example.com", waitUntil: "idle" })
+    ).toThrow();
+  });
+
+  it("delay defaults to 0", () => {
+    const result = captureUrlSchema.parse({ url: "https://example.com" });
+    expect(result.delay).toBe(0);
+  });
+
+  it("rejects delay above 30000", () => {
+    expect(() =>
+      captureUrlSchema.parse({ url: "https://example.com", delay: 50000 })
+    ).toThrow("30000");
+  });
+
+  it("format defaults to webp", () => {
+    const result = captureUrlSchema.parse({ url: "https://example.com" });
+    expect(result.format).toBe("webp");
+  });
+});
+
+describe("CaptureAndTileInputSchema", () => {
+  it("requires url", () => {
+    expect(() => captureAndTileSchema.parse({})).toThrow();
+  });
+
+  it("accepts valid URL with defaults", () => {
+    const result = captureAndTileSchema.parse({ url: "https://example.com" });
+    expect(result.url).toBe("https://example.com");
+    expect(result.model).toBe("claude");
+    expect(result.maxDimension).toBe(10000);
+    expect(result.page).toBe(0);
+    expect(result.format).toBe("webp");
+    expect(result.includeMetadata).toBe(false);
+  });
+
+  it("accepts all model options", () => {
+    for (const m of ["claude", "openai", "gemini", "gemini3"]) {
+      const result = captureAndTileSchema.parse({ url: "https://example.com", model: m });
+      expect(result.model).toBe(m);
+    }
+  });
+
+  it("rejects negative page", () => {
+    expect(() =>
+      captureAndTileSchema.parse({ url: "https://example.com", page: -1 })
+    ).toThrow("Page must be >= 0");
   });
 });
