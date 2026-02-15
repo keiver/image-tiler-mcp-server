@@ -218,6 +218,21 @@ describe("registerGetTilesTool", () => {
     expect(res.content[0].text).toContain("tiles 15-19 of 20 total");
   });
 
+  it("returns image/webp MIME type for webp tiles", async () => {
+    mockedListTiles.mockResolvedValue([
+      "/tiles/tile_000_000.webp",
+      "/tiles/tile_000_001.webp",
+    ]);
+    const tool = mock.getTool("tiler_get_tiles")!;
+    const result = await tool.handler(
+      { tilesDir: "/tiles", start: 0, end: 0 },
+      {} as any
+    );
+    const res = result as any;
+    const images = res.content.filter((c: any) => c.type === "image");
+    expect(images[0].mimeType).toBe("image/webp");
+  });
+
   it("handles malformed tile filename with row=-1, col=-1", async () => {
     mockedListTiles.mockResolvedValue([
       "/tiles/tile_000_000.png",

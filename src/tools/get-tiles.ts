@@ -102,9 +102,10 @@ Pagination example for 21 tiles:
         for (let i = start; i <= effectiveEnd; i++) {
           const tilePath = tilePaths[i];
           const filename = path.basename(tilePath);
-          const match = filename.match(/tile_(\d+)_(\d+)\.png/);
+          const match = filename.match(/tile_(\d+)_(\d+)\.(png|webp)/);
           const row = match ? parseInt(match[1], 10) : -1;
           const col = match ? parseInt(match[2], 10) : -1;
+          const mimeType = path.extname(tilePath) === ".webp" ? "image/webp" : "image/png";
 
           content.push({
             type: "text" as const,
@@ -115,7 +116,7 @@ Pagination example for 21 tiles:
           content.push({
             type: "image" as const,
             data: base64Data,
-            mimeType: "image/png",
+            mimeType,
           });
         }
 

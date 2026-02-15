@@ -52,6 +52,32 @@ export interface ResolvedImageSource {
   originalSource: string;
 }
 
+// URL capture
+export interface CaptureUrlOptions {
+  url: string;
+  viewportWidth?: number;
+  waitUntil?: "load" | "networkidle" | "domcontentloaded";
+  delay?: number;
+  timeout?: number;
+}
+
+export interface CaptureResult {
+  buffer: Buffer;
+  pageWidth: number;
+  pageHeight: number;
+  url: string;
+  segmentsStitched?: number;
+}
+
+// Tile metadata (smart analysis)
+export interface TileMetadata {
+  index: number;
+  meanBrightness: number;
+  stdDev: number;
+  contentHint: "text-heavy" | "image-rich" | "low-detail" | "mixed";
+  isBlank: boolean;
+}
+
 // Recommend-settings output
 export interface ModelEstimate {
   model: string;

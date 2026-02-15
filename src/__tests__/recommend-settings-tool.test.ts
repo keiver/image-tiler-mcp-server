@@ -109,6 +109,14 @@ function setupDefaultMocks(width = 7680, height = 4032) {
   });
 }
 
+/** Find the JSON content block from the recommend-settings response */
+function findJsonBlock(res: any): any {
+  const block = res.content.find(
+    (c: any) => c.type === "text" && c.text.startsWith("{")
+  );
+  return JSON.parse(block.text);
+}
+
 describe("registerRecommendSettingsTool", () => {
   let mock: ReturnType<typeof createMockServer>;
 
@@ -135,7 +143,7 @@ describe("registerRecommendSettingsTool", () => {
     );
     const res = result as any;
     expect(res.isError).toBeUndefined();
-    const json = JSON.parse(res.content[0].text);
+    const json = findJsonBlock(res);
     expect(json.recommended).toBeDefined();
     expect(json.recommended.model).toBe("claude");
     expect(json.imageInfo.width).toBe(7680);
@@ -149,7 +157,7 @@ describe("registerRecommendSettingsTool", () => {
       { filePath: "test.png" },
       {} as any
     );
-    const json = JSON.parse((result as any).content[0].text);
+    const json = findJsonBlock(result as any);
     const modelNames = json.allModels.map((m: any) => m.model);
     expect(modelNames).toContain("claude");
     expect(modelNames).toContain("openai");
@@ -163,7 +171,7 @@ describe("registerRecommendSettingsTool", () => {
       { filePath: "test.png", model: "openai" },
       {} as any
     );
-    const json = JSON.parse((result as any).content[0].text);
+    const json = findJsonBlock(result as any);
     expect(json.recommended.model).toBe("openai");
   });
 
@@ -173,7 +181,7 @@ describe("registerRecommendSettingsTool", () => {
       { filePath: "test.png", tileSize: 800 },
       {} as any
     );
-    const json = JSON.parse((result as any).content[0].text);
+    const json = findJsonBlock(result as any);
     expect(json.recommended.tileSize).toBe(800);
   });
 
@@ -183,7 +191,7 @@ describe("registerRecommendSettingsTool", () => {
       { filePath: "test.png", maxDimension: 5000 },
       {} as any
     );
-    const json = JSON.parse((result as any).content[0].text);
+    const json = findJsonBlock(result as any);
     expect(json.recommended.maxDimension).toBe(5000);
   });
 
@@ -195,7 +203,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "long-scroll.png", intent: "text_heavy" },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       expect(json.recommended.maxDimension).toBe(6000);
       expect(json.rationale.some((r: string) => r.includes("text-heavy"))).toBe(true);
     });
@@ -207,7 +215,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "screenshot.png", intent: "text_heavy" },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       expect(json.recommended.maxDimension).toBe(10000);
     });
 
@@ -218,7 +226,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "diagram.png", intent: "diagram" },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       // Claude default 1092 * 1.3 = 1420, within max 1568
       expect(json.recommended.tileSize).toBe(1420);
       expect(json.rationale.some((r: string) => r.includes("Diagram"))).toBe(true);
@@ -230,7 +238,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "test.png", budget: "low" },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       expect(json.recommended.maxDimension).toBe(6000); // 10000 * 0.6
     });
 
@@ -240,7 +248,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "test.png", budget: "max_detail" },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       expect(json.recommended.maxDimension).toBe(15000);
     });
 
@@ -251,7 +259,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "doc.png", intent: "text_heavy", budget: "low" },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       // text_heavy caps to 6000, then low reduces by 40% → 3600
       expect(json.recommended.maxDimension).toBe(3600);
     });
@@ -263,7 +271,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "doc.png", intent: "text_heavy", budget: "low", maxDimension: 8000 },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       expect(json.recommended.maxDimension).toBe(8000);
     });
 
@@ -275,7 +283,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "exact-threshold.png", intent: "text_heavy" },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       expect(json.recommended.maxDimension).toBe(10000);
     });
 
@@ -287,7 +295,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "just-above.png", intent: "text_heavy" },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       expect(json.recommended.maxDimension).toBe(6000);
     });
 
@@ -297,7 +305,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "test.png", budget: "default" },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       expect(json.recommended.maxDimension).toBe(10000);
       expect(json.rationale).toContain("Using default settings — no heuristic adjustments applied");
     });
@@ -309,7 +317,7 @@ describe("registerRecommendSettingsTool", () => {
         { filePath: "diagram.png", intent: "diagram", tileSize: 900 },
         {} as any
       );
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       // Explicit tileSize=900 should be used as-is; diagram heuristic skipped
       expect(json.recommended.tileSize).toBe(900);
     });
@@ -359,7 +367,7 @@ describe("registerRecommendSettingsTool", () => {
     setupDefaultMocks(7680, 4032);
     const tool = mock.getTool("tiler_recommend_settings")!;
     const result = await tool.handler({ filePath: "test.png" }, {} as any);
-    const json = JSON.parse((result as any).content[0].text);
+    const json = findJsonBlock(result as any);
     // 7680 * 4032 = 30,965,760 → 30.97 megapixels
     expect(json.imageInfo.megapixels).toBe(30.97);
   });
@@ -368,7 +376,7 @@ describe("registerRecommendSettingsTool", () => {
     it("includes previewPath in response", async () => {
       const tool = mock.getTool("tiler_recommend_settings")!;
       const result = await tool.handler({ filePath: "test.png" }, {} as any);
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       expect(json.previewPath).toBe("/tmp/test-image-preview.html");
     });
 
@@ -387,7 +395,7 @@ describe("registerRecommendSettingsTool", () => {
     it("allModels entries include cols and rows", async () => {
       const tool = mock.getTool("tiler_recommend_settings")!;
       const result = await tool.handler({ filePath: "test.png" }, {} as any);
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       for (const m of json.allModels) {
         expect(m).toHaveProperty("cols");
         expect(m).toHaveProperty("rows");
@@ -399,7 +407,7 @@ describe("registerRecommendSettingsTool", () => {
     it("allModels entries include label from MODEL_CONFIGS", async () => {
       const tool = mock.getTool("tiler_recommend_settings")!;
       const result = await tool.handler({ filePath: "test.png" }, {} as any);
-      const json = JSON.parse((result as any).content[0].text);
+      const json = findJsonBlock(result as any);
       const labels = json.allModels.map((m: any) => m.label);
       expect(labels).toContain("Claude");
       expect(labels).toContain("OpenAI");
@@ -413,9 +421,36 @@ describe("registerRecommendSettingsTool", () => {
       const result = await tool.handler({ filePath: "test.png" }, {} as any);
       const res = result as any;
       expect(res.isError).toBeUndefined();
-      const json = JSON.parse(res.content[0].text);
+      const json = findJsonBlock(res);
       expect(json.previewPath).toBeUndefined();
       expect(json.warnings).toContain("Preview generation failed: disk full");
     });
+  });
+
+  it("includes separate preview content block before JSON", async () => {
+    const tool = mock.getTool("tiler_recommend_settings")!;
+    const result = await tool.handler(
+      { filePath: "test.png" },
+      {} as any
+    );
+    const res = result as any;
+    // First block should be preview, second should be JSON
+    expect(res.content[0].text).toMatch(/^Preview: /);
+    expect(res.content[0].text).toContain("/tmp/test-image-preview.html");
+    // JSON block follows
+    expect(res.content[1].text).toMatch(/^\{/);
+  });
+
+  it("no preview block when preview generation fails", async () => {
+    mockedGeneratePreview.mockRejectedValue(new Error("fail"));
+    const tool = mock.getTool("tiler_recommend_settings")!;
+    const result = await tool.handler(
+      { filePath: "test.png" },
+      {} as any
+    );
+    const res = result as any;
+    // Only JSON block, no preview block
+    expect(res.content).toHaveLength(1);
+    expect(res.content[0].text).toMatch(/^\{/);
   });
 });

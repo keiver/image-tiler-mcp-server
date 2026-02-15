@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { TileImageResult } from "../types.js";
+import type { TileImageResult, TileMetadata } from "../types.js";
 
 vi.mock("../services/image-processor.js", () => ({
   tileImage: vi.fn(),
@@ -15,6 +15,15 @@ vi.mock("../services/image-source-resolver.js", () => ({
   resolveImageSource: vi.fn(),
 }));
 
+vi.mock("../services/tile-analyzer.js", () => ({
+  analyzeTiles: vi.fn(),
+}));
+
+vi.mock("../utils.js", () => ({
+  getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
+  escapeHtml: vi.fn((s: string) => s),
+}));
+
 vi.mock("node:fs/promises", () => ({
   copyFile: vi.fn(),
 }));
@@ -22,6 +31,7 @@ vi.mock("node:fs/promises", () => ({
 import { tileImage, computeEstimateForModel } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
+import { analyzeTiles } from "../services/tile-analyzer.js";
 import { registerTileImageTool } from "../tools/tile-image.js";
 import { createMockServer } from "./helpers/mock-server.js";
 
@@ -29,6 +39,7 @@ const mockedTileImage = vi.mocked(tileImage);
 const mockedGeneratePreview = vi.mocked(generateInteractivePreview);
 const mockedComputeEstimate = vi.mocked(computeEstimateForModel);
 const mockedResolveSource = vi.mocked(resolveImageSource);
+const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
 
 function makeTileResult(overrides?: Partial<TileImageResult>): TileImageResult {
   return {
@@ -131,7 +142,8 @@ describe("registerTileImageTool", () => {
       expect.stringContaining(path.join("tiles", "photo")),
       1590,
       undefined,
-      1568
+      1568,
+      undefined
     );
   });
 
@@ -142,10 +154,10 @@ describe("registerTileImageTool", () => {
       { filePath: "image.png", model: "claude", tileSize: 1072, outputDir: "/custom/dir" },
       {} as any
     );
-    expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1072, "/custom/dir", 1590, undefined, 1568);
+    expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1072, "/custom/dir", 1590, undefined, 1568, undefined);
   });
 
-  it("returns summary and structured JSON on success", async () => {
+  it("returns summary, structured JSON, and preview block on success", async () => {
     mockedTileImage.mockResolvedValue(makeTileResult());
     const tool = mock.getTool("tiler_tile_image")!;
     const result = await tool.handler(
@@ -153,7 +165,8 @@ describe("registerTileImageTool", () => {
       {} as any
     );
     const res = result as any;
-    expect(res.content).toHaveLength(2);
+    // summary + JSON + preview block = 3
+    expect(res.content).toHaveLength(3);
     expect(res.content[0].type).toBe("text");
     expect(res.content[0].text).toContain("2×2 grid");
     expect(res.content[0].text).toContain("4 tiles");
@@ -161,6 +174,11 @@ describe("registerTileImageTool", () => {
     const json = JSON.parse(res.content[1].text);
     expect(json.grid.totalTiles).toBe(4);
     expect(json.tiles).toHaveLength(4);
+
+    // Separate preview block
+    expect(res.content[2].type).toBe("text");
+    expect(res.content[2].text).toMatch(/^Preview: /);
+    expect(res.content[2].text).toContain("/output/tiles/image-preview.html");
   });
 
   it("includes pagination hint in summary", async () => {
@@ -302,7 +320,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "claude", tileSize: undefined, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1092, "/out", 1590, undefined, 1568);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1092, "/out", 1590, undefined, 1568, undefined);
     });
 
     it("uses openai defaults (768px, 765 tokens/tile)", async () => {
@@ -314,7 +332,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "openai", tileSize: undefined, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 768, "/out", 765, undefined, 2048);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 768, "/out", 765, undefined, 2048, undefined);
     });
 
     it("uses gemini defaults (768px, 258 tokens/tile)", async () => {
@@ -326,7 +344,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "gemini", tileSize: undefined, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 768, "/out", 258, undefined, 768);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 768, "/out", 258, undefined, 768, undefined);
     });
 
     it("includes model in structured output", async () => {
@@ -372,7 +390,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "gemini3", tileSize: undefined, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1536, "/out", 1120, undefined, 3072);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1536, "/out", 1120, undefined, 3072, undefined);
     });
 
     it("summary mentions Gemini 3 label", async () => {
@@ -395,7 +413,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "claude", tileSize: 2000, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1568, "/out", 1590, undefined, 1568);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1568, "/out", 1590, undefined, 1568, undefined);
 
       const res = result as any;
       expect(res.content[0].text).toContain("2000px exceeds");
@@ -416,7 +434,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "openai", tileSize: 2000, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 2000, "/out", 765, undefined, 2048);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 2000, "/out", 765, undefined, 2048, undefined);
 
       const res = result as any;
       const json = JSON.parse(res.content[1].text);
@@ -430,7 +448,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "openai", tileSize: 2500, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 2048, "/out", 765, undefined, 2048);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 2048, "/out", 765, undefined, 2048, undefined);
     });
 
     it("no warnings when tileSize is within model bounds", async () => {
@@ -453,7 +471,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "openai", tileSize: 512, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 512, "/out", 765, undefined, 2048);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 512, "/out", 765, undefined, 2048, undefined);
     });
 
     it("clamps tileSize above gemini max (768) with warning", async () => {
@@ -463,7 +481,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "gemini", tileSize: 1000, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 768, "/out", 258, undefined, 768);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 768, "/out", 258, undefined, 768, undefined);
 
       const res = result as any;
       expect(res.content[0].text).toContain("1000px exceeds");
@@ -477,7 +495,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "gemini3", tileSize: 4000, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 3072, "/out", 1120, undefined, 3072);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 3072, "/out", 1120, undefined, 3072, undefined);
 
       const res = result as any;
       expect(res.content[0].text).toContain("4000px exceeds");
@@ -491,7 +509,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "claude", tileSize: 100, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 256, "/out", 1590, undefined, 1568);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 256, "/out", 1590, undefined, 1568, undefined);
 
       const res = result as any;
       expect(res.content[0].text).toContain("100px is below minimum");
@@ -510,7 +528,7 @@ describe("registerTileImageTool", () => {
         { filePath: "image.png", model: "gemini3", tileSize: 300, outputDir: "/out" },
         {} as any
       );
-      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 384, "/out", 1120, undefined, 3072);
+      expect(mockedTileImage).toHaveBeenCalledWith("image.png", 384, "/out", 1120, undefined, 3072, undefined);
 
       const res = result as any;
       expect(res.content[0].text).toContain("300px is below minimum");
@@ -537,7 +555,8 @@ describe("registerTileImageTool", () => {
         "/out",
         1590,
         2048,
-        1568
+        1568,
+        undefined
       );
     });
 
@@ -554,7 +573,8 @@ describe("registerTileImageTool", () => {
         "/out",
         1590,
         undefined,
-        1568
+        1568,
+        undefined
       );
     });
 
@@ -571,7 +591,8 @@ describe("registerTileImageTool", () => {
         "/out",
         1590,
         10000,
-        1568
+        1568,
+        undefined
       );
     });
 
@@ -645,7 +666,7 @@ describe("registerTileImageTool", () => {
       expect(json.previewPath).toBe("/output/tiles/image-preview.html");
     });
 
-    it("summary mentions preview when generation succeeds", async () => {
+    it("preview is a separate content block (not in summary)", async () => {
       mockedTileImage.mockResolvedValue(makeTileResult());
       mockedGeneratePreview.mockResolvedValue("/output/tiles/image-preview.html");
       const tool = mock.getTool("tiler_tile_image")!;
@@ -654,8 +675,14 @@ describe("registerTileImageTool", () => {
         {} as any
       );
       const res = result as any;
-      expect(res.content[0].text).toContain("image-preview.html");
-      expect(res.content[0].text).toContain("open in browser");
+      // Summary should NOT contain the preview (it's in a separate block)
+      expect(res.content[0].text).not.toContain("image-preview.html");
+      // Separate preview block should exist
+      const previewBlock = res.content.find(
+        (c: any) => c.type === "text" && c.text.startsWith("Preview: ")
+      );
+      expect(previewBlock).toBeDefined();
+      expect(previewBlock.text).toContain("image-preview.html");
     });
 
     it("tiling succeeds when preview generation throws", async () => {
@@ -676,7 +703,7 @@ describe("registerTileImageTool", () => {
       expect(json.warnings).toContainEqual(expect.stringContaining("Write permission denied"));
     });
 
-    it("summary does not mention preview when generation fails", async () => {
+    it("no preview block when generation fails", async () => {
       mockedTileImage.mockResolvedValue(makeTileResult());
       mockedGeneratePreview.mockRejectedValue(new Error("fail"));
       const tool = mock.getTool("tiler_tile_image")!;
@@ -685,7 +712,11 @@ describe("registerTileImageTool", () => {
         {} as any
       );
       const res = result as any;
-      expect(res.content[0].text).not.toContain("-preview.html");
+      expect(res.content).toHaveLength(2); // summary + JSON only
+      const previewBlock = res.content.find(
+        (c: any) => c.type === "text" && c.text.startsWith("Preview: ")
+      );
+      expect(previewBlock).toBeUndefined();
     });
 
     it("calls generateInteractivePreview with correct arguments", async () => {
@@ -706,6 +737,78 @@ describe("registerTileImageTool", () => {
         }),
         "/output/tiles"
       );
+    });
+  });
+
+  describe("includeMetadata", () => {
+    it("calls analyzeTiles when includeMetadata is true", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const mockMetadata: TileMetadata[] = [
+        { index: 0, contentHint: "text-heavy", meanBrightness: 200, stdDev: 15, isBlank: false },
+        { index: 1, contentHint: "image-rich", meanBrightness: 128, stdDev: 65, isBlank: false },
+        { index: 2, contentHint: "low-detail", meanBrightness: 250, stdDev: 3, isBlank: true },
+        { index: 3, contentHint: "mixed", meanBrightness: 150, stdDev: 40, isBlank: false },
+      ];
+      mockedAnalyzeTiles.mockResolvedValue(mockMetadata);
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out", includeMetadata: true },
+        {} as any
+      );
+      expect(mockedAnalyzeTiles).toHaveBeenCalledWith([
+        "/output/tiles/tile_000_000.png",
+        "/output/tiles/tile_000_001.png",
+        "/output/tiles/tile_001_000.png",
+        "/output/tiles/tile_001_001.png",
+      ]);
+    });
+
+    it("includes tileMetadata in structured output when includeMetadata is true", async () => {
+      const metadata: TileMetadata[] = [
+        { index: 0, contentHint: "text-heavy", meanBrightness: 200, stdDev: 15, isBlank: false },
+      ];
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      mockedAnalyzeTiles.mockResolvedValue(metadata);
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out", includeMetadata: true },
+        {} as any
+      );
+      const res = result as any;
+      const json = JSON.parse(res.content[1].text);
+      expect(json.tileMetadata).toEqual(metadata);
+    });
+
+    it("does not call analyzeTiles when includeMetadata is false", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out", includeMetadata: false },
+        {} as any
+      );
+      expect(mockedAnalyzeTiles).not.toHaveBeenCalled();
+    });
+
+    it("does not call analyzeTiles when includeMetadata is omitted", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedAnalyzeTiles).not.toHaveBeenCalled();
+    });
+
+    it("omits tileMetadata from structured output when includeMetadata is omitted", async () => {
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      const json = JSON.parse(res.content[1].text);
+      expect(json.tileMetadata).toBeUndefined();
     });
   });
 });

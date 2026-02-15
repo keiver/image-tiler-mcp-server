@@ -71,3 +71,23 @@ export type ImageIntent = (typeof IMAGE_INTENTS)[number];
 
 export const BUDGET_LEVELS = ["low", "default", "max_detail"] as const;
 export type BudgetLevel = (typeof BUDGET_LEVELS)[number];
+
+// Tile output formats
+export const TILE_OUTPUT_FORMATS = ["png", "webp"] as const;
+export type TileOutputFormat = (typeof TILE_OUTPUT_FORMATS)[number];
+export const WEBP_QUALITY = 80;
+
+// URL capture
+export const MAX_CAPTURE_HEIGHT = 200_000; // max page height for scroll-stitching (~12 segments)
+export const CHROME_MAX_CAPTURE_HEIGHT = 16384;
+export const CAPTURE_DEFAULT_VIEWPORT_WIDTH = 1280;
+export const CAPTURE_DEFAULT_VIEWPORT_HEIGHT = 800;
+export const CAPTURE_DEFAULT_TIMEOUT_MS = 60_000;
+export const CAPTURE_STITCH_SETTLE_MS = 100;
+export const CAPTURE_IDLE_TIMEOUT_MS = 500;
+export const WAIT_UNTIL_OPTIONS = ["load", "networkidle", "domcontentloaded"] as const;
+export type WaitUntil = (typeof WAIT_UNTIL_OPTIONS)[number];
+export const ALLOWED_CAPTURE_PROTOCOLS = ["https:", "http:"] as const;
+
+// Preview rendering
+export const MAX_PREVIEW_PIXELS = 16_000_000; // Safari's canvas/image rendering limit

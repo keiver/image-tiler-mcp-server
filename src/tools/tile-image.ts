@@ -5,7 +5,9 @@ import { TileImageInputSchema } from "../schemas/index.js";
 import { tileImage, computeEstimateForModel } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
+import { analyzeTiles } from "../services/tile-analyzer.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, DEFAULT_MAX_DIMENSION } from "../constants.js";
+import { getDefaultOutputBase } from "../utils.js";
 import type { ModelEstimate } from "../types.js";
 
 const TILE_IMAGE_DESCRIPTION = (() => {
@@ -25,7 +27,7 @@ Split a large image into optimally-sized tiles for LLM vision analysis. The "mod
 ${VISION_MODELS.length} tiling presets available via the "model" parameter:
 ${modelLines}
 
-Tiles are saved as PNG files to a 'tiles/{name}' subfolder next to the source image (or a custom output directory).
+Tiles are saved as WebP (default) or PNG files to a 'tiles/{name}' subfolder next to the source image (or a custom output directory).
 
 Supported formats: ${SUPPORTED_FORMATS.join(", ")}
 
@@ -38,6 +40,8 @@ Args:
   - tileSize (number, optional): Override tile size in pixels. If omitted, uses the preset's optimal default. Clamped to the preset's max with a warning if exceeded.
   - maxDimension (number, optional): Max dimension in px (256-65536). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. No-op if the image is already within bounds. Defaults to 10000px. Set to 0 to disable auto-downscaling.
   - outputDir (string, optional): Custom output directory for tiles
+  - format (string, optional): Output format for tiles — "webp" (smaller, default) or "png" (lossless)
+  - includeMetadata (boolean, optional): When true, analyze each tile and return content hints and brightness stats
 
 At least one image source (filePath, sourceUrl, dataUrl, or imageBase64) is required.
 
@@ -72,7 +76,7 @@ export function registerTileImageTool(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ filePath, sourceUrl, dataUrl, imageBase64, model, tileSize, maxDimension, outputDir }) => {
+    async ({ filePath, sourceUrl, dataUrl, imageBase64, model, tileSize, maxDimension, outputDir, format, includeMetadata }) => {
       // Validate at least one source is provided
       if (!filePath && !sourceUrl && !dataUrl && !imageBase64) {
         return {
@@ -130,8 +134,8 @@ export function registerTileImageTool(server: McpServer): void {
           const basename = path.basename(localPath, path.extname(localPath));
           resolvedOutputDir = path.join(path.dirname(path.resolve(localPath)), "tiles", basename);
         } else {
-          // Non-file sources: use cwd/tiles/tiled_<timestamp>
-          resolvedOutputDir = path.join(process.cwd(), "tiles", `tiled_${Date.now()}`);
+          // Non-file sources: use ~/Desktop/tiles/tiled_<timestamp> (or Downloads/home)
+          resolvedOutputDir = path.join(getDefaultOutputBase(), "tiles", `tiled_${Date.now()}`);
         }
 
         const result = await tileImage(
@@ -140,7 +144,8 @@ export function registerTileImageTool(server: McpServer): void {
           resolvedOutputDir,
           config.tokensPerTile,
           maxDimension === 0 ? undefined : maxDimension,
-          config.maxTileSize
+          config.maxTileSize,
+          format
         );
 
         // For non-file sources, copy the source image (or resized version) to outputDir
@@ -199,12 +204,6 @@ export function registerTileImageTool(server: McpServer): void {
           `→ Saved to: ${result.outputDir}`,
         );
 
-        if (previewPath) {
-          summaryLines.push(
-            `→ Preview: ${path.basename(previewPath)} (open in browser to visualize the grid)`
-          );
-        }
-
         if (warnings.length > 0) {
           summaryLines.push("");
           summaryLines.push(`⚠ ${warnings.join("\n⚠ ")}`);
@@ -237,6 +236,11 @@ export function registerTileImageTool(server: McpServer): void {
           structuredOutput.resize = result.resize;
         }
 
+        if (includeMetadata) {
+          const tileMetadata = await analyzeTiles(result.tiles.map((t) => t.filePath));
+          structuredOutput.tileMetadata = tileMetadata;
+        }
+
         if (previewPath) {
           structuredOutput.previewPath = previewPath;
         }
@@ -245,15 +249,22 @@ export function registerTileImageTool(server: McpServer): void {
           structuredOutput.warnings = warnings;
         }
 
-        return {
-          content: [
-            { type: "text" as const, text: summary },
-            {
-              type: "text" as const,
-              text: JSON.stringify(structuredOutput, null, 2),
-            },
-          ],
-        };
+        const content: Array<{ type: "text"; text: string }> = [
+          { type: "text" as const, text: summary },
+          {
+            type: "text" as const,
+            text: JSON.stringify(structuredOutput, null, 2),
+          },
+        ];
+
+        if (previewPath) {
+          content.push({
+            type: "text" as const,
+            text: `Preview: ${previewPath}`,
+          });
+        }
+
+        return { content };
       } catch (error) {
         const message =
           error instanceof Error ? error.message : String(error);

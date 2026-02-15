@@ -1,5 +1,19 @@
-import { describe, it, expect } from "vitest";
-import { escapeHtml } from "../utils.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { mockHomedir, mockAccessSync } = vi.hoisted(() => ({
+  mockHomedir: vi.fn().mockReturnValue("/Users/test"),
+  mockAccessSync: vi.fn(),
+}));
+
+vi.mock("node:os", () => ({
+  homedir: mockHomedir,
+}));
+
+vi.mock("node:fs", () => ({
+  accessSync: mockAccessSync,
+}));
+
+import { escapeHtml, getDefaultOutputBase } from "../utils.js";
 
 describe("escapeHtml", () => {
   it("escapes ampersand", () => {
@@ -38,5 +52,31 @@ describe("escapeHtml", () => {
 
   it("escapes multiple occurrences of the same char", () => {
     expect(escapeHtml("<<>>")).toBe("&lt;&lt;&gt;&gt;");
+  });
+});
+
+describe("getDefaultOutputBase", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockHomedir.mockReturnValue("/Users/test");
+  });
+
+  it("returns Desktop when it exists", () => {
+    mockAccessSync.mockImplementation(() => {});
+    expect(getDefaultOutputBase()).toBe("/Users/test/Desktop");
+  });
+
+  it("returns Downloads when Desktop does not exist", () => {
+    mockAccessSync.mockImplementation((p: string) => {
+      if (String(p).includes("Desktop")) throw new Error("not found");
+    });
+    expect(getDefaultOutputBase()).toBe("/Users/test/Downloads");
+  });
+
+  it("returns homedir when neither Desktop nor Downloads exist", () => {
+    mockAccessSync.mockImplementation(() => {
+      throw new Error("not found");
+    });
+    expect(getDefaultOutputBase()).toBe("/Users/test");
   });
 });

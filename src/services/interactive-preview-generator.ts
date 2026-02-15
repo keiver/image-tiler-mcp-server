@@ -1,6 +1,8 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import sharp from "sharp";
 import { escapeHtml } from "../utils.js";
+import { MAX_PREVIEW_PIXELS } from "../constants.js";
 import type { ModelEstimate } from "../types.js";
 
 export interface InteractivePreviewData {
@@ -27,12 +29,30 @@ export async function generateInteractivePreview(
     models,
   } = data;
 
-  const relativeSourcePath = path.relative(
-    outputDir,
-    path.resolve(sourceImagePath)
-  );
-
   const filename = path.basename(sourceImagePath);
+
+  // Downsize large images for browser-safe preview (Safari caps at ~16M pixels)
+  const sharpMeta = await sharp(path.resolve(sourceImagePath)).metadata();
+  const sourcePixels = (sharpMeta.width ?? 0) * (sharpMeta.height ?? 0);
+  let previewImagePath = sourceImagePath;
+
+  if (sourcePixels > MAX_PREVIEW_PIXELS && sharpMeta.width && sharpMeta.height) {
+    const scale = Math.sqrt(MAX_PREVIEW_PIXELS / sourcePixels);
+    const previewW = Math.round(sharpMeta.width * scale);
+    const previewH = Math.round(sharpMeta.height * scale);
+    const previewFilename = `${path.basename(sourceImagePath, path.extname(sourceImagePath))}-preview-bg.png`;
+    const previewBgPath = path.join(outputDir, previewFilename);
+    await sharp(path.resolve(sourceImagePath))
+      .resize(previewW, previewH)
+      .png({ compressionLevel: 6 })
+      .toFile(previewBgPath);
+    previewImagePath = previewBgPath;
+  }
+
+  const relativePreviewImagePath = path.relative(
+    outputDir,
+    path.resolve(previewImagePath)
+  );
   const wasResized = effectiveWidth !== originalWidth || effectiveHeight !== originalHeight;
 
   const modelsJson = JSON.stringify(
@@ -86,7 +106,7 @@ export async function generateInteractivePreview(
 <div class="tabs" id="model-tabs"></div>
 
 <div class="source-container">
-  <img src="${escapeHtml(relativeSourcePath)}" alt="Source image" />
+  <img src="${escapeHtml(relativePreviewImagePath)}" alt="Source image" />
   <svg id="grid-overlay" viewBox="0 0 ${effectiveWidth} ${effectiveHeight}" preserveAspectRatio="xMinYMin meet"></svg>
 </div>
 
