@@ -192,10 +192,7 @@ function waitForDomContentLoaded(ws: WebSocket, timeout: number): Promise<void> 
 
     function handler(data: WebSocket.RawData) {
       const msg = JSON.parse(data.toString()) as CdpEvent;
-      if (
-        msg.method === "Page.lifecycleEvent" &&
-        (msg.params as Record<string, unknown>)?.name === "DOMContentLoaded"
-      ) {
+      if (msg.method === "Page.domContentEventFired") {
         clearTimeout(timer);
         ws.removeListener("message", handler);
         resolve();

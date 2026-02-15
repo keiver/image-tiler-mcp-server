@@ -16,7 +16,7 @@ const waitOptions = WAIT_UNTIL_OPTIONS.map((o) => `"${o}"`).join(", ");
 
 const CAPTURE_URL_DESCRIPTION = `Capture a screenshot of a web page. Requires Google Chrome installed locally (or set CHROME_PATH env var).
 
-Supports full-page capture including scroll-stitching for pages taller than 16,384px (Chrome's single-capture limit). The competitor tool silently truncates — this one captures the full page.
+Supports full-page capture including scroll-stitching for pages taller than 16,384px (Chrome's single-capture limit).
 
 Args:
   - url (string, required): URL of the web page to capture (http or https)

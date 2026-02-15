@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import sharp from "sharp";
 import { escapeHtml } from "../utils.js";
-import { MAX_PREVIEW_PIXELS } from "../constants.js";
+import { MAX_PREVIEW_PIXELS, WEBP_QUALITY } from "../constants.js";
 import type { ModelEstimate } from "../types.js";
 
 export interface InteractivePreviewData {
@@ -40,11 +40,11 @@ export async function generateInteractivePreview(
     const scale = Math.sqrt(MAX_PREVIEW_PIXELS / sourcePixels);
     const previewW = Math.round(sharpMeta.width * scale);
     const previewH = Math.round(sharpMeta.height * scale);
-    const previewFilename = `${path.basename(sourceImagePath, path.extname(sourceImagePath))}-preview-bg.png`;
+    const previewFilename = `${path.basename(sourceImagePath, path.extname(sourceImagePath))}-preview-bg.webp`;
     const previewBgPath = path.join(outputDir, previewFilename);
     await sharp(path.resolve(sourceImagePath))
       .resize(previewW, previewH)
-      .png({ compressionLevel: 6 })
+      .webp({ quality: WEBP_QUALITY })
       .toFile(previewBgPath);
     previewImagePath = previewBgPath;
   }

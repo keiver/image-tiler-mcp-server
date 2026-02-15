@@ -220,7 +220,7 @@ export const CaptureUrlInputSchema = {
   outputDir: z
     .string()
     .optional()
-    .describe("Directory to save the screenshot. Defaults to cwd/captures/"),
+    .describe("Directory to save the screenshot. Defaults to ~/Desktop/captures/ (or ~/Downloads/captures/, ~/captures/)"),
   format: z
     .enum(TILE_OUTPUT_FORMATS)
     .default("webp")
@@ -260,7 +260,7 @@ export const CaptureAndTileInputSchema = {
   outputDir: z
     .string()
     .optional()
-    .describe("Directory to save tiles. Defaults to cwd/tiles/capture_<timestamp>/"),
+    .describe("Directory to save tiles. Defaults to ~/Desktop/tiles/capture_<timestamp>/ (or ~/Downloads, ~)"),
   page: z
     .number()
     .int()

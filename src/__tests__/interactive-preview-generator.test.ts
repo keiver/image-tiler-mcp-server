@@ -1,17 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { InteractivePreviewData } from "../services/interactive-preview-generator.js";
 
-const { mockWriteFile, mockMetadata, mockToFile, mockPng, mockResize, mockSharp } = vi.hoisted(() => {
+const { mockWriteFile, mockMetadata, mockToFile, mockWebp, mockResize, mockSharp } = vi.hoisted(() => {
   const mockWriteFile = vi.fn();
   const mockToFile = vi.fn().mockResolvedValue({});
-  const mockPng = vi.fn().mockReturnValue({ toFile: mockToFile });
-  const mockResize = vi.fn().mockReturnValue({ png: mockPng });
+  const mockWebp = vi.fn().mockReturnValue({ toFile: mockToFile });
+  const mockResize = vi.fn().mockReturnValue({ webp: mockWebp });
   const mockMetadata = vi.fn().mockResolvedValue({ width: 3000, height: 4000 }); // Under 16M pixels
   const mockSharp = vi.fn().mockReturnValue({
     metadata: mockMetadata,
     resize: mockResize,
   });
-  return { mockWriteFile, mockMetadata, mockToFile, mockPng, mockResize, mockSharp };
+  return { mockWriteFile, mockMetadata, mockToFile, mockWebp, mockResize, mockSharp };
 });
 
 vi.mock("node:fs/promises", () => ({
@@ -206,13 +206,13 @@ describe("generateInteractivePreview", () => {
       expect(resizeW * resizeH).toBeLessThanOrEqual(16_000_000);
       expect(resizeW * resizeH).toBeGreaterThan(15_000_000); // Close to limit
 
-      // PNG output for preview background
-      expect(mockPng).toHaveBeenCalledWith({ compressionLevel: 6 });
-      expect(mockToFile).toHaveBeenCalledWith("/output/screenshot-preview-bg.png");
+      // WebP output for preview background
+      expect(mockWebp).toHaveBeenCalledWith({ quality: 80 });
+      expect(mockToFile).toHaveBeenCalledWith("/output/screenshot-preview-bg.webp");
 
       // HTML img src references the preview-bg file
       const html = mockWriteFile.mock.calls[0][1] as string;
-      expect(html).toContain("screenshot-preview-bg.png");
+      expect(html).toContain("screenshot-preview-bg.webp");
     });
 
     it("preserves SVG viewBox using effectiveWidth/Height even when preview is downsized", async () => {
