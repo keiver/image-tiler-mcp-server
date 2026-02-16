@@ -4,6 +4,7 @@ import {
   MAX_TILE_SIZE,
   MIN_TILE_SIZE,
   MAX_IMAGE_DIMENSION,
+  MAX_IMAGE_PIXELS,
   MAX_TOTAL_TILES,
   MAX_TILES_PER_BATCH,
   SUPPORTED_FORMATS,
@@ -20,6 +21,8 @@ import {
   MIN_REMAINDER_RATIO,
   MIN_PREVIEW_WIDTH,
   SHARP_OPERATION_TIMEOUT_MS,
+  MAX_CHROME_STDERR_BYTES,
+  MAX_CHROME_JSON_BYTES,
 } from "../constants.js";
 
 
@@ -80,6 +83,20 @@ describe("constants", () => {
 
     it("SHARP_OPERATION_TIMEOUT_MS is 30 seconds", () => {
       expect(SHARP_OPERATION_TIMEOUT_MS).toBe(30_000);
+    });
+
+    it("MAX_IMAGE_PIXELS is 256 megapixels", () => {
+      expect(MAX_IMAGE_PIXELS).toBe(256_000_000);
+    });
+  });
+
+  describe("security limits", () => {
+    it("MAX_CHROME_STDERR_BYTES is 1MB", () => {
+      expect(MAX_CHROME_STDERR_BYTES).toBe(1_048_576);
+    });
+
+    it("MAX_CHROME_JSON_BYTES is 1MB", () => {
+      expect(MAX_CHROME_JSON_BYTES).toBe(1_048_576);
     });
   });
 

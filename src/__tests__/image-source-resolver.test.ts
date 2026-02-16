@@ -342,10 +342,37 @@ describe("sourceUrl resolution", () => {
     ).rejects.toThrow("non-image Content-Type");
   });
 
-  it("accepts application/octet-stream Content-Type", async () => {
-    mockFetch({ headers: { "content-type": "application/octet-stream" } });
+  it("accepts application/octet-stream with valid image magic bytes", async () => {
+    // PNG magic bytes
+    const pngBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    mockFetch({
+      headers: { "content-type": "application/octet-stream" },
+      arrayBuffer: () => Promise.resolve(pngBuffer.buffer.slice(pngBuffer.byteOffset, pngBuffer.byteOffset + pngBuffer.byteLength)),
+    });
     const result = await resolveImageSource({ sourceUrl: "https://example.com/binary" });
     expect(result.sourceType).toBe("url");
+  });
+
+  it("rejects application/octet-stream with non-image magic bytes", async () => {
+    const nonImageBuffer = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+    mockFetch({
+      headers: { "content-type": "application/octet-stream" },
+      arrayBuffer: () => Promise.resolve(nonImageBuffer.buffer.slice(nonImageBuffer.byteOffset, nonImageBuffer.byteOffset + nonImageBuffer.byteLength)),
+    });
+    await expect(
+      resolveImageSource({ sourceUrl: "https://example.com/binary" })
+    ).rejects.toThrow("not a recognized image format");
+  });
+
+  it("rejects missing Content-Type with non-image magic bytes", async () => {
+    const nonImageBuffer = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+    mockFetch({
+      headers: {},
+      arrayBuffer: () => Promise.resolve(nonImageBuffer.buffer.slice(nonImageBuffer.byteOffset, nonImageBuffer.byteOffset + nonImageBuffer.byteLength)),
+    });
+    await expect(
+      resolveImageSource({ sourceUrl: "https://example.com/noheader" })
+    ).rejects.toThrow("not a recognized image format");
   });
 
   it("accepts missing Content-Type (no rejection)", async () => {

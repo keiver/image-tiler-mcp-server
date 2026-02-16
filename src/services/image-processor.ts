@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   MAX_IMAGE_DIMENSION,
+  MAX_IMAGE_PIXELS,
   MAX_TOTAL_TILES,
   PNG_COMPRESSION_LEVEL,
   WEBP_QUALITY,
@@ -38,6 +39,14 @@ export async function getImageMetadata(
   if (metadata.width > MAX_IMAGE_DIMENSION || metadata.height > MAX_IMAGE_DIMENSION) {
     throw new Error(
       `Image dimensions ${metadata.width}×${metadata.height} exceed maximum allowed ${MAX_IMAGE_DIMENSION}px. ` +
+      `Resize the image before tiling.`
+    );
+  }
+
+  const totalPixels = metadata.width * metadata.height;
+  if (totalPixels > MAX_IMAGE_PIXELS) {
+    throw new Error(
+      `Image pixel count ${metadata.width}×${metadata.height} = ${totalPixels.toLocaleString()} pixels exceeds the ${MAX_IMAGE_PIXELS.toLocaleString()} pixel safety limit. ` +
       `Resize the image before tiling.`
     );
   }
@@ -260,8 +269,22 @@ export async function tileImage(
         }
       }
     } catch (error) {
+      const cleanupFailures: string[] = [];
       for (const tile of tiles) {
-        await fs.unlink(tile.filePath).catch(() => {});
+        try {
+          await fs.unlink(tile.filePath);
+        } catch (unlinkErr: unknown) {
+          if ((unlinkErr as NodeJS.ErrnoException).code !== "ENOENT") {
+            const msg = unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr);
+            cleanupFailures.push(`${tile.filename}: ${msg}`);
+          }
+        }
+      }
+      if (cleanupFailures.length > 0) {
+        const original = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `${original} (additionally, failed to clean up ${cleanupFailures.length} orphaned tile(s): ${cleanupFailures.join("; ")})`
+        );
       }
       throw error;
     }

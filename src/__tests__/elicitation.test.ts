@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { tryElicitation } from "../services/elicitation.js";
+import type { TryElicitationOptions } from "../services/elicitation.js";
+import type { VisionModel } from "../constants.js";
 import type { ModelEstimate } from "../types.js";
 
 const sampleAllModels: ModelEstimate[] = [
@@ -9,11 +11,11 @@ const sampleAllModels: ModelEstimate[] = [
   { model: "gemini3", label: "Gemini 3", tileSize: 1536, cols: 5, rows: 3, tiles: 15, tokens: 16800 },
 ];
 
-function makeOptions(overrides?: Record<string, unknown>) {
+function makeOptions(overrides?: Partial<TryElicitationOptions>): TryElicitationOptions {
   return {
     width: 7680,
     height: 4032,
-    model: "claude",
+    model: "claude" as VisionModel,
     allModels: sampleAllModels,
     ...overrides,
   };
@@ -139,13 +141,13 @@ describe("tryElicitation", () => {
       expect(result).toBe("openai");
     });
 
-    it("falls back to VISION_MODELS[0] when options.model is invalid", async () => {
+    it("falls back to options.model directly when user accepts without selecting", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
         elicitResult: { action: "accept", content: {} },
       });
-      const result = await tryElicitation(server as any, makeOptions({ model: "invalid-model" }));
-      expect(result).toBe("claude"); // VISION_MODELS[0]
+      const result = await tryElicitation(server as any, makeOptions({ model: "gemini3" }));
+      expect(result).toBe("gemini3"); // returns the provided default directly
     });
   });
 });

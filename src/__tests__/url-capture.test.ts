@@ -63,7 +63,7 @@ vi.mock("node:http", () => ({
 }));
 
 import { findChromePath, captureUrl, detectDisplayWidth } from "../services/url-capture.js";
-import { MAX_CAPTURE_HEIGHT, CHROME_MAX_CAPTURE_HEIGHT } from "../constants.js";
+import { MAX_CAPTURE_HEIGHT, CHROME_MAX_CAPTURE_HEIGHT, MAX_CHROME_STDERR_BYTES } from "../constants.js";
 
 // ─── Chrome Detection ──────────────────────────────────────────────
 
@@ -306,6 +306,39 @@ describe("captureUrl", () => {
     // Should stitch (200,000 > 16,384)
     expect(result.segmentsStitched).toBeGreaterThan(1);
   });
+
+  // ─── Buffer Cap Tests ────────────────────────────────────────────
+
+  it("caps stderr buffer at MAX_CHROME_STDERR_BYTES", async () => {
+    // Emit a large amount of stderr data WITHOUT the DevTools URL
+    // The buffer should stop growing once it hits the cap
+    const bigChunk = Buffer.alloc(MAX_CHROME_STDERR_BYTES + 100_000, 0x41); // 'A' bytes, over limit
+
+    // Track what the internal buffer would look like by intercepting stderr events
+    let stderrEmitted = 0;
+    const origOn = chromeProcess.stderr!.on;
+    (chromeProcess.stderr as any).on = function (event: string, handler: (...args: any[]) => void) {
+      if (event === "data") {
+        const wrappedHandler = (chunk: Buffer) => {
+          stderrEmitted += chunk.length;
+          handler(chunk);
+        };
+        return origOn.call(this, event, wrappedHandler);
+      }
+      return origOn.call(this, event, handler);
+    };
+
+    // This should time out since no DevTools URL is emitted
+    const promise = captureUrl({ url: "https://example.com", timeout: 12_000 });
+
+    // Emit the big chunk
+    setTimeout(() => {
+      (chromeProcess.stderr as EventEmitter).emit("data", bigChunk);
+    }, 50);
+
+    await expect(promise).rejects.toThrow("Timed out waiting for Chrome DevTools WebSocket URL");
+    // The important thing is it didn't crash or OOM from unbounded buffer growth
+  }, 15_000);
 });
 
 // ─── detectDisplayWidth ─────────────────────────────────────────────

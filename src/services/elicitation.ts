@@ -6,7 +6,7 @@ import type { ModelEstimate } from "../types.js";
 export interface TryElicitationOptions {
   width: number;
   height: number;
-  model: string;
+  model: VisionModel;
   allModels: ModelEstimate[];
 }
 
@@ -58,11 +58,8 @@ export async function tryElicitation(
     if (selectedModel && VISION_MODELS.includes(selectedModel as VisionModel)) {
       return selectedModel as VisionModel;
     }
-    // Fallback: user accepted but didn't pick a valid model — use the provided default if valid
-    if (VISION_MODELS.includes(options.model as VisionModel)) {
-      return options.model as VisionModel;
-    }
-    return VISION_MODELS[0];
+    // Fallback: user accepted but didn't pick a valid model — use the provided default
+    return options.model;
   }
 
   return null;

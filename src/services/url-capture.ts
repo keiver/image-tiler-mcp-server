@@ -16,6 +16,8 @@ import {
   CAPTURE_IDLE_TIMEOUT_MS,
   ALLOWED_CAPTURE_PROTOCOLS,
   SHARP_OPERATION_TIMEOUT_MS,
+  MAX_CHROME_STDERR_BYTES,
+  MAX_CHROME_JSON_BYTES,
 } from "../constants.js";
 import { withTimeout } from "../utils.js";
 import type { CaptureUrlOptions, CaptureResult } from "../types.js";
@@ -440,7 +442,9 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
 
       let stderrBuf = "";
       chrome!.stderr!.on("data", (chunk: Buffer) => {
-        stderrBuf += chunk.toString();
+        if (stderrBuf.length < MAX_CHROME_STDERR_BYTES) {
+          stderrBuf += chunk.toString();
+        }
         const match = stderrBuf.match(/DevTools listening on (ws:\/\/[^\s]+)/);
         if (match) {
           clearTimeout(stderrTimer);
@@ -478,7 +482,15 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       import("node:http").then(({ default: http }) => {
         http.get(jsonEndpoint, (res) => {
           let body = "";
-          res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+          res.on("data", (chunk: Buffer) => {
+            if (body.length >= MAX_CHROME_JSON_BYTES) {
+              res.destroy();
+              clearTimeout(jsonTimer);
+              reject(new Error(`Chrome /json response exceeded ${MAX_CHROME_JSON_BYTES} bytes`));
+              return;
+            }
+            body += chunk.toString();
+          });
           res.on("end", () => {
             clearTimeout(jsonTimer);
             try {

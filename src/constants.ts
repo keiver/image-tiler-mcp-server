@@ -86,6 +86,11 @@ export const WAIT_UNTIL_OPTIONS = ["load", "networkidle", "domcontentloaded"] as
 export type WaitUntil = (typeof WAIT_UNTIL_OPTIONS)[number];
 export const ALLOWED_CAPTURE_PROTOCOLS = ["https:", "http:"] as const;
 
+// Security limits
+export const MAX_IMAGE_PIXELS = 256_000_000; // 256 megapixels (~1GB decoded RGBA)
+export const MAX_CHROME_STDERR_BYTES = 1_048_576; // 1MB
+export const MAX_CHROME_JSON_BYTES = 1_048_576; // 1MB
+
 // Preview rendering
 export const MAX_PREVIEW_PIXELS = 16_000_000; // Safari's canvas/image rendering limit
 export const MIN_PREVIEW_WIDTH = 800; // Floor that prevents tall-image width crushing

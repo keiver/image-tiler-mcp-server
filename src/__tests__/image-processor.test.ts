@@ -330,13 +330,41 @@ describe("getImageMetadata", () => {
     );
   });
 
-  it("accepts image at exactly MAX_IMAGE_DIMENSION", async () => {
+  it("accepts image at exactly MAX_IMAGE_DIMENSION on one axis", async () => {
+    // 65536 × 3906 = ~256M pixels (just under the pixel limit)
     mockedFs.stat.mockResolvedValue({ size: 100 } as any);
-    mockMetadata.mockResolvedValue({ width: 65536, height: 65536, format: "png", channels: 4 });
+    mockMetadata.mockResolvedValue({ width: 65536, height: 3906, format: "png", channels: 4 });
 
     const result = await getImageMetadata("/test/max.png");
     expect(result.width).toBe(65536);
-    expect(result.height).toBe(65536);
+    expect(result.height).toBe(3906);
+  });
+
+  it("rejects decompression bomb (400M pixels > 256M limit)", async () => {
+    mockedFs.stat.mockResolvedValue({ size: 100 } as any);
+    mockMetadata.mockResolvedValue({ width: 20000, height: 20000, format: "png", channels: 4 });
+
+    await expect(getImageMetadata("/test/bomb.png")).rejects.toThrow(
+      "pixel safety limit"
+    );
+  });
+
+  it("accepts image at exactly 256M pixels", async () => {
+    mockedFs.stat.mockResolvedValue({ size: 100 } as any);
+    mockMetadata.mockResolvedValue({ width: 16000, height: 16000, format: "png", channels: 4 });
+
+    const result = await getImageMetadata("/test/big.png");
+    expect(result.width).toBe(16000);
+    expect(result.height).toBe(16000);
+  });
+
+  it("rejects image just over 256M pixels", async () => {
+    mockedFs.stat.mockResolvedValue({ size: 100 } as any);
+    mockMetadata.mockResolvedValue({ width: 16001, height: 16000, format: "png", channels: 4 });
+
+    await expect(getImageMetadata("/test/justover.png")).rejects.toThrow(
+      "pixel safety limit"
+    );
   });
 });
 
@@ -496,15 +524,16 @@ describe("tileImage", () => {
   });
 
   it("throws when total tiles exceeds MAX_TOTAL_TILES", async () => {
+    // 15000×15000 = 225M pixels (under 256M limit)
+    // 15000/100 = 150 cols × 150 rows = 22,500 tiles > 10,000
     mockMetadata.mockResolvedValue({
-      width: 60000,
-      height: 60000,
+      width: 15000,
+      height: 15000,
       format: "png",
       channels: 4,
     });
 
-    // 60000/256 = 235 cols × 235 rows = 55,225 tiles > 10,000
-    await expect(tileImage("/test/huge.png", 256, "/output")).rejects.toThrow(
+    await expect(tileImage("/test/huge.png", 100, "/output")).rejects.toThrow(
       "exceeding the maximum of 10000"
     );
   });
@@ -554,6 +583,75 @@ describe("tileImage", () => {
 
     // Should have cleaned up the 2 successfully created tiles
     expect(mockedFs.unlink).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces cleanup failures in error message when tile unlink fails with non-ENOENT", async () => {
+    mockMetadata.mockResolvedValue({
+      width: 2144,
+      height: 2144,
+      format: "png",
+      channels: 4,
+    });
+
+    // Succeed on first tile, fail on 2nd
+    let callCount = 0;
+    const toFileImpl = () => {
+      callCount++;
+      if (callCount === 2) {
+        return Promise.reject(new Error("Sharp write failed"));
+      }
+      return Promise.resolve({});
+    };
+    mockExtract.mockImplementation(() => {
+      const p: any = { toFile: toFileImpl };
+      p.png = () => p;
+      p.webp = () => p;
+      return p;
+    });
+
+    // Simulate EPERM on cleanup of the 1 successfully created tile
+    const epermErr = Object.assign(new Error("EPERM"), { code: "EPERM" });
+    mockedFs.unlink.mockRejectedValue(epermErr);
+
+    await expect(tileImage("/test/image.png", 1072, "/output")).rejects.toThrow(
+      /Sharp write failed.*orphaned tile/
+    );
+  });
+
+  it("does not modify error message when tile cleanup ENOENT (already gone)", async () => {
+    mockMetadata.mockResolvedValue({
+      width: 2144,
+      height: 2144,
+      format: "png",
+      channels: 4,
+    });
+
+    let callCount = 0;
+    const toFileImpl = () => {
+      callCount++;
+      if (callCount === 2) {
+        return Promise.reject(new Error("Sharp write failed"));
+      }
+      return Promise.resolve({});
+    };
+    mockExtract.mockImplementation(() => {
+      const p: any = { toFile: toFileImpl };
+      p.png = () => p;
+      p.webp = () => p;
+      return p;
+    });
+
+    const enoentErr = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    mockedFs.unlink.mockRejectedValue(enoentErr);
+
+    try {
+      await tileImage("/test/image.png", 1072, "/output");
+      expect.fail("Expected tileImage to throw");
+    } catch (err: unknown) {
+      const msg = (err as Error).message;
+      expect(msg).toBe("Sharp write failed");
+      expect(msg).not.toMatch(/orphaned/);
+    }
   });
 });
 

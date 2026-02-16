@@ -90,6 +90,16 @@ async function resolveUrl(url: string): Promise<ResolvedImageSource> {
     );
   }
 
+  // When Content-Type is ambiguous (octet-stream or missing), verify magic bytes
+  const ctLower = contentType?.toLowerCase() ?? "";
+  if (!ctLower.startsWith("image/")) {
+    if (!guessExtensionFromMagicBytes(buffer)) {
+      throw new Error(
+        `Downloaded file is not a recognized image format (checked magic bytes). Content-Type was "${contentType ?? "missing"}".`
+      );
+    }
+  }
+
   const ext = guessExtensionFromContentType(response.headers.get("content-type")) || ".png";
   const tempPath = makeTempPath(ext);
   await fs.writeFile(tempPath, buffer);
