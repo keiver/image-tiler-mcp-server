@@ -16,6 +16,10 @@ vi.mock("../services/interactive-preview-generator.js", () => ({
   generateInteractivePreview: vi.fn(),
 }));
 
+vi.mock("../services/session-state.js", () => ({
+  recordRecommendation: vi.fn(),
+}));
+
 vi.mock("node:fs/promises", () => ({
   mkdtemp: vi.fn(),
   copyFile: vi.fn(),
@@ -28,8 +32,11 @@ vi.mock("node:os", () => ({
 import { getImageMetadata, calculateGrid, computeEstimateForModel } from "../services/image-processor.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
+import { recordRecommendation } from "../services/session-state.js";
 import { registerRecommendSettingsTool } from "../tools/recommend-settings.js";
 import { createMockServer } from "./helpers/mock-server.js";
+
+const mockedRecordRecommendation = vi.mocked(recordRecommendation);
 
 const mockedGetMetadata = vi.mocked(getImageMetadata);
 const mockedCalculateGrid = vi.mocked(calculateGrid);
@@ -149,6 +156,22 @@ describe("registerRecommendSettingsTool", () => {
     expect(json.imageInfo.width).toBe(7680);
     expect(json.imageInfo.height).toBe(4032);
     expect(json.allModels).toHaveLength(4);
+  });
+
+  it("calls recordRecommendation with image dimensions", async () => {
+    const tool = mock.getTool("tiler_recommend_settings")!;
+    await tool.handler(
+      { filePath: "test.png" },
+      {} as any
+    );
+    expect(mockedRecordRecommendation).toHaveBeenCalledWith(7680, 4032);
+  });
+
+  it("calls recordRecommendation even when preview fails", async () => {
+    mockedGeneratePreview.mockRejectedValue(new Error("disk full"));
+    const tool = mock.getTool("tiler_recommend_settings")!;
+    await tool.handler({ filePath: "test.png" }, {} as any);
+    expect(mockedRecordRecommendation).toHaveBeenCalledWith(7680, 4032);
   });
 
   it("returns estimates for all 4 models", async () => {
@@ -435,6 +458,7 @@ describe("registerRecommendSettingsTool", () => {
     );
     const res = result as any;
     // First block should be preview, second should be JSON
+    expect(res.content).toHaveLength(2);
     expect(res.content[0].text).toMatch(/^Preview: /);
     expect(res.content[0].text).toContain("/tmp/test-image-preview.html");
     // JSON block follows
@@ -449,7 +473,7 @@ describe("registerRecommendSettingsTool", () => {
       {} as any
     );
     const res = result as any;
-    // Only JSON block, no preview block
+    // JSON block only (no preview, no stop instruction)
     expect(res.content).toHaveLength(1);
     expect(res.content[0].text).toMatch(/^\{/);
   });

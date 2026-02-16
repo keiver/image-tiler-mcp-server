@@ -106,7 +106,7 @@ describe("registerGetTilesTool", () => {
     expect(res.content[0].text).toContain("max batch size is 5");
   });
 
-  it("includes pagination hint when more tiles available", async () => {
+  it("summary shows 1-indexed tile range", async () => {
     mockedListTiles.mockResolvedValue(makeTilePaths(10));
     const tool = mock.getTool("tiler_get_tiles")!;
     const result = await tool.handler(
@@ -114,22 +114,10 @@ describe("registerGetTilesTool", () => {
       {} as any
     );
     const res = result as any;
-    expect(res.content[0].text).toContain("Next batch");
-    expect(res.content[0].text).toContain("start=5");
+    expect(res.content[0].text).toBe("Tiles 1-5 of 10");
   });
 
-  it("says 'last batch' when no more tiles", async () => {
-    mockedListTiles.mockResolvedValue(makeTilePaths(3));
-    const tool = mock.getTool("tiler_get_tiles")!;
-    const result = await tool.handler(
-      { tilesDir: "/tiles", start: 0, end: 2 },
-      {} as any
-    );
-    const res = result as any;
-    expect(res.content[0].text).toContain("last batch");
-  });
-
-  it("includes tile row/col labels in content", async () => {
+  it("includes 1-indexed tile labels with row/col in content", async () => {
     mockedListTiles.mockResolvedValue(makeTilePaths(4));
     const tool = mock.getTool("tiler_get_tiles")!;
     const result = await tool.handler(
@@ -138,11 +126,10 @@ describe("registerGetTilesTool", () => {
     );
     const res = result as any;
     const labels = res.content.filter(
-      (c: any) => c.type === "text" && c.text.includes("Tile 0")
+      (c: any) => c.type === "text" && c.text.includes("Tile 1/")
     );
     expect(labels).toHaveLength(1);
-    expect(labels[0].text).toContain("row 0");
-    expect(labels[0].text).toContain("col 0");
+    expect(labels[0].text).toContain("[row 0, col 0]");
   });
 
   it("returns image blocks with correct mime type", async () => {
@@ -183,7 +170,7 @@ describe("registerGetTilesTool", () => {
     expect(res.content[0].text).toContain("unexpected");
   });
 
-  it("returns summary with correct tile range info", async () => {
+  it("returns summary with correct 1-indexed tile range info", async () => {
     mockedListTiles.mockResolvedValue(makeTilePaths(10));
     const tool = mock.getTool("tiler_get_tiles")!;
     const result = await tool.handler(
@@ -191,7 +178,7 @@ describe("registerGetTilesTool", () => {
       {} as any
     );
     const res = result as any;
-    expect(res.content[0].text).toContain("tiles 3-4 of 10 total");
+    expect(res.content[0].text).toBe("Tiles 4-5 of 10");
   });
 
   it("errors when end < start", async () => {
@@ -215,7 +202,7 @@ describe("registerGetTilesTool", () => {
     const res = result as any;
     const imageBlocks = res.content.filter((c: any) => c.type === "image");
     expect(imageBlocks).toHaveLength(5); // tiles 15-19
-    expect(res.content[0].text).toContain("tiles 15-19 of 20 total");
+    expect(res.content[0].text).toBe("Tiles 16-20 of 20");
   });
 
   it("returns image/webp MIME type for webp tiles", async () => {
@@ -245,11 +232,10 @@ describe("registerGetTilesTool", () => {
     );
     const res = result as any;
     const labels = res.content.filter(
-      (c: any) => c.type === "text" && c.text.includes("Tile 1")
+      (c: any) => c.type === "text" && c.text.includes("Tile 2/")
     );
     expect(labels).toHaveLength(1);
-    expect(labels[0].text).toContain("row -1");
-    expect(labels[0].text).toContain("col -1");
+    expect(labels[0].text).toContain("[row -1, col -1]");
   });
 
 });

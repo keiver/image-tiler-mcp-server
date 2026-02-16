@@ -8,6 +8,10 @@ vi.mock("../services/url-capture.js", () => ({
 vi.mock("../utils.js", () => ({
   getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
   escapeHtml: vi.fn((s: string) => s),
+  sanitizeHostname: vi.fn().mockReturnValue("example-com"),
+  getVersionedFilePath: vi.fn(async (dir: string, baseName: string, ext: string) =>
+    `${dir}/${baseName}_v1.${ext}`
+  ),
 }));
 
 vi.mock("sharp", () => {
@@ -25,11 +29,16 @@ vi.mock("sharp", () => {
 vi.mock("node:fs/promises", () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   stat: vi.fn().mockResolvedValue({ size: 12345 }),
+  readdir: vi.fn().mockResolvedValue([]),
 }));
 
 import { captureUrl } from "../services/url-capture.js";
+import { sanitizeHostname, getVersionedFilePath } from "../utils.js";
 import { registerCaptureUrlTool } from "../tools/capture-url.js";
 import { createMockServer } from "./helpers/mock-server.js";
+
+const mockedSanitizeHostname = vi.mocked(sanitizeHostname);
+const mockedGetVersionedFilePath = vi.mocked(getVersionedFilePath);
 
 const mockedCaptureUrl = vi.mocked(captureUrl);
 
@@ -66,7 +75,7 @@ describe("registerCaptureUrlTool", () => {
     const res = result as any;
     expect(res.isError).toBeUndefined();
     expect(res.content).toHaveLength(2);
-    expect(res.content[0].text).toContain("1280×800");
+    expect(res.content[0].text).toContain("1280x800");
     expect(res.content[0].text).toContain("example.com");
 
     const json = JSON.parse(res.content[1].text);
@@ -161,7 +170,7 @@ describe("registerCaptureUrlTool", () => {
     // Structured output should report png format
     const json = JSON.parse(res.content[1].text);
     expect(json.format).toBe("png");
-    expect(json.filePath).toMatch(/screenshot\.png$/);
+    expect(json.filePath).toMatch(/example-com_v1\.png$/);
   });
 
   it("re-throws non-WebP-size errors during save", async () => {

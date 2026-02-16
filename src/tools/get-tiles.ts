@@ -89,13 +89,7 @@ Pagination example for 21 tiles:
           | { type: "image"; data: string; mimeType: string }
         > = [];
 
-        const hasMore = effectiveEnd < totalTiles - 1;
-        const summary = [
-          `Returning tiles ${start}-${effectiveEnd} of ${totalTiles} total`,
-          hasMore
-            ? `Next batch: tiler_get_tiles(tilesDir="${tilesDir}", start=${effectiveEnd + 1})`
-            : `This is the last batch.`,
-        ].join("\n");
+        const summary = `Tiles ${start + 1}-${effectiveEnd + 1} of ${totalTiles}`;
 
         content.push({ type: "text" as const, text: summary });
 
@@ -109,7 +103,7 @@ Pagination example for 21 tiles:
 
           content.push({
             type: "text" as const,
-            text: `--- Tile ${i} (row ${row}, col ${col}) ---`,
+            text: `Tile ${i + 1}/${totalTiles} [row ${row}, col ${col}]`,
           });
 
           const base64Data = await readTileAsBase64(tilePath);

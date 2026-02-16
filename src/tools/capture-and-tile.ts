@@ -17,7 +17,8 @@ import {
   CAPTURE_DEFAULT_VIEWPORT_WIDTH,
   WAIT_UNTIL_OPTIONS,
 } from "../constants.js";
-import { getDefaultOutputBase } from "../utils.js";
+import { getDefaultOutputBase, sanitizeHostname } from "../utils.js";
+import { wasRecommended } from "../services/session-state.js";
 import type { ModelEstimate } from "../types.js";
 
 const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
@@ -40,7 +41,7 @@ Args:
   - format (string, optional): Output format — "webp" (smaller, default) or "png" (lossless)
   - outputDir (string, optional): Custom output directory
   - page (number, optional): Tile page to return (0 = first ${MAX_TILES_PER_BATCH}, 1 = next ${MAX_TILES_PER_BATCH}, etc.)
-  - includeMetadata (boolean, optional): When true, analyze each tile for content hints
+  - includeMetadata (boolean, optional): Analyze each tile for content hints. Enabled by default; set to false to skip.
 
 Returns:
   1. Text summary with capture + tiling info
@@ -83,12 +84,26 @@ export function registerCaptureAndTileTool(server: McpServer): void {
 
         // Always save the intermediate screenshot as PNG — WebP has dimension limits
         // that fail on tall pages. The `format` param controls tile output only.
-        const screenshotPath = path.join(resolvedOutputDir, "screenshot.png");
+        const baseName = sanitizeHostname(url);
+        const screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
         await sharp(captureResult.buffer)
           .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
           .toFile(screenshotPath);
 
-        // 2. Tile the screenshot
+        // 2. Hard-block tiling when recommend-settings was not called
+        if (!wasRecommended(captureResult.pageWidth, captureResult.pageHeight)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: `Error: tiler_recommend_settings was not called for this image.\n\nScreenshot saved to: ${screenshotPath}`,
+              },
+            ],
+          };
+        }
+
+        // 3. Tile the screenshot
         const config = MODEL_CONFIGS[model];
         const warnings: string[] = [];
 
@@ -142,15 +157,15 @@ export function registerCaptureAndTileTool(server: McpServer): void {
           warnings.push(`Preview generation failed: ${msg}`);
         }
 
-        // 3. Build summary
+        // 4. Build summary
         const summaryLines: string[] = [];
 
         summaryLines.push(
-          `Captured ${captureResult.pageWidth}×${captureResult.pageHeight} screenshot of ${url}`
+          `Captured ${captureResult.pageWidth}x${captureResult.pageHeight} screenshot of ${url}`
         );
         if (captureResult.segmentsStitched) {
           summaryLines.push(
-            `→ Scroll-stitched ${captureResult.segmentsStitched} segments`
+            `  Scroll-stitched ${captureResult.segmentsStitched} segments`
           );
         }
 
@@ -162,11 +177,14 @@ export function registerCaptureAndTileTool(server: McpServer): void {
         }
 
         summaryLines.push(
-          `Tiled ${result.sourceImage.width}×${result.sourceImage.height} image for ${config.label}`,
-          `→ ${result.grid.cols}×${result.grid.rows} grid = ${result.grid.totalTiles} tiles of ${result.grid.tileSize}px`,
-          `→ Estimated tokens: ~${result.grid.estimatedTokens.toLocaleString()} (all tiles, ${config.tokensPerTile}/tile)`,
-          `→ Saved to: ${result.outputDir}`,
+          `Tiled ${result.sourceImage.width}x${result.sourceImage.height} image for ${config.label}`,
+          `  ${result.grid.cols}x${result.grid.rows} grid, ${result.grid.totalTiles} tiles at ${result.grid.tileSize}px (~${result.grid.estimatedTokens.toLocaleString()} tokens)`,
+          `  Saved to: ${result.outputDir}`,
         );
+
+        if (previewPath) {
+          summaryLines.push(`  Preview: ${previewPath}`);
+        }
 
         if (warnings.length > 0) {
           summaryLines.push("", `⚠ ${warnings.join("\n⚠ ")}`);
@@ -230,13 +248,6 @@ export function registerCaptureAndTileTool(server: McpServer): void {
           text: JSON.stringify(structuredOutput, null, 2),
         });
 
-        if (previewPath) {
-          content.push({
-            type: "text" as const,
-            text: `Preview: ${previewPath}`,
-          });
-        }
-
         // Add tile images for this page
         if (start < totalTiles) {
           for (let i = start; i <= end; i++) {
@@ -249,7 +260,7 @@ export function registerCaptureAndTileTool(server: McpServer): void {
 
             content.push({
               type: "text" as const,
-              text: `--- Tile ${i} (row ${row}, col ${col}) ---`,
+              text: `Tile ${i + 1}/${totalTiles} [row ${row}, col ${col}]`,
             });
 
             const base64Data = await readTileAsBase64(tilePath);
@@ -259,14 +270,6 @@ export function registerCaptureAndTileTool(server: McpServer): void {
               mimeType,
             });
           }
-        }
-
-        // Pagination hint
-        if (hasMore) {
-          content.push({
-            type: "text" as const,
-            text: `Next page: tiler_get_tiles(tilesDir="${result.outputDir}", start=${end + 1}) or tiler_capture_and_tile(..., page=${page + 1})`,
-          });
         }
 
         return { content };

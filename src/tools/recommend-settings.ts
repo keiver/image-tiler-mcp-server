@@ -14,6 +14,7 @@ import {
   SUPPORTED_FORMATS,
 } from "../constants.js";
 import type { ImageIntent, BudgetLevel } from "../constants.js";
+import { recordRecommendation } from "../services/session-state.js";
 import type { ModelEstimate, RecommendationResult } from "../types.js";
 
 function applyHeuristics(
@@ -127,6 +128,7 @@ export function registerRecommendSettingsTool(server: McpServer): void {
       const source = await resolveImageSource({ filePath, sourceUrl, dataUrl, imageBase64 });
       try {
         const metadata = await getImageMetadata(source.localPath);
+        recordRecommendation(metadata.width, metadata.height);
         const warnings: string[] = [];
 
         const effectiveModel = model ?? DEFAULT_MODEL;

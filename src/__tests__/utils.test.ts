@@ -18,7 +18,7 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
 }));
 
-import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir } from "../utils.js";
+import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath } from "../utils.js";
 
 describe("escapeHtml", () => {
   it("escapes ampersand", () => {
@@ -125,5 +125,89 @@ describe("getVersionedOutputDir", () => {
     mockReaddir.mockResolvedValue(["photo_v1", "photo_v5"]);
     const result = await getVersionedOutputDir("/some/tiles/photo");
     expect(result).toBe("/some/tiles/photo_v6");
+  });
+});
+
+describe("sanitizeHostname", () => {
+  it("converts dots to hyphens", () => {
+    expect(sanitizeHostname("https://example.com/page")).toBe("example-com");
+  });
+
+  it("handles subdomains", () => {
+    expect(sanitizeHostname("https://www.example.com/page")).toBe("www-example-com");
+  });
+
+  it("handles IP addresses", () => {
+    expect(sanitizeHostname("https://10.81.1.142:3000/")).toBe("10-81-1-142");
+  });
+
+  it("handles localhost", () => {
+    expect(sanitizeHostname("http://localhost:3000")).toBe("localhost");
+  });
+
+  it("returns fallback for invalid URL", () => {
+    expect(sanitizeHostname("not-a-url")).toBe("screenshot");
+  });
+
+  it("returns fallback for empty string", () => {
+    expect(sanitizeHostname("")).toBe("screenshot");
+  });
+
+  it("truncates long hostnames to 60 chars", () => {
+    const longHost = "a".repeat(80) + ".com";
+    const result = sanitizeHostname(`https://${longHost}/page`);
+    expect(result.length).toBeLessThanOrEqual(60);
+  });
+});
+
+describe("getVersionedFilePath", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns _v1 when directory does not exist", async () => {
+    mockReaddir.mockRejectedValue(new Error("ENOENT"));
+    const result = await getVersionedFilePath("/some/captures", "example-com", "webp");
+    expect(result).toBe("/some/captures/example-com_v1.webp");
+  });
+
+  it("returns _v1 when no versioned files exist", async () => {
+    mockReaddir.mockResolvedValue(["unrelated.txt"]);
+    const result = await getVersionedFilePath("/some/captures", "example-com", "webp");
+    expect(result).toBe("/some/captures/example-com_v1.webp");
+  });
+
+  it("returns _v2 when _v1 exists", async () => {
+    mockReaddir.mockResolvedValue(["example-com_v1.webp"]);
+    const result = await getVersionedFilePath("/some/captures", "example-com", "webp");
+    expect(result).toBe("/some/captures/example-com_v2.webp");
+  });
+
+  it("returns _v4 when _v1 through _v3 exist", async () => {
+    mockReaddir.mockResolvedValue([
+      "example-com_v1.webp",
+      "example-com_v2.webp",
+      "example-com_v3.webp",
+    ]);
+    const result = await getVersionedFilePath("/some/captures", "example-com", "webp");
+    expect(result).toBe("/some/captures/example-com_v4.webp");
+  });
+
+  it("ignores non-numeric suffixes", async () => {
+    mockReaddir.mockResolvedValue(["example-com_vfoo.webp"]);
+    const result = await getVersionedFilePath("/some/captures", "example-com", "webp");
+    expect(result).toBe("/some/captures/example-com_v1.webp");
+  });
+
+  it("picks max+1 when versions have gaps", async () => {
+    mockReaddir.mockResolvedValue(["example-com_v1.webp", "example-com_v5.webp"]);
+    const result = await getVersionedFilePath("/some/captures", "example-com", "webp");
+    expect(result).toBe("/some/captures/example-com_v6.webp");
+  });
+
+  it("works with png extension", async () => {
+    mockReaddir.mockResolvedValue(["example-com_v1.png"]);
+    const result = await getVersionedFilePath("/some/captures", "example-com", "png");
+    expect(result).toBe("/some/captures/example-com_v2.png");
   });
 });

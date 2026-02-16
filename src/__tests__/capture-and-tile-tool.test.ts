@@ -21,9 +21,15 @@ vi.mock("../services/tile-analyzer.js", () => ({
   analyzeTiles: vi.fn(),
 }));
 
+vi.mock("../services/session-state.js", () => ({
+  wasRecommended: vi.fn().mockReturnValue(false),
+  recordRecommendation: vi.fn(),
+}));
+
 vi.mock("../utils.js", () => ({
   getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
   escapeHtml: vi.fn((s: string) => s),
+  sanitizeHostname: vi.fn().mockReturnValue("example-com"),
 }));
 
 vi.mock("sharp", () => {
@@ -45,8 +51,13 @@ vi.mock("node:fs/promises", () => ({
 import { captureUrl } from "../services/url-capture.js";
 import { tileImage, listTilesInDirectory, readTileAsBase64, computeEstimateForModel } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
+import { analyzeTiles } from "../services/tile-analyzer.js";
+import { wasRecommended } from "../services/session-state.js";
 import { registerCaptureAndTileTool } from "../tools/capture-and-tile.js";
 import { createMockServer } from "./helpers/mock-server.js";
+
+const mockedWasRecommended = vi.mocked(wasRecommended);
+const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
 
 const mockedCaptureUrl = vi.mocked(captureUrl);
 const mockedTileImage = vi.mocked(tileImage);
@@ -100,10 +111,13 @@ describe("registerCaptureAndTileTool", () => {
       "/output/tiles/tile_000_001.webp",
     ]);
     mockedReadBase64.mockResolvedValue("AAAA");
+    mockedAnalyzeTiles.mockResolvedValue([]);
     mockedGeneratePreview.mockResolvedValue("/output/tiles/preview.html");
     mockedComputeEstimate.mockReturnValue({
       model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 1, tiles: 2, tokens: 3180,
     });
+    // Default: image was recommended (no hard-block)
+    mockedWasRecommended.mockReturnValue(true);
   });
 
   it("registers the tool with correct name", () => {
@@ -189,9 +203,9 @@ describe("registerCaptureAndTileTool", () => {
     expect(instance.png).toHaveBeenCalled();
     expect(instance.webp).not.toHaveBeenCalled();
 
-    // tileImage should receive a .png screenshot path
+    // tileImage should receive a hostname-based .png screenshot path
     const tileCallArgs = mockedTileImage.mock.calls[0];
-    expect(tileCallArgs[0]).toMatch(/screenshot\.png$/);
+    expect(tileCallArgs[0]).toMatch(/example-com\.png$/);
     // format param still flows to tileImage for tile output
     expect(tileCallArgs[6]).toBe("webp");
   });
@@ -238,29 +252,14 @@ describe("registerCaptureAndTileTool", () => {
     expect(json.allModels).toHaveLength(4);
   });
 
-  it("includes separate preview content block", async () => {
+  it("includes preview in summary", async () => {
     const tool = mock.getTool("tiler_capture_and_tile")!;
     const result = await tool.handler(
       { url: "https://example.com", model: "claude", page: 0, format: "webp" },
       {} as any
     );
     const res = result as any;
-    const previewBlock = res.content.find(
-      (c: any) => c.type === "text" && c.text.startsWith("Preview: ") && c.text.includes("/")
-    );
-    expect(previewBlock).toBeDefined();
-    expect(previewBlock.text).toBe("Preview: /output/tiles/preview.html");
-  });
-
-  it("does not include preview basename in summary", async () => {
-    const tool = mock.getTool("tiler_capture_and_tile")!;
-    const result = await tool.handler(
-      { url: "https://example.com", model: "claude", page: 0, format: "webp" },
-      {} as any
-    );
-    const res = result as any;
-    // Summary is the first text block
-    expect(res.content[0].text).not.toContain("→ Preview:");
+    expect(res.content[0].text).toContain("Preview: /output/tiles/preview.html");
   });
 
   it("supports pagination", async () => {
@@ -281,9 +280,70 @@ describe("registerCaptureAndTileTool", () => {
     const imageBlocks = res.content.filter((c: any) => c.type === "image");
     expect(imageBlocks).toHaveLength(5); // first page
 
-    const paginationHint = res.content.find(
-      (c: any) => c.type === "text" && c.text.includes("Next page")
+    // JSON should indicate hasMore
+    const jsonBlock = res.content.find(
+      (c: any) => c.type === "text" && c.text.includes('"page"')
     );
-    expect(paginationHint).toBeDefined();
+    const json = JSON.parse(jsonBlock.text);
+    expect(json.page.hasMore).toBe(true);
+  });
+
+  describe("recommend-first enforcement", () => {
+    it("returns hard error with screenshot path when recommend-settings was not called", async () => {
+      mockedWasRecommended.mockReturnValue(false);
+      const tool = mock.getTool("tiler_capture_and_tile")!;
+      const result = await tool.handler(
+        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content).toHaveLength(1);
+      expect(res.content[0].text).toContain("tiler_recommend_settings was not called");
+      // Should include the screenshot path so user can continue with multi-step flow
+      expect(res.content[0].text).toContain("Screenshot saved to:");
+      expect(res.content[0].text).toMatch(/example-com\.png/);
+      // Should NOT have proceeded to tile
+      expect(mockedTileImage).not.toHaveBeenCalled();
+    });
+
+    it("still captures screenshot before blocking", async () => {
+      mockedWasRecommended.mockReturnValue(false);
+      const tool = mock.getTool("tiler_capture_and_tile")!;
+      await tool.handler(
+        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
+        {} as any
+      );
+      // Capture should have happened
+      expect(mockedCaptureUrl).toHaveBeenCalled();
+    });
+
+    it("proceeds normally when recommend-settings was called", async () => {
+      mockedWasRecommended.mockReturnValue(true);
+      const tool = mock.getTool("tiler_capture_and_tile")!;
+      const result = await tool.handler(
+        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedTileImage).toHaveBeenCalled();
+    });
+
+    it("checks capture dimensions for recommendation", async () => {
+      mockedCaptureUrl.mockResolvedValue({
+        buffer: Buffer.from("screenshot-data"),
+        pageWidth: 1920,
+        pageHeight: 5000,
+        url: "https://example.com",
+      });
+      mockedWasRecommended.mockReturnValue(false);
+      const tool = mock.getTool("tiler_capture_and_tile")!;
+      await tool.handler(
+        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
+        {} as any
+      );
+      expect(mockedWasRecommended).toHaveBeenCalledWith(1920, 5000);
+    });
   });
 });

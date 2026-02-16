@@ -87,8 +87,8 @@ export const TileImageInputSchema = {
     .describe('Output format for tiles: "webp" (smaller, default) or "png" (lossless)'),
   includeMetadata: z
     .boolean()
-    .default(false)
-    .describe("When true, analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats"),
+    .default(true)
+    .describe("Analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats. Enabled by default; set to false to skip."),
 };
 
 export const GetTilesInputSchema = {
@@ -188,8 +188,8 @@ export const PrepareImageInputSchema = {
     .describe('Output format for tiles: "webp" (smaller, default) or "png" (lossless)'),
   includeMetadata: z
     .boolean()
-    .default(false)
-    .describe("When true, analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats"),
+    .default(true)
+    .describe("Analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats. Enabled by default; set to false to skip."),
 };
 
 // Shared capture fields — used by capture-url and capture-and-tile
@@ -269,6 +269,6 @@ export const CaptureAndTileInputSchema = {
     .describe("Tile page to return (0 = first 5, 1 = next 5, etc.). Default: 0"),
   includeMetadata: z
     .boolean()
-    .default(false)
-    .describe("When true, analyze each tile and return content hints and brightness stats"),
+    .default(true)
+    .describe("Analyze each tile and return content hints and brightness stats. Enabled by default; set to false to skip."),
 };

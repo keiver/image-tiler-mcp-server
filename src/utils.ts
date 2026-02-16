@@ -36,6 +36,40 @@ export function getDefaultOutputBase(): string {
   return os.homedir();
 }
 
+export function sanitizeHostname(url: string): string {
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname.replace(/\./g, "-").slice(0, 60);
+  } catch {
+    return "screenshot";
+  }
+}
+
+export async function getVersionedFilePath(
+  dir: string,
+  baseName: string,
+  ext: string
+): Promise<string> {
+  let entries: string[] = [];
+  try {
+    entries = await fsPromises.readdir(dir);
+  } catch {
+    return path.join(dir, `${baseName}_v1.${ext}`);
+  }
+
+  const prefix = `${baseName}_v`;
+  let maxVersion = 0;
+  for (const entry of entries) {
+    if (entry.startsWith(prefix)) {
+      const version = parseInt(entry.slice(prefix.length), 10);
+      if (!isNaN(version) && version > maxVersion) {
+        maxVersion = version;
+      }
+    }
+  }
+  return path.join(dir, `${baseName}_v${maxVersion + 1}.${ext}`);
+}
+
 export async function getVersionedOutputDir(baseDir: string): Promise<string> {
   const parent = path.dirname(baseDir);
   const baseName = path.basename(baseDir);

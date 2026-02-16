@@ -2,12 +2,13 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TileImageInputSchema } from "../schemas/index.js";
-import { tileImage, computeEstimateForModel } from "../services/image-processor.js";
+import { tileImage, computeEstimateForModel, getImageMetadata } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, DEFAULT_MAX_DIMENSION } from "../constants.js";
 import { getDefaultOutputBase, getVersionedOutputDir } from "../utils.js";
+import { wasRecommended } from "../services/session-state.js";
 import type { ModelEstimate } from "../types.js";
 
 const TILE_IMAGE_DESCRIPTION = (() => {
@@ -41,7 +42,7 @@ Args:
   - maxDimension (number, optional): Max dimension in px (256-65536). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. No-op if the image is already within bounds. Defaults to 10000px. Set to 0 to disable auto-downscaling.
   - outputDir (string, optional): Custom output directory for tiles
   - format (string, optional): Output format for tiles — "webp" (smaller, default) or "png" (lossless)
-  - includeMetadata (boolean, optional): When true, analyze each tile and return content hints and brightness stats
+  - includeMetadata (boolean, optional): Analyze each tile and return content hints and brightness stats. Enabled by default; set to false to skip.
 
 At least one image source (filePath, sourceUrl, dataUrl, or imageBase64) is required.
 
@@ -102,6 +103,20 @@ export function registerTileImageTool(server: McpServer): void {
               {
                 type: "text" as const,
                 text: `Error: Unsupported image format '.${ext}'. Supported formats: ${SUPPORTED_FORMATS.join(", ")}`,
+              },
+            ],
+          };
+        }
+
+        // Hard-block tiling when recommend-settings was not called
+        const imgMeta = await getImageMetadata(localPath);
+        if (!wasRecommended(imgMeta.width, imgMeta.height)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: "Error: tiler_recommend_settings was not called for this image.",
               },
             ],
           };
@@ -199,22 +214,19 @@ export function registerTileImageTool(server: McpServer): void {
         }
 
         summaryLines.push(
-          `Tiled ${result.sourceImage.width}×${result.sourceImage.height} ${result.sourceImage.format} image for ${config.label}`,
-          `→ ${result.grid.cols}×${result.grid.rows} grid = ${result.grid.totalTiles} tiles of ${result.grid.tileSize}px`,
-          `→ Estimated tokens: ~${result.grid.estimatedTokens.toLocaleString()} (all tiles, ${config.tokensPerTile}/tile)`,
-          `→ Saved to: ${result.outputDir}`,
+          `Tiled ${result.sourceImage.width}x${result.sourceImage.height} image for ${config.label}`,
+          `  ${result.grid.cols}x${result.grid.rows} grid, ${result.grid.totalTiles} tiles at ${result.grid.tileSize}px (~${result.grid.estimatedTokens.toLocaleString()} tokens)`,
+          `  Saved to: ${result.outputDir}`,
         );
+
+        if (previewPath) {
+          summaryLines.push(`  Preview: ${previewPath}`);
+        }
 
         if (warnings.length > 0) {
           summaryLines.push("");
           summaryLines.push(`⚠ ${warnings.join("\n⚠ ")}`);
         }
-
-        summaryLines.push(
-          "",
-          `Use tiler_get_tiles with tilesDir="${result.outputDir}" to retrieve tiles in batches.`,
-          `Tiles are numbered 0-${result.grid.totalTiles - 1}, reading left-to-right, top-to-bottom.`
-        );
 
         const summary = summaryLines.join("\n");
 
@@ -257,13 +269,6 @@ export function registerTileImageTool(server: McpServer): void {
             text: JSON.stringify(structuredOutput, null, 2),
           },
         ];
-
-        if (previewPath) {
-          content.push({
-            type: "text" as const,
-            text: `Preview: ${previewPath}`,
-          });
-        }
 
         return { content };
       } catch (error) {

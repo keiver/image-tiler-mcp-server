@@ -1,17 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { InteractivePreviewData } from "../services/interactive-preview-generator.js";
 
-const { mockWriteFile, mockMetadata, mockToFile, mockWebp, mockResize, mockSharp } = vi.hoisted(() => {
+const { mockWriteFile, mockMetadata, mockToBuffer, mockWebp, mockResize, mockSharp } = vi.hoisted(() => {
   const mockWriteFile = vi.fn();
-  const mockToFile = vi.fn().mockResolvedValue({});
-  const mockWebp = vi.fn().mockReturnValue({ toFile: mockToFile });
+  const mockToBuffer = vi.fn().mockResolvedValue({ data: Buffer.from('fake-webp'), info: {} });
+  const mockWebp = vi.fn().mockReturnValue({ toBuffer: mockToBuffer });
   const mockResize = vi.fn().mockReturnValue({ webp: mockWebp });
   const mockMetadata = vi.fn().mockResolvedValue({ width: 3000, height: 4000 }); // Under 16M pixels
   const mockSharp = vi.fn().mockReturnValue({
     metadata: mockMetadata,
     resize: mockResize,
+    webp: mockWebp,
   });
-  return { mockWriteFile, mockMetadata, mockToFile, mockWebp, mockResize, mockSharp };
+  return { mockWriteFile, mockMetadata, mockToBuffer, mockWebp, mockResize, mockSharp };
 });
 
 vi.mock("node:fs/promises", () => ({
@@ -110,23 +111,37 @@ describe("generateInteractivePreview", () => {
   });
 
   it("HTML-escapes filenames to prevent XSS", async () => {
+    // Use a payload without "/" to avoid path.basename treating it as a directory separator
     const data = makePreviewData({
-      sourceImagePath: '/images/<script>alert("xss")</script>.png',
+      sourceImagePath: '/images/<img onerror=alert(1)>.png',
     });
     await generateInteractivePreview(data, "/output");
     const html = mockWriteFile.mock.calls[0][1] as string;
-    expect(html).not.toContain("<script>alert");
-    expect(html).toContain("&lt;script&gt;");
+    expect(html).not.toContain("<img onerror");
+    expect(html).toContain("&lt;img onerror");
   });
 
-  it("tabs contain inline tile count and token info (no separate stats panel)", async () => {
+  it("tabs contain inline grid dimensions and token info (no separate stats panel)", async () => {
     await generateInteractivePreview(makePreviewData(), "/output");
     const html = mockWriteFile.mock.calls[0][1] as string;
     // Stats are now inline in tab buttons, not a separate panel
     expect(html).not.toContain("stats-panel");
     expect(html).toContain("tab-stats");
-    expect(html).toContain("tiles");
+    expect(html).toContain("grid");
     expect(html).toContain("tokens");
+    // Disclaimer is present
+    expect(html).toContain("Preview only");
+    expect(html).toContain("tiles are cut from the original full-resolution image");
+  });
+
+  it("uses max-width (not width) to prevent upscale blur", async () => {
+    await generateInteractivePreview(makePreviewData(), "/output");
+    const html = mockWriteFile.mock.calls[0][1] as string;
+    // img should use max-width to prevent stretching beyond native resolution
+    expect(html).toContain("max-width: 100%");
+    expect(html).toContain("preview-wrapper");
+    // .source-container should be inline-block for centering
+    expect(html).toContain("display: inline-block");
   });
 
   it("contains footer credit line", async () => {
@@ -156,11 +171,12 @@ describe("generateInteractivePreview", () => {
     expect(html).not.toContain("\u2192");
   });
 
-  it("source image uses relative path from output dir", async () => {
+  it("img src is an embedded data URL, not a file path", async () => {
     const data = makePreviewData({ sourceImagePath: "/images/photo.png" });
     await generateInteractivePreview(data, "/images/tiles");
     const html = mockWriteFile.mock.calls[0][1] as string;
-    expect(html).toContain("../photo.png");
+    expect(html).toContain('src="data:image/webp;base64,');
+    expect(html).not.toContain("../photo.png");
   });
 
   it("header contains filename and dimensions in h1", async () => {
@@ -182,40 +198,42 @@ describe("generateInteractivePreview", () => {
     expect(html).toContain("var activeModel = MODELS[0].model");
   });
 
-  describe("preview image downsizing", () => {
-    it("does not downsize when source is under 16M pixels", async () => {
-      mockMetadata.mockResolvedValueOnce({ width: 3000, height: 4000 }); // 12M pixels
-      await generateInteractivePreview(makePreviewData(), "/output");
-      // resize should not be called
+  describe("preview image embedding", () => {
+    it("does not resize when source is under 16M pixels and within dimension caps", async () => {
+      mockMetadata.mockResolvedValueOnce({ width: 1000, height: 1000 }); // 1M pixels, under all caps
+      await generateInteractivePreview(makePreviewData({ maxDimension: 10000 }), "/output");
       expect(mockResize).not.toHaveBeenCalled();
+      // WebP + toBuffer should still be called (always produces embedded data URL)
+      expect(mockWebp).toHaveBeenCalledWith({ quality: 80 });
+      expect(mockToBuffer).toHaveBeenCalled();
       const html = mockWriteFile.mock.calls[0][1] as string;
-      expect(html).not.toContain("preview-bg");
+      expect(html).toContain("data:image/webp;base64,");
     });
 
-    it("downsizes when source exceeds 16M pixels", async () => {
+    it("resizes and embeds as data URL when source exceeds 16M pixels", async () => {
       mockMetadata.mockResolvedValueOnce({ width: 3600, height: 22810 }); // ~82M pixels
       const data = makePreviewData({ sourceImagePath: "/images/screenshot.png" });
       await generateInteractivePreview(data, "/output");
 
-      // Should have called sharp twice: once for metadata, once for resize
+      // Called twice: once for metadata, once for resize pipeline
       expect(mockSharp).toHaveBeenCalledTimes(2);
       expect(mockResize).toHaveBeenCalledTimes(1);
 
-      // Check resize dimensions are scaled to fit under 16M pixels
+      // Check resize dimensions are scaled down
       const [resizeW, resizeH] = mockResize.mock.calls[0];
       expect(resizeW * resizeH).toBeLessThanOrEqual(16_000_000);
-      expect(resizeW * resizeH).toBeGreaterThan(15_000_000); // Close to limit
 
-      // WebP output for preview background
+      // WebP output as buffer (not file)
       expect(mockWebp).toHaveBeenCalledWith({ quality: 80 });
-      expect(mockToFile).toHaveBeenCalledWith("/output/screenshot-preview-bg.webp");
+      expect(mockToBuffer).toHaveBeenCalled();
 
-      // HTML img src references the preview-bg file
+      // HTML img src is a data URL, not a file path
       const html = mockWriteFile.mock.calls[0][1] as string;
-      expect(html).toContain("screenshot-preview-bg.webp");
+      expect(html).toContain("data:image/webp;base64,");
+      expect(html).not.toContain("preview-bg");
     });
 
-    it("downsizes when longest dimension exceeds 10,000px even if under 16M pixels", async () => {
+    it("resizes when longest dimension exceeds maxDimension even if under 16M pixels", async () => {
       mockMetadata.mockResolvedValueOnce({ width: 1200, height: 12000 }); // 14.4M pixels (under 16M), but height > 10k
       const data = makePreviewData({ sourceImagePath: "/images/tall-page.png" });
       await generateInteractivePreview(data, "/output");
@@ -224,11 +242,14 @@ describe("generateInteractivePreview", () => {
       expect(mockResize).toHaveBeenCalledTimes(1);
 
       const [resizeW, resizeH] = mockResize.mock.calls[0];
-      // Height should be clamped to 10,000 (scale = 10000/12000 ≈ 0.8333)
-      expect(resizeH).toBe(10000);
+      // maxDimension (10000) is the only cap: scale = 10000/12000 = 0.833
+      // Width 1000 >= 800, no floor adjustment needed
       expect(resizeW).toBe(Math.round(1200 * (10000 / 12000)));
+      expect(resizeH).toBe(Math.round(12000 * (10000 / 12000)));
 
-      expect(mockToFile).toHaveBeenCalledWith("/output/tall-page-preview-bg.webp");
+      // Embedded as data URL
+      const html = mockWriteFile.mock.calls[0][1] as string;
+      expect(html).toContain("data:image/webp;base64,");
     });
 
     it("uses the more restrictive limit when both pixel count and dimension exceed caps", async () => {
@@ -239,9 +260,20 @@ describe("generateInteractivePreview", () => {
       expect(mockResize).toHaveBeenCalledTimes(1);
 
       const [resizeW, resizeH] = mockResize.mock.calls[0];
-      // Both constraints apply — the more restrictive one wins
+      // Pixel cap: scale = sqrt(16M / 100M) = 0.4 → 2000×8000
+      // maxDimension cap: scale = 10000/20000 = 0.5 → 2500×10000
+      // Winner: 0.4 (pixel cap). Width 2000 >= 800, no floor adjustment.
       expect(Math.max(resizeW, resizeH)).toBeLessThanOrEqual(10000);
       expect(resizeW * resizeH).toBeLessThanOrEqual(16_000_000);
+    });
+
+    it("img src is a data URL, not a file path", async () => {
+      const data = makePreviewData({ sourceImagePath: "/images/photo.png" });
+      await generateInteractivePreview(data, "/images/tiles");
+      const html = mockWriteFile.mock.calls[0][1] as string;
+      // Should be a data URL, not a relative file path
+      expect(html).toContain('src="data:image/webp;base64,');
+      expect(html).not.toContain("../photo.png");
     });
 
     it("preserves SVG viewBox using effectiveWidth/Height even when preview is downsized", async () => {
@@ -250,6 +282,28 @@ describe("generateInteractivePreview", () => {
       const html = mockWriteFile.mock.calls[0][1] as string;
       // viewBox should still use effective dimensions (7680 x 4032), not the downsized preview dims
       expect(html).toContain('viewBox="0 0 7680 4032"');
+    });
+
+    it("width floor prevents tall-image crush", async () => {
+      // 1800×16191: maxDim cap scale = 3000/16191 = 0.185 → width 333px (too narrow)
+      // Width floor: scale = 800/1800 = 0.444 → 800×7196
+      mockMetadata.mockResolvedValueOnce({ width: 1800, height: 16191 });
+      const data = makePreviewData({ sourceImagePath: "/images/tall.png", maxDimension: 3000 });
+      await generateInteractivePreview(data, "/output");
+
+      expect(mockResize).toHaveBeenCalledTimes(1);
+      const [resizeW] = mockResize.mock.calls[0];
+      expect(resizeW).toBeGreaterThanOrEqual(800);
+    });
+
+    it("width floor does not upscale narrow sources", async () => {
+      // 400×5000: all under caps (5000 < 10000, 2M pixels < 16M), scale stays 1
+      // Width 400 < 800 but source IS 400px — can't upscale
+      mockMetadata.mockResolvedValueOnce({ width: 400, height: 5000 });
+      const data = makePreviewData({ sourceImagePath: "/images/narrow.png" });
+      await generateInteractivePreview(data, "/output");
+
+      expect(mockResize).not.toHaveBeenCalled();
     });
   });
 });

@@ -2,12 +2,13 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PrepareImageInputSchema } from "../schemas/index.js";
-import { tileImage, listTilesInDirectory, readTileAsBase64, computeEstimateForModel } from "../services/image-processor.js";
+import { tileImage, listTilesInDirectory, readTileAsBase64, computeEstimateForModel, getImageMetadata } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, MAX_TILES_PER_BATCH, DEFAULT_MAX_DIMENSION } from "../constants.js";
 import { getDefaultOutputBase, getVersionedOutputDir } from "../utils.js";
+import { wasRecommended } from "../services/session-state.js";
 import type { ModelEstimate } from "../types.js";
 
 const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
@@ -76,6 +77,20 @@ export function registerPrepareImageTool(server: McpServer): void {
               {
                 type: "text" as const,
                 text: `Error: Unsupported image format '.${ext}'. Supported formats: ${SUPPORTED_FORMATS.join(", ")}`,
+              },
+            ],
+          };
+        }
+
+        // Hard-block tiling when recommend-settings was not called
+        const imgMeta = await getImageMetadata(localPath);
+        if (!wasRecommended(imgMeta.width, imgMeta.height)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: "Error: tiler_recommend_settings was not called for this image.",
               },
             ],
           };
@@ -167,11 +182,13 @@ export function registerPrepareImageTool(server: McpServer): void {
           );
         }
         summaryLines.push(
-          `Tiled ${result.sourceImage.width}×${result.sourceImage.height} ${result.sourceImage.format} image for ${config.label}`,
-          `→ ${result.grid.cols}×${result.grid.rows} grid = ${result.grid.totalTiles} tiles of ${result.grid.tileSize}px`,
-          `→ Estimated tokens: ~${result.grid.estimatedTokens.toLocaleString()} (all tiles, ${config.tokensPerTile}/tile)`,
-          `→ Saved to: ${result.outputDir}`,
+          `Tiled ${result.sourceImage.width}x${result.sourceImage.height} image for ${config.label}`,
+          `  ${result.grid.cols}x${result.grid.rows} grid, ${result.grid.totalTiles} tiles at ${result.grid.tileSize}px (~${result.grid.estimatedTokens.toLocaleString()} tokens)`,
+          `  Saved to: ${result.outputDir}`,
         );
+        if (previewPath) {
+          summaryLines.push(`  Preview: ${previewPath}`);
+        }
         if (warnings.length > 0) {
           summaryLines.push("", `⚠ ${warnings.join("\n⚠ ")}`);
         }
@@ -224,13 +241,6 @@ export function registerPrepareImageTool(server: McpServer): void {
           text: JSON.stringify(structuredOutput, null, 2),
         });
 
-        if (previewPath) {
-          content.push({
-            type: "text" as const,
-            text: `Preview: ${previewPath}`,
-          });
-        }
-
         // Add tile images for this page
         if (start < totalTiles) {
           for (let i = start; i <= end; i++) {
@@ -243,7 +253,7 @@ export function registerPrepareImageTool(server: McpServer): void {
 
             content.push({
               type: "text" as const,
-              text: `--- Tile ${i} (row ${row}, col ${col}) ---`,
+              text: `Tile ${i + 1}/${totalTiles} [row ${row}, col ${col}]`,
             });
 
             const base64Data = await readTileAsBase64(tilePath);
@@ -253,14 +263,6 @@ export function registerPrepareImageTool(server: McpServer): void {
               mimeType,
             });
           }
-        }
-
-        // Pagination hint
-        if (hasMore) {
-          content.push({
-            type: "text" as const,
-            text: `Next page: tiler_get_tiles(tilesDir="${result.outputDir}", start=${end + 1}) or tiler_prepare_image(..., page=${page + 1})`,
-          });
         }
 
         return { content };

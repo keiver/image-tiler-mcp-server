@@ -254,9 +254,9 @@ describe("TileImageInputSchema", () => {
   });
 
   describe("includeMetadata", () => {
-    it("defaults to false when omitted", () => {
+    it("defaults to true when omitted", () => {
       const result = tileImageSchema.parse({ filePath: "test.png" });
-      expect(result.includeMetadata).toBe(false);
+      expect(result.includeMetadata).toBe(true);
     });
 
     it("accepts true", () => {
@@ -424,9 +424,9 @@ describe("PrepareImageInputSchema", () => {
     expect(result.format).toBe("webp");
   });
 
-  it("includeMetadata defaults to false", () => {
+  it("includeMetadata defaults to true", () => {
     const result = prepareImageSchema.parse({ filePath: "test.png" });
-    expect(result.includeMetadata).toBe(false);
+    expect(result.includeMetadata).toBe(true);
   });
 });
 
@@ -506,7 +506,7 @@ describe("CaptureAndTileInputSchema", () => {
     expect(result.maxDimension).toBe(10000);
     expect(result.page).toBe(0);
     expect(result.format).toBe("webp");
-    expect(result.includeMetadata).toBe(false);
+    expect(result.includeMetadata).toBe(true);
   });
 
   it("accepts all model options", () => {

@@ -91,3 +91,4 @@ export const ALLOWED_CAPTURE_PROTOCOLS = ["https:", "http:"] as const;
 
 // Preview rendering
 export const MAX_PREVIEW_PIXELS = 16_000_000; // Safari's canvas/image rendering limit
+export const MIN_PREVIEW_WIDTH = 800; // Floor that prevents tall-image width crushing

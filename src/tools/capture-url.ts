@@ -10,7 +10,7 @@ import {
   CAPTURE_DEFAULT_VIEWPORT_WIDTH,
   WAIT_UNTIL_OPTIONS,
 } from "../constants.js";
-import { getDefaultOutputBase } from "../utils.js";
+import { getDefaultOutputBase, sanitizeHostname, getVersionedFilePath } from "../utils.js";
 
 const waitOptions = WAIT_UNTIL_OPTIONS.map((o) => `"${o}"`).join(", ");
 
@@ -62,7 +62,8 @@ export function registerCaptureUrlTool(server: McpServer): void {
 
         // Save screenshot in requested format
         const ext = format === "png" ? "png" : "webp";
-        let filePath = path.join(resolvedOutputDir, `screenshot.${ext}`);
+        const baseName = sanitizeHostname(url);
+        let filePath = await getVersionedFilePath(resolvedOutputDir, baseName, ext);
         let actualFormat = ext;
         let webpFallback = false;
 
@@ -80,7 +81,7 @@ export function registerCaptureUrlTool(server: McpServer): void {
             // WebP has dimension limits — fall back to PNG
             actualFormat = "png";
             webpFallback = true;
-            filePath = path.join(resolvedOutputDir, "screenshot.png");
+            filePath = filePath.replace(/\.webp$/, ".png");
             await sharp(result.buffer)
               .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
               .toFile(filePath);
@@ -92,27 +93,21 @@ export function registerCaptureUrlTool(server: McpServer): void {
         const fileStats = await fs.stat(filePath);
 
         const summaryLines = [
-          `Captured ${result.pageWidth}×${result.pageHeight} screenshot of ${url}`,
-          `→ Saved as ${actualFormat.toUpperCase()} to: ${filePath}`,
-          `→ File size: ${(fileStats.size / 1024).toFixed(1)} KB`,
+          `Captured ${result.pageWidth}x${result.pageHeight} screenshot of ${url}`,
+          `  Saved as ${actualFormat.toUpperCase()} to: ${filePath} (${(fileStats.size / 1024).toFixed(1)} KB)`,
         ];
 
         if (webpFallback) {
           summaryLines.push(
-            `⚠ Image too large for WebP format — saved as PNG instead`
+            `  ⚠ Image too large for WebP format — saved as PNG instead`
           );
         }
 
         if (result.segmentsStitched) {
           summaryLines.push(
-            `→ Scroll-stitched ${result.segmentsStitched} segments (page exceeded 16,384px height limit)`
+            `  Scroll-stitched ${result.segmentsStitched} segments (page exceeded 16,384px height limit)`
           );
         }
-
-        summaryLines.push(
-          "",
-          `Use tiler_tile_image with filePath="${filePath}" to tile this screenshot for vision analysis.`
-        );
 
         const structuredOutput = {
           url: result.url,

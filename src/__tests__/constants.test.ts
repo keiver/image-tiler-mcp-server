@@ -20,6 +20,7 @@ import {
   IMAGE_INTENTS,
   BUDGET_LEVELS,
   MIN_REMAINDER_RATIO,
+  MIN_PREVIEW_WIDTH,
 } from "../constants.js";
 
 
@@ -72,6 +73,10 @@ describe("constants", () => {
 
     it("MIN_REMAINDER_RATIO is 0.15", () => {
       expect(MIN_REMAINDER_RATIO).toBe(0.15);
+    });
+
+    it("MIN_PREVIEW_WIDTH is 800", () => {
+      expect(MIN_PREVIEW_WIDTH).toBe(800);
     });
   });
 

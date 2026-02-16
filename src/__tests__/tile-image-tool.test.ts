@@ -5,6 +5,7 @@ import type { TileImageResult, TileMetadata } from "../types.js";
 vi.mock("../services/image-processor.js", () => ({
   tileImage: vi.fn(),
   computeEstimateForModel: vi.fn(),
+  getImageMetadata: vi.fn(),
 }));
 
 vi.mock("../services/interactive-preview-generator.js", () => ({
@@ -19,6 +20,10 @@ vi.mock("../services/tile-analyzer.js", () => ({
   analyzeTiles: vi.fn(),
 }));
 
+vi.mock("../services/session-state.js", () => ({
+  wasRecommended: vi.fn(),
+}));
+
 vi.mock("../utils.js", () => ({
   getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
   escapeHtml: vi.fn((s: string) => s),
@@ -29,10 +34,11 @@ vi.mock("node:fs/promises", () => ({
   copyFile: vi.fn(),
 }));
 
-import { tileImage, computeEstimateForModel } from "../services/image-processor.js";
+import { tileImage, computeEstimateForModel, getImageMetadata } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
+import { wasRecommended } from "../services/session-state.js";
 import { registerTileImageTool } from "../tools/tile-image.js";
 import { createMockServer } from "./helpers/mock-server.js";
 
@@ -41,6 +47,8 @@ const mockedGeneratePreview = vi.mocked(generateInteractivePreview);
 const mockedComputeEstimate = vi.mocked(computeEstimateForModel);
 const mockedResolveSource = vi.mocked(resolveImageSource);
 const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
+const mockedWasRecommended = vi.mocked(wasRecommended);
+const mockedGetImageMetadata = vi.mocked(getImageMetadata);
 
 function makeTileResult(overrides?: Partial<TileImageResult>): TileImageResult {
   return {
@@ -78,12 +86,16 @@ describe("registerTileImageTool", () => {
     mockedComputeEstimate.mockReturnValue({
       model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 2, tiles: 4, tokens: 6360,
     });
+    mockedAnalyzeTiles.mockResolvedValue([]);
+    mockedGetImageMetadata.mockResolvedValue({ width: 2144, height: 2144, format: "png", fileSize: 50000, channels: 4 });
     // Default: resolveImageSource passes through filePath as-is for file sources
     mockedResolveSource.mockImplementation(async (params) => ({
       localPath: params.filePath ?? "/tmp/resolved.png",
       sourceType: "file",
       originalSource: params.filePath ?? "unknown",
     }));
+    // Default: image was recommended (no warning)
+    mockedWasRecommended.mockReturnValue(true);
     mock = createMockServer();
     registerTileImageTool(mock.server as any);
   });
@@ -158,7 +170,7 @@ describe("registerTileImageTool", () => {
     expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1072, "/custom/dir", 1590, undefined, 1568, undefined);
   });
 
-  it("returns summary, structured JSON, and preview block on success", async () => {
+  it("returns summary with preview and structured JSON on success", async () => {
     mockedTileImage.mockResolvedValue(makeTileResult());
     const tool = mock.getTool("tiler_tile_image")!;
     const result = await tool.handler(
@@ -166,31 +178,17 @@ describe("registerTileImageTool", () => {
       {} as any
     );
     const res = result as any;
-    // summary + JSON + preview block = 3
-    expect(res.content).toHaveLength(3);
+    // summary + JSON = 2
+    expect(res.content).toHaveLength(2);
     expect(res.content[0].type).toBe("text");
-    expect(res.content[0].text).toContain("2×2 grid");
+    expect(res.content[0].text).toContain("2x2 grid");
     expect(res.content[0].text).toContain("4 tiles");
+    // Preview folded into summary
+    expect(res.content[0].text).toContain("Preview: /output/tiles/image-preview.html");
 
     const json = JSON.parse(res.content[1].text);
     expect(json.grid.totalTiles).toBe(4);
     expect(json.tiles).toHaveLength(4);
-
-    // Separate preview block
-    expect(res.content[2].type).toBe("text");
-    expect(res.content[2].text).toMatch(/^Preview: /);
-    expect(res.content[2].text).toContain("/output/tiles/image-preview.html");
-  });
-
-  it("includes pagination hint in summary", async () => {
-    mockedTileImage.mockResolvedValue(makeTileResult());
-    const tool = mock.getTool("tiler_tile_image")!;
-    const result = await tool.handler(
-      { filePath: "image.png", model: "claude", tileSize: 1072, outputDir: "/out" },
-      {} as any
-    );
-    const res = result as any;
-    expect(res.content[0].text).toContain("tiler_get_tiles");
   });
 
   it("wraps errors from tileImage", async () => {
@@ -667,7 +665,7 @@ describe("registerTileImageTool", () => {
       expect(json.previewPath).toBe("/output/tiles/image-preview.html");
     });
 
-    it("preview is a separate content block (not in summary)", async () => {
+    it("preview is folded into summary", async () => {
       mockedTileImage.mockResolvedValue(makeTileResult());
       mockedGeneratePreview.mockResolvedValue("/output/tiles/image-preview.html");
       const tool = mock.getTool("tiler_tile_image")!;
@@ -676,14 +674,10 @@ describe("registerTileImageTool", () => {
         {} as any
       );
       const res = result as any;
-      // Summary should NOT contain the preview (it's in a separate block)
-      expect(res.content[0].text).not.toContain("image-preview.html");
-      // Separate preview block should exist
-      const previewBlock = res.content.find(
-        (c: any) => c.type === "text" && c.text.startsWith("Preview: ")
-      );
-      expect(previewBlock).toBeDefined();
-      expect(previewBlock.text).toContain("image-preview.html");
+      // Preview should be in the summary
+      expect(res.content[0].text).toContain("Preview: /output/tiles/image-preview.html");
+      // No separate preview block
+      expect(res.content).toHaveLength(2);
     });
 
     it("tiling succeeds when preview generation throws", async () => {
@@ -704,7 +698,7 @@ describe("registerTileImageTool", () => {
       expect(json.warnings).toContainEqual(expect.stringContaining("Write permission denied"));
     });
 
-    it("no preview block when generation fails", async () => {
+    it("no preview in summary when generation fails", async () => {
       mockedTileImage.mockResolvedValue(makeTileResult());
       mockedGeneratePreview.mockRejectedValue(new Error("fail"));
       const tool = mock.getTool("tiler_tile_image")!;
@@ -714,10 +708,7 @@ describe("registerTileImageTool", () => {
       );
       const res = result as any;
       expect(res.content).toHaveLength(2); // summary + JSON only
-      const previewBlock = res.content.find(
-        (c: any) => c.type === "text" && c.text.startsWith("Preview: ")
-      );
-      expect(previewBlock).toBeUndefined();
+      expect(res.content[0].text).not.toContain("Preview:");
     });
 
     it("calls generateInteractivePreview with correct arguments", async () => {
@@ -738,6 +729,64 @@ describe("registerTileImageTool", () => {
         }),
         "/output/tiles"
       );
+    });
+  });
+
+  describe("recommend-first enforcement", () => {
+    it("returns hard error when recommend-settings was not called", async () => {
+      mockedWasRecommended.mockReturnValue(false);
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content).toHaveLength(1);
+      expect(res.content[0].text).toContain("tiler_recommend_settings was not called");
+      // Should NOT have proceeded to tile
+      expect(mockedTileImage).not.toHaveBeenCalled();
+    });
+
+    it("proceeds normally when recommend-settings was called", async () => {
+      mockedWasRecommended.mockReturnValue(true);
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedTileImage).toHaveBeenCalled();
+    });
+
+    it("checks raw image dimensions via getImageMetadata", async () => {
+      mockedGetImageMetadata.mockResolvedValue({ width: 7680, height: 4032, format: "png", fileSize: 100000, channels: 4 });
+      mockedWasRecommended.mockReturnValue(false);
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedWasRecommended).toHaveBeenCalledWith(7680, 4032);
+    });
+
+    it("still cleans up source on hard error", async () => {
+      const cleanup = vi.fn().mockResolvedValue(undefined);
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      mockedWasRecommended.mockReturnValue(false);
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      expect(cleanup).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -790,26 +839,36 @@ describe("registerTileImageTool", () => {
       expect(mockedAnalyzeTiles).not.toHaveBeenCalled();
     });
 
-    it("does not call analyzeTiles when includeMetadata is omitted", async () => {
+    it("calls analyzeTiles when includeMetadata defaults to true", async () => {
       mockedTileImage.mockResolvedValue(makeTileResult());
+      const mockMetadata: TileMetadata[] = [
+        { index: 0, contentHint: "text-heavy", meanBrightness: 200, stdDev: 15, isBlank: false },
+      ];
+      mockedAnalyzeTiles.mockResolvedValue(mockMetadata);
       const tool = mock.getTool("tiler_tile_image")!;
+      // Simulate Zod default: includeMetadata defaults to true when omitted
       await tool.handler(
-        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        { filePath: "image.png", model: "claude", outputDir: "/out", includeMetadata: true },
         {} as any
       );
-      expect(mockedAnalyzeTiles).not.toHaveBeenCalled();
+      expect(mockedAnalyzeTiles).toHaveBeenCalled();
     });
 
-    it("omits tileMetadata from structured output when includeMetadata is omitted", async () => {
+    it("includes tileMetadata in structured output when includeMetadata defaults to true", async () => {
+      const metadata: TileMetadata[] = [
+        { index: 0, contentHint: "text-heavy", meanBrightness: 200, stdDev: 15, isBlank: false },
+      ];
       mockedTileImage.mockResolvedValue(makeTileResult());
+      mockedAnalyzeTiles.mockResolvedValue(metadata);
       const tool = mock.getTool("tiler_tile_image")!;
+      // Simulate Zod default: includeMetadata defaults to true when omitted
       const result = await tool.handler(
-        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        { filePath: "image.png", model: "claude", outputDir: "/out", includeMetadata: true },
         {} as any
       );
       const res = result as any;
       const json = JSON.parse(res.content[1].text);
-      expect(json.tileMetadata).toBeUndefined();
+      expect(json.tileMetadata).toEqual(metadata);
     });
   });
 });
