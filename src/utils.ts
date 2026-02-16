@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { TileMetadata } from "./types.js";
+import type { TileMetadata, ModelEstimate } from "./types.js";
 
 export function escapeHtml(str: string): string {
   return str
@@ -98,6 +98,32 @@ export async function getVersionedOutputDir(baseDir: string): Promise<string> {
 
 export function stripVersionSuffix(name: string): string {
   return name.replace(/_v\d+$/, "");
+}
+
+export function formatModelComparisonTable(
+  width: number,
+  height: number,
+  allModels: ModelEstimate[],
+): string {
+  const lines: string[] = [];
+  lines.push(`Image: ${width} x ${height}`);
+  lines.push("");
+  lines.push("  Preset  | Tile Size | Grid   | Tiles | Est. Tokens");
+  lines.push("  --------|-----------|--------|-------|------------");
+
+  for (const m of allModels) {
+    const preset = m.model.padEnd(7);
+    const tile = `${m.tileSize} px`.padStart(7);
+    const grid = `${m.cols} x ${m.rows}`.padStart(6);
+    const tiles = String(m.tiles).padStart(5);
+    const tokens = `~${m.tokens.toLocaleString()}`.padStart(12);
+    lines.push(`  ${preset} | ${tile}   | ${grid} | ${tiles} | ${tokens}`);
+  }
+
+  lines.push("");
+  lines.push("Call this tool again with confirmed=true (and optionally a different model) to proceed with tiling.");
+
+  return lines.join("\n");
 }
 
 export function buildTileHints(metadata: TileMetadata[]): Record<string, number[]> {

@@ -46,6 +46,7 @@ vi.mock("sharp", () => {
 
 vi.mock("node:fs/promises", () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
+  access: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { captureUrl } from "../services/url-capture.js";
@@ -116,7 +117,7 @@ describe("registerCaptureAndTileTool", () => {
     mockedComputeEstimate.mockReturnValue({
       model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 1, tiles: 2, tokens: 3180,
     });
-    // Default: elicitation confirmed (user accepted or skipped)
+    // Default: elicitation confirmed
     mockedConfirmTiling.mockResolvedValue({ confirmed: true });
   });
 
@@ -288,8 +289,8 @@ describe("registerCaptureAndTileTool", () => {
     expect(json.page.hasMore).toBe(true);
   });
 
-  describe("elicitation confirmation", () => {
-    it("proceeds when user confirms", async () => {
+  describe("confirmation flow", () => {
+    it("proceeds when user confirms via elicitation", async () => {
       mockedConfirmTiling.mockResolvedValue({ confirmed: true });
       const tool = mock.getTool("tiler_capture_and_tile")!;
       const result = await tool.handler(
@@ -301,7 +302,7 @@ describe("registerCaptureAndTileTool", () => {
       expect(mockedTileImage).toHaveBeenCalled();
     });
 
-    it("returns cancel message with screenshot path when user declines", async () => {
+    it("returns cancel message with screenshot path when user declines via elicitation", async () => {
       mockedConfirmTiling.mockResolvedValue({ confirmed: false });
       const tool = mock.getTool("tiler_capture_and_tile")!;
       const result = await tool.handler(
@@ -319,8 +320,69 @@ describe("registerCaptureAndTileTool", () => {
       expect(mockedTileImage).not.toHaveBeenCalled();
     });
 
-    it("still captures screenshot before elicitation", async () => {
-      mockedConfirmTiling.mockResolvedValue({ confirmed: false });
+    it("returns pending confirmation with screenshotPath when no elicitation support", async () => {
+      mockedConfirmTiling.mockResolvedValue({
+        confirmed: false,
+        pendingConfirmation: {
+          allModels: [
+            { model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 1, tiles: 2, tokens: 3180 },
+          ],
+          summary: "Image: 1280 x 800\n\nCall this tool again with confirmed=true",
+        },
+      });
+      const tool = mock.getTool("tiler_capture_and_tile")!;
+      const result = await tool.handler(
+        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(res.content).toHaveLength(2);
+      // Summary should include screenshot path
+      expect(res.content[0].text).toContain("Screenshot saved to:");
+      // JSON should include screenshotPath and status
+      const json = JSON.parse(res.content[1].text);
+      expect(json.status).toBe("pending_confirmation");
+      expect(json.screenshotPath).toBeDefined();
+      expect(json.screenshotPath).toMatch(/example-com\.png/);
+      expect(mockedTileImage).not.toHaveBeenCalled();
+      expect(mockedCaptureUrl).toHaveBeenCalled();
+    });
+
+    it("skips captureUrl when screenshotPath is provided with confirmed=true", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: true });
+      // Mock sharp().metadata() for reading existing screenshot dimensions
+      const sharpModule = await import("sharp");
+      const mockSharp = vi.mocked(sharpModule.default);
+      const mockMetadata = vi.fn().mockResolvedValue({ width: 1280, height: 800 });
+      mockSharp.mockReturnValue({ png: vi.fn().mockReturnValue({ toFile: vi.fn().mockResolvedValue({}) }), webp: vi.fn(), toFile: vi.fn(), metadata: mockMetadata } as any);
+
+      const tool = mock.getTool("tiler_capture_and_tile")!;
+      const result = await tool.handler(
+        { url: "https://example.com", model: "claude", page: 0, format: "webp", confirmed: true, screenshotPath: "/existing/screenshot.png" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedCaptureUrl).not.toHaveBeenCalled();
+      expect(mockedTileImage).toHaveBeenCalled();
+    });
+
+    it("captures fresh when screenshotPath is provided without confirmed=true", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: true });
+      const tool = mock.getTool("tiler_capture_and_tile")!;
+      await tool.handler(
+        { url: "https://example.com", model: "claude", page: 0, format: "webp", screenshotPath: "/existing/screenshot.png" },
+        {} as any
+      );
+      expect(mockedCaptureUrl).toHaveBeenCalled();
+    });
+
+    it("still captures screenshot before returning pending confirmation", async () => {
+      mockedConfirmTiling.mockResolvedValue({
+        confirmed: false,
+        pendingConfirmation: { allModels: [], summary: "test" },
+      });
       const tool = mock.getTool("tiler_capture_and_tile")!;
       await tool.handler(
         { url: "https://example.com", model: "claude", page: 0, format: "webp" },
@@ -329,19 +391,7 @@ describe("registerCaptureAndTileTool", () => {
       expect(mockedCaptureUrl).toHaveBeenCalled();
     });
 
-    it("proceeds when client does not support elicitation", async () => {
-      mockedConfirmTiling.mockResolvedValue({ confirmed: true });
-      const tool = mock.getTool("tiler_capture_and_tile")!;
-      const result = await tool.handler(
-        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
-        {} as any
-      );
-      const res = result as any;
-      expect(res.isError).toBeUndefined();
-      expect(mockedTileImage).toHaveBeenCalled();
-    });
-
-    it("passes capture dimensions to confirmTiling", async () => {
+    it("passes options object with allModels to confirmTiling", async () => {
       mockedCaptureUrl.mockResolvedValue({
         buffer: Buffer.from("screenshot-data"),
         pageWidth: 1920,
@@ -357,9 +407,13 @@ describe("registerCaptureAndTileTool", () => {
         {} as any
       );
       expect(mockedConfirmTiling).toHaveBeenCalledWith(
-        expect.anything(), // server
-        1920, 5000, "claude",
-        expect.any(Number), expect.any(Number), expect.any(Number), expect.any(Number)
+        expect.anything(),
+        expect.objectContaining({
+          width: 1920,
+          height: 5000,
+          model: "claude",
+          allModels: expect.any(Array),
+        })
       );
     });
   });

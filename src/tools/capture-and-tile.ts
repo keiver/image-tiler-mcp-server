@@ -28,6 +28,8 @@ const CAPTURE_AND_TILE_DESCRIPTION = `Capture a web page screenshot and tile it 
 
 Consider calling tiler_recommend_settings first to compare presets and estimate costs. If the client supports it, the user will be asked to confirm before tiling proceeds.
 
+**Two-phase confirmation flow:** When called without \`confirmed=true\`, this tool captures the screenshot and returns a model comparison table instead of tiling. The response includes a \`screenshotPath\` — pass it back with \`confirmed=true\` to tile without re-capturing.
+
 Combines tiler_capture_url + tiler_tile_image + tiler_get_tiles into a single tool call. Supports full-page scroll-stitching for pages taller than 16,384px.
 
 Args:
@@ -42,6 +44,8 @@ Args:
   - outputDir (string, optional): Custom output directory
   - page (number, optional): Tile page to return (0 = first ${MAX_TILES_PER_BATCH}, 1 = next ${MAX_TILES_PER_BATCH}, etc.)
   - includeMetadata (boolean, optional): Analyze each tile for content hints. Enabled by default; set to false to skip.
+  - confirmed (boolean, optional): Set to true to skip confirmation and proceed with tiling. Use after reviewing the model comparison from a previous call.
+  - screenshotPath (string, optional): Path to a previously captured screenshot. Skips URL capture when provided with confirmed=true.
 
 Returns:
   1. Text summary with capture + tiling info
@@ -70,25 +74,60 @@ export function registerCaptureAndTileTool(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ url, viewportWidth, waitUntil, delay, model, tileSize, maxDimension, format, outputDir, page, includeMetadata }) => {
+    async ({ url, viewportWidth, waitUntil, delay, model, tileSize, maxDimension, format, outputDir, page, includeMetadata, confirmed, screenshotPath: existingScreenshotPath }) => {
       try {
-        // 1. Capture the page
-        const resolvedViewport = viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
-        const captureResult = await captureUrl({ url, viewportWidth: resolvedViewport, waitUntil, delay });
-
         // Determine output directory
         const resolvedOutputDir = outputDir
           ? path.resolve(outputDir)
           : path.join(getDefaultOutputBase(), "tiles", `capture_${Date.now()}`);
         await fs.mkdir(resolvedOutputDir, { recursive: true });
 
-        // Always save the intermediate screenshot as PNG — WebP has dimension limits
-        // that fail on tall pages. The `format` param controls tile output only.
-        const baseName = sanitizeHostname(url);
-        const screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
-        await sharp(captureResult.buffer)
-          .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
-          .toFile(screenshotPath);
+        // 1. Capture the page (or reuse existing screenshot)
+        let screenshotPath: string;
+        let captureWidth: number;
+        let captureHeight: number;
+        let segmentsStitched: number | undefined;
+        let capturedUrl = url;
+
+        if (existingScreenshotPath && confirmed === true) {
+          // Phase 2: reuse existing screenshot from a previous phase-1 call
+          try {
+            await fs.access(existingScreenshotPath);
+            screenshotPath = existingScreenshotPath;
+            // Read metadata from existing file to get dimensions
+            const meta = await sharp(existingScreenshotPath).metadata();
+            captureWidth = meta.width ?? 0;
+            captureHeight = meta.height ?? 0;
+          } catch {
+            // Stale/deleted — fall through to fresh capture
+            const resolvedViewport = viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
+            const captureResult = await captureUrl({ url, viewportWidth: resolvedViewport, waitUntil, delay });
+            captureWidth = captureResult.pageWidth;
+            captureHeight = captureResult.pageHeight;
+            segmentsStitched = captureResult.segmentsStitched;
+            capturedUrl = captureResult.url;
+
+            const baseName = sanitizeHostname(url);
+            screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
+            await sharp(captureResult.buffer)
+              .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
+              .toFile(screenshotPath);
+          }
+        } else {
+          // Fresh capture
+          const resolvedViewport = viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
+          const captureResult = await captureUrl({ url, viewportWidth: resolvedViewport, waitUntil, delay });
+          captureWidth = captureResult.pageWidth;
+          captureHeight = captureResult.pageHeight;
+          segmentsStitched = captureResult.segmentsStitched;
+          capturedUrl = captureResult.url;
+
+          const baseName = sanitizeHostname(url);
+          screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
+          await sharp(captureResult.buffer)
+            .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
+            .toFile(screenshotPath);
+        }
 
         // 2. Tile the screenshot
         const config = MODEL_CONFIGS[model];
@@ -108,30 +147,74 @@ export function registerCaptureAndTileTool(server: McpServer): void {
           effectiveTileSize = config.minTileSize;
         }
 
-        // Elicitation: ask user to confirm before tiling (if client supports it)
-        const preEstimate = computeEstimateForModel(model, captureResult.pageWidth, captureResult.pageHeight, effectiveTileSize, maxDimension === 0 ? undefined : maxDimension);
-        const { confirmed } = await confirmTiling(
-          server, captureResult.pageWidth, captureResult.pageHeight, model,
-          preEstimate.cols, preEstimate.rows, preEstimate.tiles, preEstimate.tokens
+        // Compute all-model estimates before confirmation
+        const effectiveMaxDim = maxDimension === 0 ? undefined : maxDimension;
+        const allModelsPreEstimate: ModelEstimate[] = VISION_MODELS.map((m) =>
+          computeEstimateForModel(m, captureWidth, captureHeight, undefined, effectiveMaxDim)
         );
-        if (!confirmed) {
+        const preEstimate = computeEstimateForModel(model, captureWidth, captureHeight, effectiveTileSize, effectiveMaxDim);
+
+        // Confirmation: elicitation (Path A), pending confirmation (Path B), or bypass
+        const confirmResult = await confirmTiling(server, {
+          width: captureWidth,
+          height: captureHeight,
+          model,
+          gridCols: preEstimate.cols,
+          gridRows: preEstimate.rows,
+          totalTiles: preEstimate.tiles,
+          estimatedTokens: preEstimate.tokens,
+          allModels: allModelsPreEstimate,
+          confirmed,
+        });
+
+        if (confirmResult.pendingConfirmation) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Tiling cancelled by user.\n\nCaptured: ${captureResult.pageWidth} x ${captureResult.pageHeight}\nScreenshot saved to: ${screenshotPath}\nPreset: ${config.label} (${preEstimate.cols}x${preEstimate.rows} grid, ${preEstimate.tiles} tiles, ~${preEstimate.tokens.toLocaleString()} tokens)`,
+                text: `Captured ${captureWidth}x${captureHeight} screenshot of ${url}\nScreenshot saved to: ${screenshotPath}\n\n${confirmResult.pendingConfirmation.summary}`,
+              },
+              {
+                type: "text" as const,
+                text: JSON.stringify({ status: "pending_confirmation", screenshotPath, allModels: confirmResult.pendingConfirmation.allModels }, null, 2),
               },
             ],
           };
+        }
+
+        if (!confirmResult.confirmed) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Tiling cancelled by user.\n\nCaptured: ${captureWidth} x ${captureHeight}\nScreenshot saved to: ${screenshotPath}\nPreset: ${config.label} (${preEstimate.cols}x${preEstimate.rows} grid, ${preEstimate.tiles} tiles, ~${preEstimate.tokens.toLocaleString()} tokens)`,
+              },
+            ],
+          };
+        }
+
+        // If user selected a different model via elicitation, switch to it
+        let effectiveModel: string = model;
+        let effectiveConfig = config;
+        if (confirmResult.selectedModel && confirmResult.selectedModel !== model) {
+          effectiveModel = confirmResult.selectedModel;
+          effectiveConfig = MODEL_CONFIGS[effectiveModel as keyof typeof MODEL_CONFIGS];
+          effectiveTileSize = tileSize ?? effectiveConfig.defaultTileSize;
+          if (effectiveTileSize > effectiveConfig.maxTileSize) {
+            effectiveTileSize = effectiveConfig.maxTileSize;
+          }
+          if (effectiveTileSize < effectiveConfig.minTileSize) {
+            effectiveTileSize = effectiveConfig.minTileSize;
+          }
         }
 
         const result = await tileImage(
           screenshotPath,
           effectiveTileSize,
           resolvedOutputDir,
-          config.tokensPerTile,
-          maxDimension === 0 ? undefined : maxDimension,
-          config.maxTileSize,
+          effectiveConfig.tokensPerTile,
+          effectiveMaxDim,
+          effectiveConfig.maxTileSize,
           format
         );
 
@@ -151,7 +234,7 @@ export function registerCaptureAndTileTool(server: McpServer): void {
               originalWidth: result.resize ? result.resize.originalWidth : result.sourceImage.width,
               originalHeight: result.resize ? result.resize.originalHeight : result.sourceImage.height,
               maxDimension: maxDimension ?? DEFAULT_MAX_DIMENSION,
-              recommendedModel: model,
+              recommendedModel: effectiveModel,
               models: allModels,
             },
             result.outputDir
@@ -165,11 +248,11 @@ export function registerCaptureAndTileTool(server: McpServer): void {
         const summaryLines: string[] = [];
 
         summaryLines.push(
-          `Captured ${captureResult.pageWidth}x${captureResult.pageHeight} screenshot of ${url}`
+          `Captured ${captureWidth}x${captureHeight} screenshot of ${url}`
         );
-        if (captureResult.segmentsStitched) {
+        if (segmentsStitched) {
           summaryLines.push(
-            `  Scroll-stitched ${captureResult.segmentsStitched} segments`
+            `  Scroll-stitched ${segmentsStitched} segments`
           );
         }
 
@@ -181,7 +264,7 @@ export function registerCaptureAndTileTool(server: McpServer): void {
         }
 
         summaryLines.push(
-          `Tiled ${result.sourceImage.width}x${result.sourceImage.height} image for ${config.label}`,
+          `Tiled ${result.sourceImage.width}x${result.sourceImage.height} image for ${effectiveConfig.label}`,
           `  ${result.grid.cols}x${result.grid.rows} grid, ${result.grid.totalTiles} tiles at ${result.grid.tileSize}px (~${result.grid.estimatedTokens.toLocaleString()} tokens)`,
           `  Saved to: ${result.outputDir}`,
         );
@@ -209,16 +292,17 @@ export function registerCaptureAndTileTool(server: McpServer): void {
         content.push({ type: "text" as const, text: summaryLines.join("\n") });
 
         // Structured JSON
+        const resolvedViewport = viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
         const structuredOutput: Record<string, unknown> = {
           capture: {
-            url: captureResult.url,
-            pageWidth: captureResult.pageWidth,
-            pageHeight: captureResult.pageHeight,
-            segmentsStitched: captureResult.segmentsStitched ?? null,
+            url: capturedUrl,
+            pageWidth: captureWidth,
+            pageHeight: captureHeight,
+            segmentsStitched: segmentsStitched ?? null,
             viewportWidth: resolvedViewport,
             waitUntil,
           },
-          model,
+          model: effectiveModel,
           sourceImage: result.sourceImage,
           grid: result.grid,
           outputDir: result.outputDir,

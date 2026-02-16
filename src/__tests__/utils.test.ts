@@ -18,8 +18,8 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
 }));
 
-import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath, stripVersionSuffix, buildTileHints } from "../utils.js";
-import type { TileMetadata } from "../types.js";
+import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath, stripVersionSuffix, buildTileHints, formatModelComparisonTable } from "../utils.js";
+import type { TileMetadata, ModelEstimate } from "../types.js";
 
 describe("escapeHtml", () => {
   it("escapes ampersand", () => {
@@ -240,6 +240,48 @@ describe("stripVersionSuffix", () => {
 
   it("only strips the final _vN suffix", () => {
     expect(stripVersionSuffix("file_v1_v2")).toBe("file_v1");
+  });
+});
+
+describe("formatModelComparisonTable", () => {
+  const allModels: ModelEstimate[] = [
+    { model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 2, tiles: 4, tokens: 6360 },
+    { model: "openai", label: "OpenAI", tileSize: 768, cols: 3, rows: 3, tiles: 9, tokens: 6885 },
+    { model: "gemini", label: "Gemini", tileSize: 768, cols: 3, rows: 3, tiles: 9, tokens: 2322 },
+    { model: "gemini3", label: "Gemini 3", tileSize: 1536, cols: 2, rows: 2, tiles: 4, tokens: 4480 },
+  ];
+
+  it("includes image dimensions", () => {
+    const result = formatModelComparisonTable(2144, 2144, allModels);
+    expect(result).toContain("Image: 2144 x 2144");
+  });
+
+  it("includes table headers", () => {
+    const result = formatModelComparisonTable(2144, 2144, allModels);
+    expect(result).toContain("Preset");
+    expect(result).toContain("Tile Size");
+    expect(result).toContain("Grid");
+    expect(result).toContain("Tiles");
+    expect(result).toContain("Est. Tokens");
+  });
+
+  it("includes all model names", () => {
+    const result = formatModelComparisonTable(2144, 2144, allModels);
+    expect(result).toContain("claude");
+    expect(result).toContain("openai");
+    expect(result).toContain("gemini ");
+    expect(result).toContain("gemini3");
+  });
+
+  it("includes confirmation prompt", () => {
+    const result = formatModelComparisonTable(2144, 2144, allModels);
+    expect(result).toContain("confirmed=true");
+  });
+
+  it("handles empty models array", () => {
+    const result = formatModelComparisonTable(100, 100, []);
+    expect(result).toContain("Image: 100 x 100");
+    expect(result).toContain("confirmed=true");
   });
 });
 

@@ -98,7 +98,7 @@ describe("registerTileImageTool", () => {
       sourceType: "file",
       originalSource: params.filePath ?? "unknown",
     }));
-    // Default: elicitation confirmed (user accepted or skipped)
+    // Default: elicitation confirmed
     mockedConfirmTiling.mockResolvedValue({ confirmed: true });
     mock = createMockServer();
     registerTileImageTool(mock.server as any);
@@ -739,8 +739,8 @@ describe("registerTileImageTool", () => {
     });
   });
 
-  describe("elicitation confirmation", () => {
-    it("proceeds when user confirms", async () => {
+  describe("confirmation flow", () => {
+    it("proceeds when user confirms via elicitation", async () => {
       mockedConfirmTiling.mockResolvedValue({ confirmed: true });
       mockedTileImage.mockResolvedValue(makeTileResult());
       const tool = mock.getTool("tiler_tile_image")!;
@@ -753,7 +753,7 @@ describe("registerTileImageTool", () => {
       expect(mockedTileImage).toHaveBeenCalled();
     });
 
-    it("returns cancel message when user declines", async () => {
+    it("returns cancel message when user declines via elicitation", async () => {
       mockedConfirmTiling.mockResolvedValue({ confirmed: false });
       const tool = mock.getTool("tiler_tile_image")!;
       const result = await tool.handler(
@@ -769,8 +769,51 @@ describe("registerTileImageTool", () => {
       expect(mockedTileImage).not.toHaveBeenCalled();
     });
 
-    it("proceeds when client does not support elicitation", async () => {
+    it("returns pending confirmation with model comparison when no elicitation support", async () => {
+      mockedConfirmTiling.mockResolvedValue({
+        confirmed: false,
+        pendingConfirmation: {
+          allModels: [
+            { model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 2, tiles: 4, tokens: 6360 },
+          ],
+          summary: "Image: 2144 x 2144\n\nCall this tool again with confirmed=true",
+        },
+      });
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(res.content).toHaveLength(2);
+      expect(res.content[0].text).toContain("confirmed=true");
+      const json = JSON.parse(res.content[1].text);
+      expect(json.status).toBe("pending_confirmation");
+      expect(json.allModels).toBeDefined();
+      expect(mockedTileImage).not.toHaveBeenCalled();
+    });
+
+    it("proceeds directly when confirmed=true (bypass)", async () => {
       mockedConfirmTiling.mockResolvedValue({ confirmed: true });
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out", confirmed: true },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedTileImage).toHaveBeenCalled();
+      // confirmTiling should have been called with confirmed: true
+      expect(mockedConfirmTiling).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ confirmed: true })
+      );
+    });
+
+    it("uses selectedModel from elicitation when user picks a different model", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: true, selectedModel: "openai" });
       mockedTileImage.mockResolvedValue(makeTileResult());
       const tool = mock.getTool("tiler_tile_image")!;
       const result = await tool.handler(
@@ -779,10 +822,15 @@ describe("registerTileImageTool", () => {
       );
       const res = result as any;
       expect(res.isError).toBeUndefined();
-      expect(mockedTileImage).toHaveBeenCalled();
+      // Should use openai config: 768px tile, 765 tokens, 2048 max
+      expect(mockedTileImage).toHaveBeenCalledWith(
+        "image.png", 768, "/out", 765, undefined, 2048, undefined
+      );
+      const json = JSON.parse(res.content[1].text);
+      expect(json.model).toBe("openai");
     });
 
-    it("passes image dimensions and estimate to confirmTiling", async () => {
+    it("passes options object with allModels to confirmTiling", async () => {
       mockedGetImageMetadata.mockResolvedValue({ width: 7680, height: 4032, format: "png", fileSize: 100000, channels: 4 });
       mockedComputeEstimate.mockReturnValue({
         model: "claude", label: "Claude", tileSize: 1092, cols: 8, rows: 4, tiles: 32, tokens: 50880,
@@ -794,9 +842,37 @@ describe("registerTileImageTool", () => {
         {} as any
       );
       expect(mockedConfirmTiling).toHaveBeenCalledWith(
-        expect.anything(), // server
-        7680, 4032, "claude", 8, 4, 32, 50880
+        expect.anything(),
+        expect.objectContaining({
+          width: 7680,
+          height: 4032,
+          model: "claude",
+          allModels: expect.any(Array),
+        })
       );
+    });
+
+    it("still cleans up source when pendingConfirmation is returned", async () => {
+      const cleanup = vi.fn().mockResolvedValue(undefined);
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      mockedConfirmTiling.mockResolvedValue({
+        confirmed: false,
+        pendingConfirmation: {
+          allModels: [],
+          summary: "test",
+        },
+      });
+      const tool = mock.getTool("tiler_tile_image")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      expect(cleanup).toHaveBeenCalledTimes(1);
     });
 
     it("still cleans up source when user declines", async () => {

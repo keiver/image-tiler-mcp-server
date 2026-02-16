@@ -116,7 +116,7 @@ describe("registerPrepareImageTool", () => {
     mockedReadBase64.mockResolvedValue("AAAA");
     mockedAnalyzeTiles.mockResolvedValue([]);
     mockedGetImageMetadata.mockResolvedValue({ width: 2144, height: 2144, format: "png", fileSize: 50000, channels: 4 });
-    // Default: elicitation confirmed (user accepted or skipped)
+    // Default: elicitation confirmed
     mockedConfirmTiling.mockResolvedValue({ confirmed: true });
   });
 
@@ -301,8 +301,8 @@ describe("registerPrepareImageTool", () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
-  describe("elicitation confirmation", () => {
-    it("proceeds when user confirms", async () => {
+  describe("confirmation flow", () => {
+    it("proceeds when user confirms via elicitation", async () => {
       mockedConfirmTiling.mockResolvedValue({ confirmed: true });
       const tool = mock.getTool("tiler_prepare_image")!;
       const result = await tool.handler(
@@ -314,7 +314,7 @@ describe("registerPrepareImageTool", () => {
       expect(mockedTileImage).toHaveBeenCalled();
     });
 
-    it("returns cancel message when user declines", async () => {
+    it("returns cancel message when user declines via elicitation", async () => {
       mockedConfirmTiling.mockResolvedValue({ confirmed: false });
       const tool = mock.getTool("tiler_prepare_image")!;
       const result = await tool.handler(
@@ -330,8 +330,16 @@ describe("registerPrepareImageTool", () => {
       expect(mockedTileImage).not.toHaveBeenCalled();
     });
 
-    it("proceeds when client does not support elicitation", async () => {
-      mockedConfirmTiling.mockResolvedValue({ confirmed: true });
+    it("returns pending confirmation when no elicitation support", async () => {
+      mockedConfirmTiling.mockResolvedValue({
+        confirmed: false,
+        pendingConfirmation: {
+          allModels: [
+            { model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 2, tiles: 4, tokens: 6360 },
+          ],
+          summary: "Image: 2144 x 2144\n\nCall this tool again with confirmed=true",
+        },
+      });
       const tool = mock.getTool("tiler_prepare_image")!;
       const result = await tool.handler(
         { filePath: "/images/photo.png", model: "claude", page: 0 },
@@ -339,7 +347,46 @@ describe("registerPrepareImageTool", () => {
       );
       const res = result as any;
       expect(res.isError).toBeUndefined();
+      expect(res.content).toHaveLength(2);
+      const json = JSON.parse(res.content[1].text);
+      expect(json.status).toBe("pending_confirmation");
+      expect(mockedTileImage).not.toHaveBeenCalled();
+    });
+
+    it("proceeds directly when confirmed=true", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: true });
+      const tool = mock.getTool("tiler_prepare_image")!;
+      const result = await tool.handler(
+        { filePath: "/images/photo.png", model: "claude", page: 0, confirmed: true },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
       expect(mockedTileImage).toHaveBeenCalled();
+      expect(mockedConfirmTiling).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ confirmed: true })
+      );
+    });
+
+    it("still cleans up source when pendingConfirmation is returned", async () => {
+      const cleanup = vi.fn().mockResolvedValue(undefined);
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      mockedConfirmTiling.mockResolvedValue({
+        confirmed: false,
+        pendingConfirmation: { allModels: [], summary: "test" },
+      });
+      const tool = mock.getTool("tiler_prepare_image")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude", page: 0 },
+        {} as any
+      );
+      expect(cleanup).toHaveBeenCalledTimes(1);
     });
 
     it("still cleans up source when user declines", async () => {

@@ -25,6 +25,8 @@ const TILE_IMAGE_DESCRIPTION = (() => {
 
 Consider calling tiler_recommend_settings first to compare presets and estimate costs. If the client supports it, the user will be asked to confirm before tiling proceeds.
 
+**Two-phase confirmation flow:** When called without \`confirmed=true\`, this tool returns a model comparison table instead of tiling. Review the estimates, then call again with \`confirmed=true\` (and optionally a different \`model\`) to proceed.
+
 ${VISION_MODELS.length} tiling presets available via the "model" parameter:
 ${modelLines}
 
@@ -43,6 +45,7 @@ Args:
   - outputDir (string, optional): Custom output directory for tiles
   - format (string, optional): Output format for tiles — "webp" (smaller, default) or "png" (lossless)
   - includeMetadata (boolean, optional): Analyze each tile and return content hints and brightness stats. Enabled by default; set to false to skip.
+  - confirmed (boolean, optional): Set to true to skip confirmation and proceed with tiling. Use after reviewing the model comparison from a previous call.
 
 At least one image source (filePath, sourceUrl, dataUrl, or imageBase64) is required.
 
@@ -77,7 +80,7 @@ export function registerTileImageTool(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async ({ filePath, sourceUrl, dataUrl, imageBase64, model, tileSize, maxDimension, outputDir, format, includeMetadata }) => {
+    async ({ filePath, sourceUrl, dataUrl, imageBase64, model, tileSize, maxDimension, outputDir, format, includeMetadata, confirmed }) => {
       // Validate at least one source is provided
       if (!filePath && !sourceUrl && !dataUrl && !imageBase64) {
         return {
@@ -127,14 +130,44 @@ export function registerTileImageTool(server: McpServer): void {
           effectiveTileSize = config.minTileSize;
         }
 
-        // Elicitation: ask user to confirm before tiling (if client supports it)
+        // Compute all-model estimates before confirmation
         const imgMeta = await getImageMetadata(localPath);
-        const preEstimate = computeEstimateForModel(model, imgMeta.width, imgMeta.height, effectiveTileSize, maxDimension === 0 ? undefined : maxDimension);
-        const { confirmed } = await confirmTiling(
-          server, imgMeta.width, imgMeta.height, model,
-          preEstimate.cols, preEstimate.rows, preEstimate.tiles, preEstimate.tokens
+        const effectiveMaxDim = maxDimension === 0 ? undefined : maxDimension;
+        const allModelsPreEstimate: ModelEstimate[] = VISION_MODELS.map((m) =>
+          computeEstimateForModel(m, imgMeta.width, imgMeta.height, undefined, effectiveMaxDim)
         );
-        if (!confirmed) {
+        const preEstimate = computeEstimateForModel(model, imgMeta.width, imgMeta.height, effectiveTileSize, effectiveMaxDim);
+
+        // Confirmation: elicitation (Path A), pending confirmation (Path B), or bypass
+        const confirmResult = await confirmTiling(server, {
+          width: imgMeta.width,
+          height: imgMeta.height,
+          model,
+          gridCols: preEstimate.cols,
+          gridRows: preEstimate.rows,
+          totalTiles: preEstimate.tiles,
+          estimatedTokens: preEstimate.tokens,
+          allModels: allModelsPreEstimate,
+          confirmed,
+        });
+
+        if (confirmResult.pendingConfirmation) {
+          // Path B: return comparison table, no tiling
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: confirmResult.pendingConfirmation.summary,
+              },
+              {
+                type: "text" as const,
+                text: JSON.stringify({ status: "pending_confirmation", allModels: confirmResult.pendingConfirmation.allModels }, null, 2),
+              },
+            ],
+          };
+        }
+
+        if (!confirmResult.confirmed) {
           return {
             content: [
               {
@@ -143,6 +176,21 @@ export function registerTileImageTool(server: McpServer): void {
               },
             ],
           };
+        }
+
+        // If user selected a different model via elicitation, switch to it
+        let effectiveModel: string = model;
+        let effectiveConfig = config;
+        if (confirmResult.selectedModel && confirmResult.selectedModel !== model) {
+          effectiveModel = confirmResult.selectedModel;
+          effectiveConfig = MODEL_CONFIGS[effectiveModel as keyof typeof MODEL_CONFIGS];
+          effectiveTileSize = tileSize ?? effectiveConfig.defaultTileSize;
+          if (effectiveTileSize > effectiveConfig.maxTileSize) {
+            effectiveTileSize = effectiveConfig.maxTileSize;
+          }
+          if (effectiveTileSize < effectiveConfig.minTileSize) {
+            effectiveTileSize = effectiveConfig.minTileSize;
+          }
         }
 
         // Determine output directory
@@ -161,9 +209,9 @@ export function registerTileImageTool(server: McpServer): void {
           localPath,
           effectiveTileSize,
           resolvedOutputDir,
-          config.tokensPerTile,
-          maxDimension === 0 ? undefined : maxDimension,
-          config.maxTileSize,
+          effectiveConfig.tokensPerTile,
+          effectiveMaxDim,
+          effectiveConfig.maxTileSize,
           format
         );
 
@@ -197,7 +245,7 @@ export function registerTileImageTool(server: McpServer): void {
               originalWidth: result.resize ? result.resize.originalWidth : result.sourceImage.width,
               originalHeight: result.resize ? result.resize.originalHeight : result.sourceImage.height,
               maxDimension: maxDimension ?? DEFAULT_MAX_DIMENSION,
-              recommendedModel: model,
+              recommendedModel: effectiveModel,
               models: allModels,
             },
             result.outputDir
@@ -217,7 +265,7 @@ export function registerTileImageTool(server: McpServer): void {
         }
 
         summaryLines.push(
-          `Tiled ${result.sourceImage.width}x${result.sourceImage.height} image for ${config.label}`,
+          `Tiled ${result.sourceImage.width}x${result.sourceImage.height} image for ${effectiveConfig.label}`,
           `  ${result.grid.cols}x${result.grid.rows} grid, ${result.grid.totalTiles} tiles at ${result.grid.tileSize}px (~${result.grid.estimatedTokens.toLocaleString()} tokens)`,
           `  Saved to: ${result.outputDir}`,
         );
@@ -234,7 +282,7 @@ export function registerTileImageTool(server: McpServer): void {
         const summary = summaryLines.join("\n");
 
         const structuredOutput: Record<string, unknown> = {
-          model,
+          model: effectiveModel,
           sourceImage: result.sourceImage,
           grid: result.grid,
           outputDir: result.outputDir,

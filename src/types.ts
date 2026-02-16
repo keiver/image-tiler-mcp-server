@@ -78,6 +78,18 @@ export interface TileMetadata {
   isBlank: boolean;
 }
 
+// Elicitation confirmation
+export interface ConfirmTilingResult {
+  confirmed: boolean;
+  /** When confirmed=false due to lack of elicitation, contains data for the tool to return */
+  pendingConfirmation?: {
+    allModels: ModelEstimate[];
+    summary: string;
+  };
+  /** When confirmed=true via elicitation, the user may have selected a different model */
+  selectedModel?: string;
+}
+
 // Recommend-settings output
 export interface ModelEstimate {
   model: string;

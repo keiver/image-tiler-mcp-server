@@ -89,6 +89,12 @@ export const TileImageInputSchema = {
     .boolean()
     .default(true)
     .describe("Analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats. Enabled by default; set to false to skip."),
+  confirmed: z
+    .boolean()
+    .optional()
+    .describe(
+      "Set to true to skip confirmation and proceed with tiling. Use after reviewing the model comparison from a previous call."
+    ),
 };
 
 export const GetTilesInputSchema = {
@@ -190,6 +196,12 @@ export const PrepareImageInputSchema = {
     .boolean()
     .default(true)
     .describe("Analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats. Enabled by default; set to false to skip."),
+  confirmed: z
+    .boolean()
+    .optional()
+    .describe(
+      "Set to true to skip confirmation and proceed with tiling. Use after reviewing the model comparison from a previous call."
+    ),
 };
 
 // Shared capture fields — used by capture-url and capture-and-tile
@@ -271,4 +283,16 @@ export const CaptureAndTileInputSchema = {
     .boolean()
     .default(true)
     .describe("Analyze each tile and return content hints and brightness stats. Enabled by default; set to false to skip."),
+  confirmed: z
+    .boolean()
+    .optional()
+    .describe(
+      "Set to true to skip confirmation and proceed with tiling. Use after reviewing the model comparison from a previous call."
+    ),
+  screenshotPath: z
+    .string()
+    .optional()
+    .describe(
+      "Path to a previously captured screenshot. Skips URL capture when provided with confirmed=true."
+    ),
 };

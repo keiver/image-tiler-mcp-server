@@ -264,6 +264,27 @@ describe("TileImageInputSchema", () => {
       expect(result.includeMetadata).toBe(true);
     });
   });
+
+  describe("confirmed", () => {
+    it("is optional and undefined by default", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png" });
+      expect(result.confirmed).toBeUndefined();
+    });
+
+    it("accepts true", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", confirmed: true });
+      expect(result.confirmed).toBe(true);
+    });
+
+    it("accepts false", () => {
+      const result = tileImageSchema.parse({ filePath: "test.png", confirmed: false });
+      expect(result.confirmed).toBe(false);
+    });
+
+    it("rejects non-boolean", () => {
+      expect(() => tileImageSchema.parse({ filePath: "test.png", confirmed: "yes" })).toThrow();
+    });
+  });
 });
 
 describe("GetTilesInputSchema", () => {
@@ -428,6 +449,16 @@ describe("PrepareImageInputSchema", () => {
     const result = prepareImageSchema.parse({ filePath: "test.png" });
     expect(result.includeMetadata).toBe(true);
   });
+
+  it("confirmed is optional and undefined by default", () => {
+    const result = prepareImageSchema.parse({ filePath: "test.png" });
+    expect(result.confirmed).toBeUndefined();
+  });
+
+  it("confirmed accepts true", () => {
+    const result = prepareImageSchema.parse({ filePath: "test.png", confirmed: true });
+    expect(result.confirmed).toBe(true);
+  });
 });
 
 describe("CaptureUrlInputSchema", () => {
@@ -520,5 +551,25 @@ describe("CaptureAndTileInputSchema", () => {
     expect(() =>
       captureAndTileSchema.parse({ url: "https://example.com", page: -1 })
     ).toThrow("Page must be >= 0");
+  });
+
+  it("confirmed is optional and undefined by default", () => {
+    const result = captureAndTileSchema.parse({ url: "https://example.com" });
+    expect(result.confirmed).toBeUndefined();
+  });
+
+  it("confirmed accepts true", () => {
+    const result = captureAndTileSchema.parse({ url: "https://example.com", confirmed: true });
+    expect(result.confirmed).toBe(true);
+  });
+
+  it("screenshotPath is optional and undefined by default", () => {
+    const result = captureAndTileSchema.parse({ url: "https://example.com" });
+    expect(result.screenshotPath).toBeUndefined();
+  });
+
+  it("screenshotPath accepts a string", () => {
+    const result = captureAndTileSchema.parse({ url: "https://example.com", screenshotPath: "/path/to/screenshot.png" });
+    expect(result.screenshotPath).toBe("/path/to/screenshot.png");
   });
 });

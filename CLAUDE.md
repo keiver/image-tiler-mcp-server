@@ -53,17 +53,17 @@ No linter is configured.
 
 **Six MCP tools registered:**
 
-1. **`tiler_tile_image`** (`src/tools/tile-image.ts`) — Accepts an image from file path, URL, data URL, or base64. Splits it into a grid of tiles (WebP default) saved to `tiles/{name}/` next to the source image (or a custom output directory). `maxDimension` param (default: 10000px) auto-downscales images before tiling. Optional `includeMetadata` triggers per-tile content analysis. Returns JSON metadata (model, grid dimensions, token estimate, file paths, preview path, optional resize info, optional tile metadata) and generates an interactive HTML preview.
+1. **`tiler_tile_image`** (`src/tools/tile-image.ts`) — Accepts an image from file path, URL, data URL, or base64. Splits it into a grid of tiles (WebP default) saved to `tiles/{name}/` next to the source image (or a custom output directory). `maxDimension` param (default: 10000px) auto-downscales images before tiling. Optional `includeMetadata` triggers per-tile content analysis. Returns JSON metadata (model, grid dimensions, token estimate, file paths, preview path, optional resize info, optional tile metadata) and generates an interactive HTML preview. **Two-phase confirmation:** without `confirmed=true`, returns a model comparison table (no tiling). With elicitation-capable clients, shows an interactive model picker instead. Optional `confirmed` param bypasses confirmation on phase 2.
 
 2. **`tiler_get_tiles`** (`src/tools/get-tiles.ts`) — Reads tiles from disk and returns them as base64 image content blocks in batches of 5. Supports pagination via `start`/`end` indices. Handles both `.png` and `.webp` tiles with dynamic MIME types.
 
 3. **`tiler_recommend_settings`** (`src/tools/recommend-settings.ts`) — Dry-run estimator: reads image dimensions and returns cost estimates without tiling. Includes heuristic-based recommendations (intent/budget), per-model comparison across all 4 models, and grid dimensions. Read-only — no tiles are created.
 
-4. **`tiler_prepare_image`** (`src/tools/prepare-image.ts`) — One-shot convenience: chains tile-image + get-tiles into a single tool call. Returns tiling metadata plus the first batch of tile images inline. Supports pagination via `page` param.
+4. **`tiler_prepare_image`** (`src/tools/prepare-image.ts`) — One-shot convenience: chains tile-image + get-tiles into a single tool call. Returns tiling metadata plus the first batch of tile images inline. Supports pagination via `page` param. Same two-phase confirmation as `tiler_tile_image`.
 
 5. **`tiler_capture_url`** (`src/tools/capture-url.ts`) — Captures a full-page screenshot from a URL using Chrome CDP. Saves as WebP (default) or PNG. Supports `viewportWidth`, `waitUntil` (load/networkidle/domcontentloaded), and `delay` params. Scroll-stitches pages taller than 16,384px.
 
-6. **`tiler_capture_and_tile`** (`src/tools/capture-and-tile.ts`) — One-shot: captures URL screenshot → tiles → returns first batch of tile images. Combines capture-url + tile-image + get-tiles in a single call. Includes capture metadata (URL, page dimensions, segments stitched) in structured output.
+6. **`tiler_capture_and_tile`** (`src/tools/capture-and-tile.ts`) — One-shot: captures URL screenshot → tiles → returns first batch of tile images. Combines capture-url + tile-image + get-tiles in a single call. Includes capture metadata (URL, page dimensions, segments stitched) in structured output. Same two-phase confirmation, plus `screenshotPath` param to skip re-capturing on phase 2.
 
 **Key layers:**
 
@@ -74,6 +74,7 @@ No linter is configured.
 - `src/services/tile-analyzer.ts` — Per-tile content analysis using Sharp `.stats()`. Classifies tiles by stdDev: low-detail/blank (<5), text-heavy (5-25), mixed (25-60), image-rich (>60). Used when `includeMetadata: true`.
 - `src/services/preview-generator.ts` — Generates a static HTML preview (`preview.html`) visualizing the tile grid layout with overlay annotations.
 - `src/services/interactive-preview-generator.ts` — Generates an interactive HTML preview with per-model tabs showing grid overlays, token estimates, and model comparison.
+- `src/services/elicitation.ts` — Two-path confirmation: (1) elicitation-capable clients get a `oneOf` model picker via `server.elicitInput()` with per-model token estimates; (2) non-elicitation clients get a `pendingConfirmation` response with a model comparison table for the LLM to present. `confirmed=true` bypasses both paths. Used by tile-image, prepare-image, and capture-and-tile tools.
 - `src/utils.ts` — Shared utilities: `escapeHtml()` for safe HTML output in preview generators.
 - `src/schemas/index.ts` — Zod input schemas for all 6 tools. Shared `imageSourceFields` (tile-image, recommend-settings, prepare-image) and `captureFields` (capture-url, capture-and-tile).
 - `src/types.ts` — TypeScript interfaces (`ImageMetadata`, `TileGridInfo`, `TileInfo`, `TileImageResult`, `ResolvedImageSource`, `RecommendationResult`, `CaptureUrlOptions`, `CaptureResult`, `TileMetadata`).
@@ -112,6 +113,7 @@ No linter is configured.
 - `url-capture.test.ts` — Chrome detection (CHROME_PATH env, not found), CDP flow, URL validation, cleanup on error
 - `capture-url-tool.test.ts` — Capture-url tool handler: registration, response format, scroll-stitch info, error wrapping, option passthrough
 - `capture-and-tile-tool.test.ts` — Capture-and-tile tool handler: combined flow, capture metadata in output, pagination, WebP MIME
+- `elicitation.test.ts` — Elicitation confirmation: accept/decline/cancel, capability detection, error propagation, message content, schema structure
 - `integration.test.ts` — Real Sharp + real filesystem using `assets/landscape.png` (7680×4032) and `assets/portrait.png` (3600×22810)
 
 **Mocking strategy:** Unit tests mock Sharp (via `vi.hoisted` + `vi.mock`) and `node:fs/promises`. Tool handler tests mock the entire service layer. Integration tests use no mocks.
