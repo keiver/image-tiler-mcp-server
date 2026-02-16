@@ -21,9 +21,8 @@ vi.mock("../services/tile-analyzer.js", () => ({
   analyzeTiles: vi.fn(),
 }));
 
-vi.mock("../services/session-state.js", () => ({
-  wasRecommended: vi.fn().mockReturnValue(false),
-  recordRecommendation: vi.fn(),
+vi.mock("../services/elicitation.js", () => ({
+  confirmTiling: vi.fn(),
 }));
 
 vi.mock("../utils.js", () => ({
@@ -53,11 +52,11 @@ import { captureUrl } from "../services/url-capture.js";
 import { tileImage, listTilesInDirectory, readTileAsBase64, computeEstimateForModel } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
-import { wasRecommended } from "../services/session-state.js";
+import { confirmTiling } from "../services/elicitation.js";
 import { registerCaptureAndTileTool } from "../tools/capture-and-tile.js";
 import { createMockServer } from "./helpers/mock-server.js";
 
-const mockedWasRecommended = vi.mocked(wasRecommended);
+const mockedConfirmTiling = vi.mocked(confirmTiling);
 const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
 
 const mockedCaptureUrl = vi.mocked(captureUrl);
@@ -117,8 +116,8 @@ describe("registerCaptureAndTileTool", () => {
     mockedComputeEstimate.mockReturnValue({
       model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 1, tiles: 2, tokens: 3180,
     });
-    // Default: image was recommended (no hard-block)
-    mockedWasRecommended.mockReturnValue(true);
+    // Default: elicitation confirmed (user accepted or skipped)
+    mockedConfirmTiling.mockResolvedValue({ confirmed: true });
   });
 
   it("registers the tool with correct name", () => {
@@ -129,13 +128,13 @@ describe("registerCaptureAndTileTool", () => {
     );
   });
 
-  it("description guides users to recommend-settings first", () => {
+  it("description mentions recommend-settings and elicitation", () => {
     const registerCall = (mock.server.registerTool as any).mock.calls[0];
     const description = registerCall[1].description as string;
-    expect(description).toContain("IMPORTANT: Call tiler_recommend_settings first");
+    expect(description).toContain("tiler_recommend_settings");
+    expect(description).toContain("confirm before tiling");
     // Multi-step flow should still be present
     expect(description).toContain("tiler_capture_url");
-    expect(description).toContain("tiler_recommend_settings");
   });
 
   it("returns combined capture + tiling result", async () => {
@@ -289,39 +288,9 @@ describe("registerCaptureAndTileTool", () => {
     expect(json.page.hasMore).toBe(true);
   });
 
-  describe("recommend-first enforcement", () => {
-    it("returns actionable error with capture dimensions and screenshot path when recommend-settings was not called", async () => {
-      mockedWasRecommended.mockReturnValue(false);
-      const tool = mock.getTool("tiler_capture_and_tile")!;
-      const result = await tool.handler(
-        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
-        {} as any
-      );
-      const res = result as any;
-      expect(res.isError).toBe(true);
-      expect(res.content).toHaveLength(1);
-      expect(res.content[0].text).toContain("tiler_recommend_settings must be called before tiling");
-      expect(res.content[0].text).toContain("Captured: 1280 x 800");
-      expect(res.content[0].text).toContain("Screenshot saved to:");
-      expect(res.content[0].text).toMatch(/example-com\.png/);
-      expect(res.content[0].text).toContain("Call tiler_recommend_settings with filePath=");
-      // Should NOT have proceeded to tile
-      expect(mockedTileImage).not.toHaveBeenCalled();
-    });
-
-    it("still captures screenshot before blocking", async () => {
-      mockedWasRecommended.mockReturnValue(false);
-      const tool = mock.getTool("tiler_capture_and_tile")!;
-      await tool.handler(
-        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
-        {} as any
-      );
-      // Capture should have happened
-      expect(mockedCaptureUrl).toHaveBeenCalled();
-    });
-
-    it("proceeds normally when recommend-settings was called", async () => {
-      mockedWasRecommended.mockReturnValue(true);
+  describe("elicitation confirmation", () => {
+    it("proceeds when user confirms", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: true });
       const tool = mock.getTool("tiler_capture_and_tile")!;
       const result = await tool.handler(
         { url: "https://example.com", model: "claude", page: 0, format: "webp" },
@@ -332,20 +301,66 @@ describe("registerCaptureAndTileTool", () => {
       expect(mockedTileImage).toHaveBeenCalled();
     });
 
-    it("checks capture dimensions for recommendation", async () => {
+    it("returns cancel message with screenshot path when user declines", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: false });
+      const tool = mock.getTool("tiler_capture_and_tile")!;
+      const result = await tool.handler(
+        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(res.content).toHaveLength(1);
+      expect(res.content[0].text).toContain("Tiling cancelled by user");
+      expect(res.content[0].text).toContain("Captured: 1280 x 800");
+      expect(res.content[0].text).toContain("Screenshot saved to:");
+      expect(res.content[0].text).toMatch(/example-com\.png/);
+      expect(res.content[0].text).toContain("Preset: Claude");
+      expect(mockedTileImage).not.toHaveBeenCalled();
+    });
+
+    it("still captures screenshot before elicitation", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: false });
+      const tool = mock.getTool("tiler_capture_and_tile")!;
+      await tool.handler(
+        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
+        {} as any
+      );
+      expect(mockedCaptureUrl).toHaveBeenCalled();
+    });
+
+    it("proceeds when client does not support elicitation", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: true });
+      const tool = mock.getTool("tiler_capture_and_tile")!;
+      const result = await tool.handler(
+        { url: "https://example.com", model: "claude", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedTileImage).toHaveBeenCalled();
+    });
+
+    it("passes capture dimensions to confirmTiling", async () => {
       mockedCaptureUrl.mockResolvedValue({
         buffer: Buffer.from("screenshot-data"),
         pageWidth: 1920,
         pageHeight: 5000,
         url: "https://example.com",
       });
-      mockedWasRecommended.mockReturnValue(false);
+      mockedComputeEstimate.mockReturnValue({
+        model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 5, tiles: 10, tokens: 15900,
+      });
       const tool = mock.getTool("tiler_capture_and_tile")!;
       await tool.handler(
         { url: "https://example.com", model: "claude", page: 0, format: "webp" },
         {} as any
       );
-      expect(mockedWasRecommended).toHaveBeenCalledWith(1920, 5000);
+      expect(mockedConfirmTiling).toHaveBeenCalledWith(
+        expect.anything(), // server
+        1920, 5000, "claude",
+        expect.any(Number), expect.any(Number), expect.any(Number), expect.any(Number)
+      );
     });
   });
 });

@@ -18,15 +18,15 @@ import {
   WAIT_UNTIL_OPTIONS,
 } from "../constants.js";
 import { getDefaultOutputBase, sanitizeHostname, buildTileHints } from "../utils.js";
-import { wasRecommended } from "../services/session-state.js";
+import { confirmTiling } from "../services/elicitation.js";
 import type { ModelEstimate } from "../types.js";
 
 const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
 const waitOptions = WAIT_UNTIL_OPTIONS.map((o) => `"${o}"`).join(", ");
 
-const CAPTURE_AND_TILE_DESCRIPTION = `IMPORTANT: Call tiler_recommend_settings first to show the user token cost estimates for all presets. Only call this tool after the user has reviewed the estimates and confirmed their preferred preset and settings.
+const CAPTURE_AND_TILE_DESCRIPTION = `Capture a web page screenshot and tile it for LLM vision analysis in one step. Requires Google Chrome installed locally (or set CHROME_PATH env var).
 
-Capture a web page screenshot and tile it for LLM vision analysis in one step. Requires Google Chrome installed locally (or set CHROME_PATH env var).
+Consider calling tiler_recommend_settings first to compare presets and estimate costs. If the client supports it, the user will be asked to confirm before tiling proceeds.
 
 Combines tiler_capture_url + tiler_tile_image + tiler_get_tiles into a single tool call. Supports full-page scroll-stitching for pages taller than 16,384px.
 
@@ -90,20 +90,7 @@ export function registerCaptureAndTileTool(server: McpServer): void {
           .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
           .toFile(screenshotPath);
 
-        // 2. Hard-block tiling when recommend-settings was not called
-        if (!wasRecommended(captureResult.pageWidth, captureResult.pageHeight)) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text" as const,
-                text: `Error: tiler_recommend_settings must be called before tiling.\n\nCaptured: ${captureResult.pageWidth} x ${captureResult.pageHeight}\nScreenshot saved to: ${screenshotPath}\n\nCall tiler_recommend_settings with filePath="${screenshotPath}" to see cost estimates, then proceed with tiling.`,
-              },
-            ],
-          };
-        }
-
-        // 3. Tile the screenshot
+        // 2. Tile the screenshot
         const config = MODEL_CONFIGS[model];
         const warnings: string[] = [];
 
@@ -119,6 +106,23 @@ export function registerCaptureAndTileTool(server: McpServer): void {
             `Tile size ${effectiveTileSize}px is below minimum of ${config.minTileSize}px — clamped to ${config.minTileSize}px`
           );
           effectiveTileSize = config.minTileSize;
+        }
+
+        // Elicitation: ask user to confirm before tiling (if client supports it)
+        const preEstimate = computeEstimateForModel(model, captureResult.pageWidth, captureResult.pageHeight, effectiveTileSize, maxDimension === 0 ? undefined : maxDimension);
+        const { confirmed } = await confirmTiling(
+          server, captureResult.pageWidth, captureResult.pageHeight, model,
+          preEstimate.cols, preEstimate.rows, preEstimate.tiles, preEstimate.tokens
+        );
+        if (!confirmed) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Tiling cancelled by user.\n\nCaptured: ${captureResult.pageWidth} x ${captureResult.pageHeight}\nScreenshot saved to: ${screenshotPath}\nPreset: ${config.label} (${preEstimate.cols}x${preEstimate.rows} grid, ${preEstimate.tiles} tiles, ~${preEstimate.tokens.toLocaleString()} tokens)`,
+              },
+            ],
+          };
         }
 
         const result = await tileImage(
@@ -157,7 +161,7 @@ export function registerCaptureAndTileTool(server: McpServer): void {
           warnings.push(`Preview generation failed: ${msg}`);
         }
 
-        // 4. Build summary
+        // 3. Build summary
         const summaryLines: string[] = [];
 
         summaryLines.push(

@@ -20,8 +20,8 @@ vi.mock("../services/tile-analyzer.js", () => ({
   analyzeTiles: vi.fn(),
 }));
 
-vi.mock("../services/session-state.js", () => ({
-  wasRecommended: vi.fn(),
+vi.mock("../services/elicitation.js", () => ({
+  confirmTiling: vi.fn(),
 }));
 
 vi.mock("../utils.js", () => ({
@@ -40,7 +40,7 @@ import { tileImage, computeEstimateForModel, getImageMetadata } from "../service
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
-import { wasRecommended } from "../services/session-state.js";
+import { confirmTiling } from "../services/elicitation.js";
 import { buildTileHints } from "../utils.js";
 import { registerTileImageTool } from "../tools/tile-image.js";
 import { createMockServer } from "./helpers/mock-server.js";
@@ -50,7 +50,7 @@ const mockedGeneratePreview = vi.mocked(generateInteractivePreview);
 const mockedComputeEstimate = vi.mocked(computeEstimateForModel);
 const mockedResolveSource = vi.mocked(resolveImageSource);
 const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
-const mockedWasRecommended = vi.mocked(wasRecommended);
+const mockedConfirmTiling = vi.mocked(confirmTiling);
 const mockedGetImageMetadata = vi.mocked(getImageMetadata);
 const mockedBuildTileHints = vi.mocked(buildTileHints);
 
@@ -98,8 +98,8 @@ describe("registerTileImageTool", () => {
       sourceType: "file",
       originalSource: params.filePath ?? "unknown",
     }));
-    // Default: image was recommended (no warning)
-    mockedWasRecommended.mockReturnValue(true);
+    // Default: elicitation confirmed (user accepted or skipped)
+    mockedConfirmTiling.mockResolvedValue({ confirmed: true });
     mock = createMockServer();
     registerTileImageTool(mock.server as any);
   });
@@ -739,26 +739,9 @@ describe("registerTileImageTool", () => {
     });
   });
 
-  describe("recommend-first enforcement", () => {
-    it("returns actionable error when recommend-settings was not called", async () => {
-      mockedWasRecommended.mockReturnValue(false);
-      const tool = mock.getTool("tiler_tile_image")!;
-      const result = await tool.handler(
-        { filePath: "image.png", model: "claude", outputDir: "/out" },
-        {} as any
-      );
-      const res = result as any;
-      expect(res.isError).toBe(true);
-      expect(res.content).toHaveLength(1);
-      expect(res.content[0].text).toContain("tiler_recommend_settings must be called before tiling");
-      expect(res.content[0].text).toContain("Image: 2144 x 2144");
-      expect(res.content[0].text).toContain("Call tiler_recommend_settings");
-      // Should NOT have proceeded to tile
-      expect(mockedTileImage).not.toHaveBeenCalled();
-    });
-
-    it("proceeds normally when recommend-settings was called", async () => {
-      mockedWasRecommended.mockReturnValue(true);
+  describe("elicitation confirmation", () => {
+    it("proceeds when user confirms", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: true });
       mockedTileImage.mockResolvedValue(makeTileResult());
       const tool = mock.getTool("tiler_tile_image")!;
       const result = await tool.handler(
@@ -770,18 +753,53 @@ describe("registerTileImageTool", () => {
       expect(mockedTileImage).toHaveBeenCalled();
     });
 
-    it("checks raw image dimensions via getImageMetadata", async () => {
+    it("returns cancel message when user declines", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: false });
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(res.content).toHaveLength(1);
+      expect(res.content[0].text).toContain("Tiling cancelled by user");
+      expect(res.content[0].text).toContain("Image: 2144 x 2144");
+      expect(res.content[0].text).toContain("Preset: Claude");
+      expect(mockedTileImage).not.toHaveBeenCalled();
+    });
+
+    it("proceeds when client does not support elicitation", async () => {
+      mockedConfirmTiling.mockResolvedValue({ confirmed: true });
+      mockedTileImage.mockResolvedValue(makeTileResult());
+      const tool = mock.getTool("tiler_tile_image")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedTileImage).toHaveBeenCalled();
+    });
+
+    it("passes image dimensions and estimate to confirmTiling", async () => {
       mockedGetImageMetadata.mockResolvedValue({ width: 7680, height: 4032, format: "png", fileSize: 100000, channels: 4 });
-      mockedWasRecommended.mockReturnValue(false);
+      mockedComputeEstimate.mockReturnValue({
+        model: "claude", label: "Claude", tileSize: 1092, cols: 8, rows: 4, tiles: 32, tokens: 50880,
+      });
+      mockedTileImage.mockResolvedValue(makeTileResult());
       const tool = mock.getTool("tiler_tile_image")!;
       await tool.handler(
         { filePath: "image.png", model: "claude", outputDir: "/out" },
         {} as any
       );
-      expect(mockedWasRecommended).toHaveBeenCalledWith(7680, 4032);
+      expect(mockedConfirmTiling).toHaveBeenCalledWith(
+        expect.anything(), // server
+        7680, 4032, "claude", 8, 4, 32, 50880
+      );
     });
 
-    it("still cleans up source on hard error", async () => {
+    it("still cleans up source when user declines", async () => {
       const cleanup = vi.fn().mockResolvedValue(undefined);
       mockedResolveSource.mockResolvedValue({
         localPath: "/tmp/from-url.png",
@@ -789,7 +807,7 @@ describe("registerTileImageTool", () => {
         originalSource: "https://example.com/img.png",
         cleanup,
       });
-      mockedWasRecommended.mockReturnValue(false);
+      mockedConfirmTiling.mockResolvedValue({ confirmed: false });
       const tool = mock.getTool("tiler_tile_image")!;
       await tool.handler(
         { sourceUrl: "https://example.com/img.png", model: "claude", outputDir: "/out" },

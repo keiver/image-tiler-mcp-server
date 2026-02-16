@@ -8,14 +8,12 @@ import { resolveImageSource } from "../services/image-source-resolver.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, MAX_TILES_PER_BATCH, DEFAULT_MAX_DIMENSION } from "../constants.js";
 import { getDefaultOutputBase, getVersionedOutputDir, stripVersionSuffix, buildTileHints } from "../utils.js";
-import { wasRecommended } from "../services/session-state.js";
+import { confirmTiling } from "../services/elicitation.js";
 import type { ModelEstimate } from "../types.js";
 
 const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
 
-const PREPARE_IMAGE_DESCRIPTION = `IMPORTANT: Call tiler_recommend_settings first to show the user token cost estimates. Only use this after the user has confirmed a preset and settings.
-
-Convenience tool for when the user has already confirmed settings via tiler_recommend_settings and wants tiling + first batch of tiles in one call. Combines tiler_tile_image + tiler_get_tiles into one round-trip.
+const PREPARE_IMAGE_DESCRIPTION = `Convenience tool that combines tiling + first batch of tiles in one call (tiler_tile_image + tiler_get_tiles). Consider calling tiler_recommend_settings first to compare presets and estimate costs. If the client supports it, the user will be asked to confirm before tiling proceeds.
 
 Accepts image from: filePath, sourceUrl, dataUrl, or imageBase64 (at least one required).
 
@@ -82,20 +80,6 @@ export function registerPrepareImageTool(server: McpServer): void {
           };
         }
 
-        // Hard-block tiling when recommend-settings was not called
-        const imgMeta = await getImageMetadata(localPath);
-        if (!wasRecommended(imgMeta.width, imgMeta.height)) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text" as const,
-                text: `Error: tiler_recommend_settings must be called before tiling.\n\nImage: ${imgMeta.width} x ${imgMeta.height}\n\nCall tiler_recommend_settings with the same image first to see cost estimates, then proceed with tiling after the user reviews them.`,
-              },
-            ],
-          };
-        }
-
         const config = MODEL_CONFIGS[model];
         const warnings: string[] = [];
 
@@ -111,6 +95,24 @@ export function registerPrepareImageTool(server: McpServer): void {
             `Tile size ${effectiveTileSize}px is below minimum of ${config.minTileSize}px — clamped to ${config.minTileSize}px`
           );
           effectiveTileSize = config.minTileSize;
+        }
+
+        // Elicitation: ask user to confirm before tiling (if client supports it)
+        const imgMeta = await getImageMetadata(localPath);
+        const preEstimate = computeEstimateForModel(model, imgMeta.width, imgMeta.height, effectiveTileSize, maxDimension === 0 ? undefined : maxDimension);
+        const { confirmed } = await confirmTiling(
+          server, imgMeta.width, imgMeta.height, model,
+          preEstimate.cols, preEstimate.rows, preEstimate.tiles, preEstimate.tokens
+        );
+        if (!confirmed) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Tiling cancelled by user.\n\nImage: ${imgMeta.width} x ${imgMeta.height}\nPreset: ${config.label} (${preEstimate.cols}x${preEstimate.rows} grid, ${preEstimate.tiles} tiles, ~${preEstimate.tokens.toLocaleString()} tokens)`,
+              },
+            ],
+          };
         }
 
         // Determine output directory

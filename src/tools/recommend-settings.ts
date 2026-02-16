@@ -14,7 +14,6 @@ import {
   SUPPORTED_FORMATS,
 } from "../constants.js";
 import type { ImageIntent, BudgetLevel } from "../constants.js";
-import { recordRecommendation } from "../services/session-state.js";
 import type { ModelEstimate, RecommendationResult } from "../types.js";
 
 function formatRecommendSummary(result: RecommendationResult): string {
@@ -115,14 +114,9 @@ function applyHeuristics(
 
 const modelList = VISION_MODELS.map((m) => `"${m}"`).join(", ");
 
-const RECOMMEND_DESCRIPTION = `IMPORTANT: Always call this tool FIRST before tiling any image. This is the mandatory first step in the tiling workflow.
+const RECOMMEND_DESCRIPTION = `Reads image dimensions and returns cost estimates WITHOUT creating any tiles. Each "model" entry in the response is a tiling preset (tile size + token cost) optimized for a specific vision pipeline — it does NOT switch which LLM processes the tiles. Your current LLM is always the one that will analyze the output. Pick the preset that matches your LLM's vision pipeline.
 
-Workflow:
-  1. Call tiler_recommend_settings with the image → get cost estimates for all tiling presets
-  2. Present the allModels comparison to the user and wait for them to choose a preset and confirm the tile count before proceeding
-  3. Only after user confirmation, call tiler_tile_image or tiler_prepare_image with the confirmed settings
-
-Reads image dimensions and returns cost estimates WITHOUT creating any tiles. Each "model" entry in the response is a tiling preset (tile size + token cost) optimized for a specific vision pipeline — it does NOT switch which LLM processes the tiles. Your current LLM is always the one that will analyze the output. Pick the preset that matches your LLM's vision pipeline.
+Consider calling this tool before tiling to compare presets and estimate costs. If the client supports it, the user will be asked to confirm before tiling proceeds.
 
 Inputs: At least one image source (filePath, sourceUrl, dataUrl, or imageBase64). Optional: model, tileSize, maxDimension, intent, budget.
 Works with any image source including screenshots from tiler_capture_url.
@@ -154,7 +148,6 @@ export function registerRecommendSettingsTool(server: McpServer): void {
       const source = await resolveImageSource({ filePath, sourceUrl, dataUrl, imageBase64 });
       try {
         const metadata = await getImageMetadata(source.localPath);
-        recordRecommendation(metadata.width, metadata.height);
         const warnings: string[] = [];
 
         const effectiveModel = model ?? DEFAULT_MODEL;

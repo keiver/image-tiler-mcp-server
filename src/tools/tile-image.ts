@@ -8,7 +8,7 @@ import { resolveImageSource } from "../services/image-source-resolver.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, DEFAULT_MAX_DIMENSION } from "../constants.js";
 import { getDefaultOutputBase, getVersionedOutputDir, stripVersionSuffix, buildTileHints } from "../utils.js";
-import { wasRecommended } from "../services/session-state.js";
+import { confirmTiling } from "../services/elicitation.js";
 import type { ModelEstimate } from "../types.js";
 
 const TILE_IMAGE_DESCRIPTION = (() => {
@@ -21,9 +21,9 @@ const TILE_IMAGE_DESCRIPTION = (() => {
   const exampleLines = VISION_MODELS.filter((m) => m !== DEFAULT_MODEL).map(
     (m) => `  - ${MODEL_CONFIGS[m].label} preset: filePath="/path/to/image.png", model="${m}"`
   ).join("\n");
-  return `IMPORTANT: Call tiler_recommend_settings first to show the user token cost estimates for all presets. Only call this tool after the user has reviewed the estimates and confirmed their preferred preset and settings.
+  return `Split a large image into optimally-sized tiles for LLM vision analysis. The "model" parameter selects a tiling preset (tile size + token cost) optimized for a specific vision pipeline — it does NOT switch which LLM processes the tiles. Your current LLM is always the one that will analyze the output.
 
-Split a large image into optimally-sized tiles for LLM vision analysis. The "model" parameter selects a tiling preset (tile size + token cost) optimized for a specific vision pipeline — it does NOT switch which LLM processes the tiles. Your current LLM is always the one that will analyze the output.
+Consider calling tiler_recommend_settings first to compare presets and estimate costs. If the client supports it, the user will be asked to confirm before tiling proceeds.
 
 ${VISION_MODELS.length} tiling presets available via the "model" parameter:
 ${modelLines}
@@ -108,20 +108,6 @@ export function registerTileImageTool(server: McpServer): void {
           };
         }
 
-        // Hard-block tiling when recommend-settings was not called
-        const imgMeta = await getImageMetadata(localPath);
-        if (!wasRecommended(imgMeta.width, imgMeta.height)) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text" as const,
-                text: `Error: tiler_recommend_settings must be called before tiling.\n\nImage: ${imgMeta.width} x ${imgMeta.height}\n\nCall tiler_recommend_settings with the same image first to see cost estimates, then proceed with tiling after the user reviews them.`,
-              },
-            ],
-          };
-        }
-
         const config = MODEL_CONFIGS[model];
         const warnings: string[] = [];
 
@@ -139,6 +125,24 @@ export function registerTileImageTool(server: McpServer): void {
             `Tile size ${effectiveTileSize}px is below minimum of ${config.minTileSize}px — clamped to ${config.minTileSize}px`
           );
           effectiveTileSize = config.minTileSize;
+        }
+
+        // Elicitation: ask user to confirm before tiling (if client supports it)
+        const imgMeta = await getImageMetadata(localPath);
+        const preEstimate = computeEstimateForModel(model, imgMeta.width, imgMeta.height, effectiveTileSize, maxDimension === 0 ? undefined : maxDimension);
+        const { confirmed } = await confirmTiling(
+          server, imgMeta.width, imgMeta.height, model,
+          preEstimate.cols, preEstimate.rows, preEstimate.tiles, preEstimate.tokens
+        );
+        if (!confirmed) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Tiling cancelled by user.\n\nImage: ${imgMeta.width} x ${imgMeta.height}\nPreset: ${config.label} (${preEstimate.cols}x${preEstimate.rows} grid, ${preEstimate.tiles} tiles, ~${preEstimate.tokens.toLocaleString()} tokens)`,
+              },
+            ],
+          };
         }
 
         // Determine output directory
