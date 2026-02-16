@@ -18,7 +18,8 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
 }));
 
-import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath } from "../utils.js";
+import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath, stripVersionSuffix, buildTileHints } from "../utils.js";
+import type { TileMetadata } from "../types.js";
 
 describe("escapeHtml", () => {
   it("escapes ampersand", () => {
@@ -209,5 +210,73 @@ describe("getVersionedFilePath", () => {
     mockReaddir.mockResolvedValue(["example-com_v1.png"]);
     const result = await getVersionedFilePath("/some/captures", "example-com", "png");
     expect(result).toBe("/some/captures/example-com_v2.png");
+  });
+});
+
+describe("stripVersionSuffix", () => {
+  it("strips _v1 suffix", () => {
+    expect(stripVersionSuffix("photo_v1")).toBe("photo");
+  });
+
+  it("strips _v123 suffix", () => {
+    expect(stripVersionSuffix("photo_v123")).toBe("photo");
+  });
+
+  it("returns name unchanged when no version suffix", () => {
+    expect(stripVersionSuffix("photo")).toBe("photo");
+  });
+
+  it("does not strip _v mid-string (e.g. my_video)", () => {
+    expect(stripVersionSuffix("my_video")).toBe("my_video");
+  });
+
+  it("strips version suffix from hyphenated names", () => {
+    expect(stripVersionSuffix("keiver-dev_v1")).toBe("keiver-dev");
+  });
+
+  it("returns empty string unchanged", () => {
+    expect(stripVersionSuffix("")).toBe("");
+  });
+
+  it("only strips the final _vN suffix", () => {
+    expect(stripVersionSuffix("file_v1_v2")).toBe("file_v1");
+  });
+});
+
+describe("buildTileHints", () => {
+  it("groups tiles by content hint", () => {
+    const metadata: TileMetadata[] = [
+      { index: 0, contentHint: "text-heavy", meanBrightness: 200, stdDev: 15, isBlank: false },
+      { index: 1, contentHint: "image-rich", meanBrightness: 128, stdDev: 65, isBlank: false },
+      { index: 2, contentHint: "mixed", meanBrightness: 150, stdDev: 40, isBlank: false },
+      { index: 3, contentHint: "text-heavy", meanBrightness: 210, stdDev: 12, isBlank: false },
+    ];
+    const hints = buildTileHints(metadata);
+    expect(hints["text-heavy"]).toEqual([0, 3]);
+    expect(hints["image-rich"]).toEqual([1]);
+    expect(hints["mixed"]).toEqual([2]);
+  });
+
+  it("uses 'blank' key for blank tiles regardless of contentHint", () => {
+    const metadata: TileMetadata[] = [
+      { index: 0, contentHint: "low-detail", meanBrightness: 250, stdDev: 2, isBlank: true },
+      { index: 1, contentHint: "low-detail", meanBrightness: 248, stdDev: 3, isBlank: true },
+      { index: 2, contentHint: "text-heavy", meanBrightness: 200, stdDev: 15, isBlank: false },
+    ];
+    const hints = buildTileHints(metadata);
+    expect(hints["blank"]).toEqual([0, 1]);
+    expect(hints["text-heavy"]).toEqual([2]);
+    expect(hints["low-detail"]).toBeUndefined();
+  });
+
+  it("returns empty object for empty input", () => {
+    expect(buildTileHints([])).toEqual({});
+  });
+
+  it("handles single tile", () => {
+    const metadata: TileMetadata[] = [
+      { index: 0, contentHint: "mixed", meanBrightness: 150, stdDev: 40, isBlank: false },
+    ];
+    expect(buildTileHints(metadata)).toEqual({ mixed: [0] });
   });
 });

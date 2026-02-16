@@ -7,7 +7,7 @@ import { generateInteractivePreview } from "../services/interactive-preview-gene
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, MAX_TILES_PER_BATCH, DEFAULT_MAX_DIMENSION } from "../constants.js";
-import { getDefaultOutputBase, getVersionedOutputDir } from "../utils.js";
+import { getDefaultOutputBase, getVersionedOutputDir, stripVersionSuffix, buildTileHints } from "../utils.js";
 import { wasRecommended } from "../services/session-state.js";
 import type { ModelEstimate } from "../types.js";
 
@@ -33,8 +33,8 @@ Args:
   - page (number, optional): Tile page to return (0 = tiles 0-4, 1 = tiles 5-9, etc.). Default: 0
 
 Returns:
-  1. Text summary (same as tiler_tile_image)
-  2. JSON metadata with tiling result + page info
+  1. Text summary with grid dimensions, token estimate, output path, and preview path
+  2. Compact JSON with model, sourceImage, grid, outputDir, tileHints (when metadata enabled), page info, and previewPath
   3. Up to ${MAX_TILES_PER_BATCH} tile images as base64 content blocks
   4. Pagination hint if more tiles exist`;
 
@@ -90,7 +90,7 @@ export function registerPrepareImageTool(server: McpServer): void {
             content: [
               {
                 type: "text" as const,
-                text: "Error: tiler_recommend_settings was not called for this image.",
+                text: `Error: tiler_recommend_settings must be called before tiling.\n\nImage: ${imgMeta.width} x ${imgMeta.height}\n\nCall tiler_recommend_settings with the same image first to see cost estimates, then proceed with tiling after the user reviews them.`,
               },
             ],
           };
@@ -118,7 +118,7 @@ export function registerPrepareImageTool(server: McpServer): void {
         if (outputDir) {
           resolvedOutputDir = outputDir;
         } else if (source.sourceType === "file") {
-          const basename = path.basename(localPath, path.extname(localPath));
+          const basename = stripVersionSuffix(path.basename(localPath, path.extname(localPath)));
           const baseOutputDir = path.join(path.dirname(path.resolve(localPath)), "tiles", basename);
           resolvedOutputDir = await getVersionedOutputDir(baseOutputDir);
         } else {
@@ -213,14 +213,6 @@ export function registerPrepareImageTool(server: McpServer): void {
           sourceImage: result.sourceImage,
           grid: result.grid,
           outputDir: result.outputDir,
-          tiles: result.tiles.map((t) => ({
-            index: t.index,
-            row: t.row,
-            col: t.col,
-            position: `${t.x},${t.y}`,
-            dimensions: `${t.width}×${t.height}`,
-            filePath: t.filePath,
-          })),
           page: {
             current: page,
             tilesReturned: start <= end ? end - start + 1 : 0,
@@ -228,11 +220,11 @@ export function registerPrepareImageTool(server: McpServer): void {
             hasMore,
           },
         };
-        if (result.resize) structuredOutput.resize = result.resize;
         if (includeMetadata) {
           const tileMetadata = await analyzeTiles(result.tiles.map((t) => t.filePath));
-          structuredOutput.tileMetadata = tileMetadata;
+          structuredOutput.tileHints = buildTileHints(tileMetadata);
         }
+        if (result.resize) structuredOutput.resize = result.resize;
         if (previewPath) structuredOutput.previewPath = previewPath;
         if (warnings.length > 0) structuredOutput.warnings = warnings;
 

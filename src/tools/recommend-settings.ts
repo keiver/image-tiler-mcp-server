@@ -17,6 +17,37 @@ import type { ImageIntent, BudgetLevel } from "../constants.js";
 import { recordRecommendation } from "../services/session-state.js";
 import type { ModelEstimate, RecommendationResult } from "../types.js";
 
+function formatRecommendSummary(result: RecommendationResult): string {
+  const { imageInfo, recommended, estimate, allModels, rationale, previewPath } = result;
+  const ar = `${(imageInfo.width / Math.min(imageInfo.width, imageInfo.height)).toFixed(1)}:1`;
+
+  const lines: string[] = [];
+  lines.push(`Image: ${imageInfo.width} x ${imageInfo.height} (${imageInfo.megapixels} MP, ${ar})`);
+  lines.push(`Recommended: ${recommended.model.charAt(0).toUpperCase() + recommended.model.slice(1)} (${estimate.gridCols}x${estimate.gridRows} grid, ~${estimate.estimatedTokens.toLocaleString()} tokens)`);
+  lines.push("");
+
+  // Table header
+  lines.push("  Preset  | Tile Size | Grid   | Tiles | Est. Tokens");
+  lines.push("  --------|-----------|--------|-------|------------");
+
+  for (const m of allModels) {
+    const preset = m.model.padEnd(7);
+    const tile = `${m.tileSize} px`.padStart(7);
+    const grid = `${m.cols} x ${m.rows}`.padStart(6);
+    const tiles = String(m.tiles).padStart(5);
+    const tokens = `~${m.tokens.toLocaleString()}`.padStart(12);
+    lines.push(`  ${preset} | ${tile}   | ${grid} | ${tiles} | ${tokens}`);
+  }
+
+  lines.push("");
+  lines.push(`Rationale: ${rationale.join("; ")}`);
+  if (previewPath) {
+    lines.push(`Preview: ${previewPath}`);
+  }
+
+  return lines.join("\n");
+}
+
 function applyHeuristics(
   model: string,
   explicitTileSize: number | undefined,
@@ -101,14 +132,9 @@ Supported formats: ${SUPPORTED_FORMATS.join(", ")}
 Intent hints: "text_heavy" (tall docs/scrollshots), "ui_screenshot", "diagram", "photo", "general"
 Budget: "low" (fewer tokens), "default", "max_detail" (preserve all detail)
 
-Returns JSON with:
-  - recommended: { model, tileSize, maxDimension }
-  - rationale: why these settings were chosen
-  - imageInfo: { width, height, megapixels, aspectRatio }
-  - estimate: { gridCols, gridRows, totalTiles, estimatedTokens }
-  - allModels: comparison across all ${VISION_MODELS.length} tiling presets (${modelList})
-  - previewPath: path to an interactive HTML preview with preset-switching tabs
-  - warnings: any issues detected`;
+Returns two content blocks:
+  1. Formatted comparison table with image dimensions, all preset estimates, rationale, and preview path
+  2. Full JSON with: recommended, rationale, imageInfo, estimate, allModels (${VISION_MODELS.length} presets: ${modelList}), previewPath, warnings`;
 
 export function registerRecommendSettingsTool(server: McpServer): void {
   server.registerTool(
@@ -222,19 +248,16 @@ export function registerRecommendSettingsTool(server: McpServer): void {
           previewPath,
         };
 
-        const content: Array<{ type: "text"; text: string }> = [];
-
-        if (previewPath) {
-          content.push({
+        const content: Array<{ type: "text"; text: string }> = [
+          {
             type: "text" as const,
-            text: `Preview: ${previewPath}`,
-          });
-        }
-
-        content.push({
-          type: "text" as const,
-          text: JSON.stringify(result, null, 2),
-        });
+            text: formatRecommendSummary(result),
+          },
+          {
+            type: "text" as const,
+            text: JSON.stringify(result, null, 2),
+          },
+        ];
 
         return { content };
       } catch (error) {

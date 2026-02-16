@@ -28,6 +28,8 @@ vi.mock("../utils.js", () => ({
   getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
   escapeHtml: vi.fn((s: string) => s),
   getVersionedOutputDir: vi.fn(async (baseDir: string) => `${baseDir}_v1`),
+  stripVersionSuffix: vi.fn((name: string) => name.replace(/_v\d+$/, "")),
+  buildTileHints: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -39,6 +41,7 @@ import { generateInteractivePreview } from "../services/interactive-preview-gene
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import { wasRecommended } from "../services/session-state.js";
+import { buildTileHints } from "../utils.js";
 import { registerTileImageTool } from "../tools/tile-image.js";
 import { createMockServer } from "./helpers/mock-server.js";
 
@@ -49,6 +52,7 @@ const mockedResolveSource = vi.mocked(resolveImageSource);
 const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
 const mockedWasRecommended = vi.mocked(wasRecommended);
 const mockedGetImageMetadata = vi.mocked(getImageMetadata);
+const mockedBuildTileHints = vi.mocked(buildTileHints);
 
 function makeTileResult(overrides?: Partial<TileImageResult>): TileImageResult {
   return {
@@ -170,7 +174,7 @@ describe("registerTileImageTool", () => {
     expect(mockedTileImage).toHaveBeenCalledWith("image.png", 1072, "/custom/dir", 1590, undefined, 1568, undefined);
   });
 
-  it("returns summary with preview and structured JSON on success", async () => {
+  it("returns summary with preview and compact JSON on success", async () => {
     mockedTileImage.mockResolvedValue(makeTileResult());
     const tool = mock.getTool("tiler_tile_image")!;
     const result = await tool.handler(
@@ -188,7 +192,8 @@ describe("registerTileImageTool", () => {
 
     const json = JSON.parse(res.content[1].text);
     expect(json.grid.totalTiles).toBe(4);
-    expect(json.tiles).toHaveLength(4);
+    // No per-tile details in compact output
+    expect(json.tiles).toBeUndefined();
   });
 
   it("wraps errors from tileImage", async () => {
@@ -216,7 +221,7 @@ describe("registerTileImageTool", () => {
     expect(res.content[0].text).toContain("string error");
   });
 
-  it("structured output includes tile positions as strings", async () => {
+  it("compact output has no per-tile details", async () => {
     mockedTileImage.mockResolvedValue(makeTileResult());
     const tool = mock.getTool("tiler_tile_image")!;
     const result = await tool.handler(
@@ -225,8 +230,10 @@ describe("registerTileImageTool", () => {
     );
     const res = result as any;
     const json = JSON.parse(res.content[1].text);
-    expect(json.tiles[0].position).toBe("0,0");
-    expect(json.tiles[0].dimensions).toBe("1092×1092");
+    expect(json.tiles).toBeUndefined();
+    expect(json.model).toBe("claude");
+    expect(json.grid).toBeDefined();
+    expect(json.outputDir).toBe("/output/tiles");
   });
 
   it("rejects svg format", async () => {
@@ -733,7 +740,7 @@ describe("registerTileImageTool", () => {
   });
 
   describe("recommend-first enforcement", () => {
-    it("returns hard error when recommend-settings was not called", async () => {
+    it("returns actionable error when recommend-settings was not called", async () => {
       mockedWasRecommended.mockReturnValue(false);
       const tool = mock.getTool("tiler_tile_image")!;
       const result = await tool.handler(
@@ -743,7 +750,9 @@ describe("registerTileImageTool", () => {
       const res = result as any;
       expect(res.isError).toBe(true);
       expect(res.content).toHaveLength(1);
-      expect(res.content[0].text).toContain("tiler_recommend_settings was not called");
+      expect(res.content[0].text).toContain("tiler_recommend_settings must be called before tiling");
+      expect(res.content[0].text).toContain("Image: 2144 x 2144");
+      expect(res.content[0].text).toContain("Call tiler_recommend_settings");
       // Should NOT have proceeded to tile
       expect(mockedTileImage).not.toHaveBeenCalled();
     });
@@ -813,12 +822,14 @@ describe("registerTileImageTool", () => {
       ]);
     });
 
-    it("includes tileMetadata in structured output when includeMetadata is true", async () => {
+    it("includes tileHints in structured output when includeMetadata is true", async () => {
       const metadata: TileMetadata[] = [
         { index: 0, contentHint: "text-heavy", meanBrightness: 200, stdDev: 15, isBlank: false },
       ];
+      const hints = { "text-heavy": [0] };
       mockedTileImage.mockResolvedValue(makeTileResult());
       mockedAnalyzeTiles.mockResolvedValue(metadata);
+      mockedBuildTileHints.mockReturnValue(hints);
       const tool = mock.getTool("tiler_tile_image")!;
       const result = await tool.handler(
         { filePath: "image.png", model: "claude", outputDir: "/out", includeMetadata: true },
@@ -826,7 +837,8 @@ describe("registerTileImageTool", () => {
       );
       const res = result as any;
       const json = JSON.parse(res.content[1].text);
-      expect(json.tileMetadata).toEqual(metadata);
+      expect(json.tileHints).toEqual(hints);
+      expect(json.tileMetadata).toBeUndefined();
     });
 
     it("does not call analyzeTiles when includeMetadata is false", async () => {
@@ -854,12 +866,14 @@ describe("registerTileImageTool", () => {
       expect(mockedAnalyzeTiles).toHaveBeenCalled();
     });
 
-    it("includes tileMetadata in structured output when includeMetadata defaults to true", async () => {
+    it("includes tileHints in structured output when includeMetadata defaults to true", async () => {
       const metadata: TileMetadata[] = [
         { index: 0, contentHint: "text-heavy", meanBrightness: 200, stdDev: 15, isBlank: false },
       ];
+      const hints = { "text-heavy": [0] };
       mockedTileImage.mockResolvedValue(makeTileResult());
       mockedAnalyzeTiles.mockResolvedValue(metadata);
+      mockedBuildTileHints.mockReturnValue(hints);
       const tool = mock.getTool("tiler_tile_image")!;
       // Simulate Zod default: includeMetadata defaults to true when omitted
       const result = await tool.handler(
@@ -868,7 +882,7 @@ describe("registerTileImageTool", () => {
       );
       const res = result as any;
       const json = JSON.parse(res.content[1].text);
-      expect(json.tileMetadata).toEqual(metadata);
+      expect(json.tileHints).toEqual(hints);
     });
   });
 });

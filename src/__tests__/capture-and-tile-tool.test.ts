@@ -30,6 +30,7 @@ vi.mock("../utils.js", () => ({
   getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
   escapeHtml: vi.fn((s: string) => s),
   sanitizeHostname: vi.fn().mockReturnValue("example-com"),
+  buildTileHints: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock("sharp", () => {
@@ -289,7 +290,7 @@ describe("registerCaptureAndTileTool", () => {
   });
 
   describe("recommend-first enforcement", () => {
-    it("returns hard error with screenshot path when recommend-settings was not called", async () => {
+    it("returns actionable error with capture dimensions and screenshot path when recommend-settings was not called", async () => {
       mockedWasRecommended.mockReturnValue(false);
       const tool = mock.getTool("tiler_capture_and_tile")!;
       const result = await tool.handler(
@@ -299,10 +300,11 @@ describe("registerCaptureAndTileTool", () => {
       const res = result as any;
       expect(res.isError).toBe(true);
       expect(res.content).toHaveLength(1);
-      expect(res.content[0].text).toContain("tiler_recommend_settings was not called");
-      // Should include the screenshot path so user can continue with multi-step flow
+      expect(res.content[0].text).toContain("tiler_recommend_settings must be called before tiling");
+      expect(res.content[0].text).toContain("Captured: 1280 x 800");
       expect(res.content[0].text).toContain("Screenshot saved to:");
       expect(res.content[0].text).toMatch(/example-com\.png/);
+      expect(res.content[0].text).toContain("Call tiler_recommend_settings with filePath=");
       // Should NOT have proceeded to tile
       expect(mockedTileImage).not.toHaveBeenCalled();
     });

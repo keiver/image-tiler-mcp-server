@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { TileMetadata } from "./types.js";
 
 export function escapeHtml(str: string): string {
   return str
@@ -93,4 +94,17 @@ export async function getVersionedOutputDir(baseDir: string): Promise<string> {
   }
 
   return `${baseDir}_v${maxVersion + 1}`;
+}
+
+export function stripVersionSuffix(name: string): string {
+  return name.replace(/_v\d+$/, "");
+}
+
+export function buildTileHints(metadata: TileMetadata[]): Record<string, number[]> {
+  const hints: Record<string, number[]> = {};
+  for (const m of metadata) {
+    const key = m.isBlank ? "blank" : m.contentHint;
+    (hints[key] ??= []).push(m.index);
+  }
+  return hints;
 }

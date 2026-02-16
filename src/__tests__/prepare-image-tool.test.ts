@@ -29,6 +29,8 @@ vi.mock("../utils.js", () => ({
   getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
   escapeHtml: vi.fn((s: string) => s),
   getVersionedOutputDir: vi.fn(async (baseDir: string) => `${baseDir}_v1`),
+  stripVersionSuffix: vi.fn((name: string) => name.replace(/_v\d+$/, "")),
+  buildTileHints: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -300,7 +302,7 @@ describe("registerPrepareImageTool", () => {
   });
 
   describe("recommend-first enforcement", () => {
-    it("returns hard error when recommend-settings was not called", async () => {
+    it("returns actionable error when recommend-settings was not called", async () => {
       mockedWasRecommended.mockReturnValue(false);
       const tool = mock.getTool("tiler_prepare_image")!;
       const result = await tool.handler(
@@ -310,7 +312,9 @@ describe("registerPrepareImageTool", () => {
       const res = result as any;
       expect(res.isError).toBe(true);
       expect(res.content).toHaveLength(1);
-      expect(res.content[0].text).toContain("tiler_recommend_settings was not called");
+      expect(res.content[0].text).toContain("tiler_recommend_settings must be called before tiling");
+      expect(res.content[0].text).toContain("Image: 2144 x 2144");
+      expect(res.content[0].text).toContain("Call tiler_recommend_settings");
       // Should NOT have proceeded to tile
       expect(mockedTileImage).not.toHaveBeenCalled();
     });

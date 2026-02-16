@@ -7,7 +7,7 @@ import { generateInteractivePreview } from "../services/interactive-preview-gene
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import { SUPPORTED_FORMATS, MODEL_CONFIGS, DEFAULT_MODEL, VISION_MODELS, DEFAULT_MAX_DIMENSION } from "../constants.js";
-import { getDefaultOutputBase, getVersionedOutputDir } from "../utils.js";
+import { getDefaultOutputBase, getVersionedOutputDir, stripVersionSuffix, buildTileHints } from "../utils.js";
 import { wasRecommended } from "../services/session-state.js";
 import type { ModelEstimate } from "../types.js";
 
@@ -47,8 +47,8 @@ Args:
 At least one image source (filePath, sourceUrl, dataUrl, or imageBase64) is required.
 
 Returns:
-  JSON metadata with source image dimensions, grid layout (rows × cols), total tile count,
-  estimated token cost, preset used, output directory path, and per-tile details (index, position, dimensions, file path).
+  1. Text summary with grid dimensions, token estimate, output path, and preview path
+  2. Compact JSON with model, sourceImage, grid, outputDir, tileHints (when metadata enabled), and previewPath
 
 After tiling, use tiler_get_tiles to retrieve tile images in batches for visual analysis.
 
@@ -116,7 +116,7 @@ export function registerTileImageTool(server: McpServer): void {
             content: [
               {
                 type: "text" as const,
-                text: "Error: tiler_recommend_settings was not called for this image.",
+                text: `Error: tiler_recommend_settings must be called before tiling.\n\nImage: ${imgMeta.width} x ${imgMeta.height}\n\nCall tiler_recommend_settings with the same image first to see cost estimates, then proceed with tiling after the user reviews them.`,
               },
             ],
           };
@@ -146,11 +146,10 @@ export function registerTileImageTool(server: McpServer): void {
         if (outputDir) {
           resolvedOutputDir = outputDir;
         } else if (source.sourceType === "file") {
-          const basename = path.basename(localPath, path.extname(localPath));
+          const basename = stripVersionSuffix(path.basename(localPath, path.extname(localPath)));
           const baseOutputDir = path.join(path.dirname(path.resolve(localPath)), "tiles", basename);
           resolvedOutputDir = await getVersionedOutputDir(baseOutputDir);
         } else {
-          // Non-file sources: use ~/Desktop/tiles/tiled_<timestamp> (or Downloads/home)
           resolvedOutputDir = path.join(getDefaultOutputBase(), "tiles", `tiled_${Date.now()}`);
         }
 
@@ -235,23 +234,15 @@ export function registerTileImageTool(server: McpServer): void {
           sourceImage: result.sourceImage,
           grid: result.grid,
           outputDir: result.outputDir,
-          tiles: result.tiles.map((t) => ({
-            index: t.index,
-            row: t.row,
-            col: t.col,
-            position: `${t.x},${t.y}`,
-            dimensions: `${t.width}×${t.height}`,
-            filePath: t.filePath,
-          })),
         };
-
-        if (result.resize) {
-          structuredOutput.resize = result.resize;
-        }
 
         if (includeMetadata) {
           const tileMetadata = await analyzeTiles(result.tiles.map((t) => t.filePath));
-          structuredOutput.tileMetadata = tileMetadata;
+          structuredOutput.tileHints = buildTileHints(tileMetadata);
+        }
+
+        if (result.resize) {
+          structuredOutput.resize = result.resize;
         }
 
         if (previewPath) {

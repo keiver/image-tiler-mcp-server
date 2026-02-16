@@ -450,22 +450,38 @@ describe("registerRecommendSettingsTool", () => {
     });
   });
 
-  it("includes separate preview content block before JSON", async () => {
+  it("always returns exactly 2 content blocks (formatted table + JSON)", async () => {
     const tool = mock.getTool("tiler_recommend_settings")!;
     const result = await tool.handler(
       { filePath: "test.png" },
       {} as any
     );
     const res = result as any;
-    // First block should be preview, second should be JSON
     expect(res.content).toHaveLength(2);
-    expect(res.content[0].text).toMatch(/^Preview: /);
-    expect(res.content[0].text).toContain("/tmp/test-image-preview.html");
-    // JSON block follows
+    // First block is formatted summary table
+    expect(res.content[0].text).toContain("Image:");
+    expect(res.content[0].text).toContain("Preset");
+    expect(res.content[0].text).toContain("Tile Size");
+    expect(res.content[0].text).toContain("Preview: /tmp/test-image-preview.html");
+    // Second block is JSON
     expect(res.content[1].text).toMatch(/^\{/);
   });
 
-  it("no preview block when preview generation fails", async () => {
+  it("formatted summary includes all model presets", async () => {
+    const tool = mock.getTool("tiler_recommend_settings")!;
+    const result = await tool.handler(
+      { filePath: "test.png" },
+      {} as any
+    );
+    const res = result as any;
+    const summary = res.content[0].text;
+    expect(summary).toContain("claude");
+    expect(summary).toContain("openai");
+    expect(summary).toContain("gemini");
+    expect(summary).toContain("gemini3");
+  });
+
+  it("still returns 2 blocks when preview generation fails (no preview line in summary)", async () => {
     mockedGeneratePreview.mockRejectedValue(new Error("fail"));
     const tool = mock.getTool("tiler_recommend_settings")!;
     const result = await tool.handler(
@@ -473,8 +489,10 @@ describe("registerRecommendSettingsTool", () => {
       {} as any
     );
     const res = result as any;
-    // JSON block only (no preview, no stop instruction)
-    expect(res.content).toHaveLength(1);
-    expect(res.content[0].text).toMatch(/^\{/);
+    expect(res.content).toHaveLength(2);
+    // Summary should not contain preview
+    expect(res.content[0].text).not.toContain("Preview:");
+    // JSON block follows
+    expect(res.content[1].text).toMatch(/^\{/);
   });
 });

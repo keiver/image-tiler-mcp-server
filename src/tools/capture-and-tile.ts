@@ -17,7 +17,7 @@ import {
   CAPTURE_DEFAULT_VIEWPORT_WIDTH,
   WAIT_UNTIL_OPTIONS,
 } from "../constants.js";
-import { getDefaultOutputBase, sanitizeHostname } from "../utils.js";
+import { getDefaultOutputBase, sanitizeHostname, buildTileHints } from "../utils.js";
 import { wasRecommended } from "../services/session-state.js";
 import type { ModelEstimate } from "../types.js";
 
@@ -45,7 +45,7 @@ Args:
 
 Returns:
   1. Text summary with capture + tiling info
-  2. JSON metadata with capture details, tiling result, page info, and allModels comparison
+  2. Compact JSON with capture details, model, sourceImage, grid, outputDir, tileHints (when metadata enabled), page info, and allModels comparison
   3. Up to ${MAX_TILES_PER_BATCH} tile images as base64 content blocks
   4. Pagination hint if more tiles exist
 
@@ -97,7 +97,7 @@ export function registerCaptureAndTileTool(server: McpServer): void {
             content: [
               {
                 type: "text" as const,
-                text: `Error: tiler_recommend_settings was not called for this image.\n\nScreenshot saved to: ${screenshotPath}`,
+                text: `Error: tiler_recommend_settings must be called before tiling.\n\nCaptured: ${captureResult.pageWidth} x ${captureResult.pageHeight}\nScreenshot saved to: ${screenshotPath}\n\nCall tiler_recommend_settings with filePath="${screenshotPath}" to see cost estimates, then proceed with tiling.`,
               },
             ],
           };
@@ -218,14 +218,6 @@ export function registerCaptureAndTileTool(server: McpServer): void {
           sourceImage: result.sourceImage,
           grid: result.grid,
           outputDir: result.outputDir,
-          tiles: result.tiles.map((t) => ({
-            index: t.index,
-            row: t.row,
-            col: t.col,
-            position: `${t.x},${t.y}`,
-            dimensions: `${t.width}×${t.height}`,
-            filePath: t.filePath,
-          })),
           page: {
             current: page,
             tilesReturned: start <= end ? end - start + 1 : 0,
@@ -234,11 +226,11 @@ export function registerCaptureAndTileTool(server: McpServer): void {
           },
         };
 
-        if (result.resize) structuredOutput.resize = result.resize;
         if (includeMetadata) {
           const tileMetadata = await analyzeTiles(result.tiles.map((t) => t.filePath));
-          structuredOutput.tileMetadata = tileMetadata;
+          structuredOutput.tileHints = buildTileHints(tileMetadata);
         }
+        if (result.resize) structuredOutput.resize = result.resize;
         structuredOutput.allModels = allModels;
         if (previewPath) structuredOutput.previewPath = previewPath;
         if (warnings.length > 0) structuredOutput.warnings = warnings;
