@@ -1,8 +1,8 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import sharp from "sharp";
-import { escapeHtml } from "../utils.js";
-import { MAX_PREVIEW_PIXELS, WEBP_QUALITY, MIN_PREVIEW_WIDTH } from "../constants.js";
+import { escapeHtml, withTimeout } from "../utils.js";
+import { MAX_PREVIEW_PIXELS, WEBP_QUALITY, MIN_PREVIEW_WIDTH, SHARP_OPERATION_TIMEOUT_MS } from "../constants.js";
 import type { ModelEstimate } from "../types.js";
 
 export interface InteractivePreviewData {
@@ -33,7 +33,11 @@ export async function generateInteractivePreview(
   const filename = path.basename(sourceImagePath);
 
   // Generate an embedded base64 preview image (eliminates TCC/sandbox file access issues)
-  const sharpMeta = await sharp(path.resolve(sourceImagePath)).metadata();
+  const sharpMeta = await withTimeout(
+    sharp(path.resolve(sourceImagePath)).metadata(),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "preview metadata"
+  );
   const sourcePixels = (sharpMeta.width ?? 0) * (sharpMeta.height ?? 0);
 
   let scale = 1;
@@ -54,7 +58,11 @@ export async function generateInteractivePreview(
   if (scale < 1 && sharpMeta.width && sharpMeta.height) {
     pipeline = pipeline.resize(Math.round(sharpMeta.width * scale), Math.round(sharpMeta.height * scale));
   }
-  const { data: previewBuffer } = await pipeline.webp({ quality: WEBP_QUALITY }).toBuffer({ resolveWithObject: true });
+  const { data: previewBuffer } = await withTimeout(
+    pipeline.webp({ quality: WEBP_QUALITY }).toBuffer({ resolveWithObject: true }),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "preview webp encode"
+  );
   const previewDataUrl = `data:image/webp;base64,${previewBuffer.toString("base64")}`;
   const wasResized = effectiveWidth !== originalWidth || effectiveHeight !== originalHeight;
 

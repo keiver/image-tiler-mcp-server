@@ -1,11 +1,17 @@
 import sharp from "sharp";
 import type { TileMetadata } from "../types.js";
+import { withTimeout } from "../utils.js";
+import { SHARP_OPERATION_TIMEOUT_MS } from "../constants.js";
 
 export async function analyzeTile(
   tilePath: string,
   index: number
 ): Promise<TileMetadata> {
-  const stats = await sharp(tilePath).stats();
+  const stats = await withTimeout(
+    sharp(tilePath).stats(),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "tile-stats"
+  );
 
   const channelCount = stats.channels.length;
   if (channelCount === 0) {

@@ -883,7 +883,6 @@ describe("tileImage with maxDimension", () => {
   });
 
   it("silently ignores ENOENT when cleaning up temp file", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
     mockMetadata
       .mockResolvedValueOnce({ width: 4000, height: 2000 }) // resizeImage
@@ -895,12 +894,10 @@ describe("tileImage with maxDimension", () => {
 
     const result = await tileImage("/test/image.png", 1072, "/output", 1590, 2000);
     expect(result.resize).toBeDefined();
-    expect(warnSpy).not.toHaveBeenCalled();
-    warnSpy.mockRestore();
+    expect(result.warnings).toBeUndefined();
   });
 
-  it("warns on non-ENOENT errors when cleaning up temp file", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("returns warning on non-ENOENT errors when cleaning up temp file", async () => {
     mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
     mockMetadata
       .mockResolvedValueOnce({ width: 4000, height: 2000 }) // resizeImage
@@ -912,13 +909,21 @@ describe("tileImage with maxDimension", () => {
 
     const result = await tileImage("/test/image.png", 1072, "/output", 1590, 2000);
     expect(result.resize).toBeDefined();
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[image-tiler] Failed to clean up temp file")
-    );
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("EPERM")
-    );
-    warnSpy.mockRestore();
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings![0]).toContain("Failed to clean up temp file");
+    expect(result.warnings![0]).toContain("EPERM");
+  });
+
+  it("does not include warnings field when cleanup succeeds", async () => {
+    mockedFs.stat.mockResolvedValue({ size: 5000 } as any);
+    mockMetadata
+      .mockResolvedValueOnce({ width: 4000, height: 2000 }) // resizeImage
+      .mockResolvedValueOnce({ width: 2000, height: 1000, format: "png", channels: 4 }); // getImageMetadata
+
+    mockedFs.unlink.mockResolvedValue(undefined);
+
+    const result = await tileImage("/test/image.png", 1072, "/output", 1590, 2000);
+    expect(result.resize).toBeDefined();
+    expect(result.warnings).toBeUndefined();
   });
 });

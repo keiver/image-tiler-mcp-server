@@ -51,7 +51,7 @@ vi.mock("node:child_process", () => ({
 
 vi.mock("node:fs", () => ({
   accessSync: mockAccessSync,
-  constants: { F_OK: 0 },
+  constants: { F_OK: 0, X_OK: 1 },
 }));
 
 vi.mock("ws", () => ({ default: mockWsConstructor }));
@@ -235,6 +235,16 @@ describe("captureUrl", () => {
     await expect(captureUrl({ url: "https://example.com" })).rejects.toThrow();
     // Chrome.kill should have been called (or chrome exited)
   });
+
+  // ─── Chrome Hang / Timeout Tests ────────────────────────────────
+
+  it("times out when Chrome never emits DevTools URL", async () => {
+    // Chrome spawns but never writes to stderr — no DevTools URL appears
+    // The 10s stderr timer should fire
+    await expect(
+      captureUrl({ url: "https://example.com", timeout: 15_000 })
+    ).rejects.toThrow("Timed out waiting for Chrome DevTools WebSocket URL");
+  }, 15_000);
 
   // ─── Scroll-Stitch Tests ────────────────────────────────────────
 

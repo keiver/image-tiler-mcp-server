@@ -1,0 +1,952 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { TileImageResult, AnalysisResult } from "../types.js";
+
+vi.mock("../services/image-source-resolver.js", () => ({
+  resolveImageSource: vi.fn(),
+}));
+
+vi.mock("../services/url-capture.js", () => ({
+  captureUrl: vi.fn(),
+  detectDisplayWidth: vi.fn(),
+}));
+
+vi.mock("../services/image-processor.js", () => ({
+  listTilesInDirectory: vi.fn(),
+  readTileAsBase64: vi.fn(),
+}));
+
+vi.mock("../services/tiling-pipeline.js", () => ({
+  resolveOutputDir: vi.fn(),
+  resolveOutputDirForCapture: vi.fn(),
+  validateFormat: vi.fn(),
+  checkPreviewGate: vi.fn(),
+  analyzeAndPreview: vi.fn(),
+  buildPhase1Response: vi.fn(),
+  executeTiling: vi.fn(),
+  buildPhase2Response: vi.fn(),
+  appendTilesPage: vi.fn(),
+  findCheapestModel: vi.fn(),
+  computeElicitationData: vi.fn(),
+}));
+
+vi.mock("../services/elicitation.js", () => ({
+  tryElicitation: vi.fn(),
+}));
+
+vi.mock("../utils.js", () => ({
+  getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
+  sanitizeHostname: vi.fn().mockReturnValue("example-com"),
+  escapeHtml: vi.fn((s: string) => s),
+  buildTileHints: vi.fn().mockReturnValue({}),
+}));
+
+vi.mock("sharp", () => {
+  const mockToFile = vi.fn().mockResolvedValue({});
+  const mockPng = vi.fn().mockReturnValue({ toFile: mockToFile });
+  const mockWebp = vi.fn().mockReturnValue({ toFile: mockToFile });
+  const mockMetadata = vi.fn().mockResolvedValue({ width: 1280, height: 800 });
+  const mockSharpInstance = { png: mockPng, webp: mockWebp, toFile: mockToFile, metadata: mockMetadata };
+  const mockSharp = Object.assign(
+    vi.fn().mockReturnValue(mockSharpInstance),
+    { cache: vi.fn(), concurrency: vi.fn() }
+  );
+  return { default: mockSharp };
+});
+
+vi.mock("node:fs/promises", () => ({
+  mkdir: vi.fn().mockResolvedValue(undefined),
+  access: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { resolveImageSource } from "../services/image-source-resolver.js";
+import { captureUrl } from "../services/url-capture.js";
+import {
+  listTilesInDirectory,
+  readTileAsBase64,
+} from "../services/image-processor.js";
+import {
+  resolveOutputDir,
+  resolveOutputDirForCapture,
+  validateFormat,
+  checkPreviewGate,
+  analyzeAndPreview,
+  buildPhase1Response,
+  executeTiling,
+  buildPhase2Response,
+  appendTilesPage,
+  findCheapestModel,
+  computeElicitationData,
+} from "../services/tiling-pipeline.js";
+import { tryElicitation } from "../services/elicitation.js";
+import { registerTilerTool } from "../tools/tiler.js";
+import { createMockServer } from "./helpers/mock-server.js";
+
+const mockedResolveSource = vi.mocked(resolveImageSource);
+const mockedCaptureUrl = vi.mocked(captureUrl);
+const mockedListTiles = vi.mocked(listTilesInDirectory);
+const mockedReadBase64 = vi.mocked(readTileAsBase64);
+const mockedResolveOutputDir = vi.mocked(resolveOutputDir);
+const mockedResolveOutputDirForCapture = vi.mocked(resolveOutputDirForCapture);
+const mockedValidateFormat = vi.mocked(validateFormat);
+const mockedCheckPreviewGate = vi.mocked(checkPreviewGate);
+const mockedAnalyzeAndPreview = vi.mocked(analyzeAndPreview);
+const mockedBuildPhase1Response = vi.mocked(buildPhase1Response);
+const mockedExecuteTiling = vi.mocked(executeTiling);
+const mockedBuildPhase2Response = vi.mocked(buildPhase2Response);
+const mockedAppendTilesPage = vi.mocked(appendTilesPage);
+const mockedTryElicitation = vi.mocked(tryElicitation);
+const mockedFindCheapestModel = vi.mocked(findCheapestModel);
+const mockedComputeElicitationData = vi.mocked(computeElicitationData);
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function makeTileResult(overrides?: Partial<TileImageResult>): TileImageResult {
+  return {
+    sourceImage: { width: 2144, height: 2144, format: "png", fileSize: 50000, channels: 4 },
+    grid: { cols: 2, rows: 2, totalTiles: 4, tileSize: 1092, estimatedTokens: 6360 },
+    outputDir: "/output/tiles",
+    tiles: [
+      { index: 0, row: 0, col: 0, x: 0, y: 0, width: 1092, height: 1092, filename: "tile_000_000.webp", filePath: "/output/tiles/tile_000_000.webp" },
+    ],
+    ...overrides,
+  };
+}
+
+function makeTilePaths(count: number): string[] {
+  const paths: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const row = Math.floor(i / 4);
+    const col = i % 4;
+    paths.push(
+      `/tiles/tile_${String(row).padStart(3, "0")}_${String(col).padStart(3, "0")}.png`
+    );
+  }
+  return paths;
+}
+
+const sampleAnalysis: AnalysisResult = {
+  outputDir: "/output/tiles",
+  previewPath: "/output/tiles/preview.html",
+  sourceImage: { width: 2144, height: 2144 },
+  allModels: [
+    { model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 2, tiles: 4, tokens: 6360 },
+  ],
+};
+
+const phase2Response = {
+  content: [
+    { type: "text" as const, text: "Tiled 2144x2144 image for Claude" },
+    { type: "text" as const, text: '{"model":"claude"}' },
+  ],
+};
+
+const appendedResponse = {
+  content: [
+    { type: "text" as const, text: "Tiled 2144x2144 image for Claude" },
+    { type: "text" as const, text: '{"model":"claude","page":{"current":0,"tilesReturned":4,"totalTiles":4,"hasMore":false}}' },
+    { type: "text" as const, text: "Tile 1/4 [row 0, col 0]" },
+    { type: "image" as const, data: "AAAA", mimeType: "image/webp" },
+  ],
+};
+
+// ─── Registration ───────────────────────────────────────────────────────────
+
+describe("registerTilerTool", () => {
+  let mock: ReturnType<typeof createMockServer>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mock = createMockServer();
+    registerTilerTool(mock.server as any);
+
+    // Default mocks for tile-image happy path
+    mockedResolveSource.mockResolvedValue({
+      localPath: "/images/photo.png",
+      sourceType: "file",
+      originalSource: "/images/photo.png",
+    });
+    mockedValidateFormat.mockReturnValue(null);
+    mockedResolveOutputDir.mockResolvedValue("/output/tiles");
+    mockedCheckPreviewGate.mockResolvedValue(null);
+    mockedAnalyzeAndPreview.mockResolvedValue(sampleAnalysis);
+    mockedTryElicitation.mockResolvedValue("claude");
+    mockedFindCheapestModel.mockReturnValue("gemini");
+    mockedComputeElicitationData.mockResolvedValue({
+      width: 2144, height: 2144,
+      allModels: sampleAnalysis.allModels,
+    });
+    mockedExecuteTiling.mockResolvedValue({ result: makeTileResult(), warnings: [] });
+    mockedBuildPhase2Response.mockResolvedValue(phase2Response);
+    mockedAppendTilesPage.mockResolvedValue(appendedResponse);
+    mockedBuildPhase1Response.mockReturnValue({
+      content: [
+        { type: "text", text: "STOP — Do NOT call this tool again" },
+        { type: "text", text: '{"status":"pending_confirmation"}' },
+      ],
+    });
+
+    // Default mocks for capture happy path
+    mockedCaptureUrl.mockResolvedValue({
+      buffer: Buffer.from("screenshot-data"),
+      pageWidth: 1280,
+      pageHeight: 800,
+      url: "https://example.com",
+    });
+    mockedResolveOutputDirForCapture.mockReturnValue("/output/tiles");
+
+    // Default mocks for get-tiles
+    mockedReadBase64.mockResolvedValue("AAAA");
+  });
+
+  it("registers the tool with correct name", () => {
+    expect(mock.server.registerTool).toHaveBeenCalledWith(
+      "tiler",
+      expect.any(Object),
+      expect.any(Function)
+    );
+  });
+
+  it("description includes mandatory two-phase workflow", () => {
+    const registerCall = (mock.server.registerTool as any).mock.calls[0];
+    const description = registerCall[1].description as string;
+    expect(description).toContain("MANDATORY two-phase workflow");
+    expect(description).toContain("DO NOT skip Phase 1");
+    expect(description).toContain("DO NOT include model, tileSize, or outputDir");
+  });
+
+  // ─── No input ─────────────────────────────────────────────────────────────
+
+  it("returns generic error when zero params provided", async () => {
+    const tool = mock.getTool("tiler")!;
+    const result = await tool.handler({}, {} as any);
+    const res = result as any;
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("No input provided");
+  });
+
+  // ─── Tile Image Mode ─────────────────────────────────────────────────────
+
+  describe("tile-image mode", () => {
+    it("returns Phase 2 error when model provided but no image source", async () => {
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { model: "claude", tileSize: 1092 },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Phase 2 requires an image source");
+    });
+
+    it("returns Phase 2 error when outputDir provided but no image source", async () => {
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { outputDir: "/some/dir" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Phase 2 requires an image source");
+    });
+
+    it("rejects unsupported image format", async () => {
+      mockedValidateFormat.mockReturnValue("Error: Unsupported image format '.bmp'.");
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { filePath: "test.bmp", model: "claude" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Unsupported image format");
+    });
+
+    it("returns Phase 1 response when no preview exists and elicitation returns null", async () => {
+      mockedTryElicitation.mockResolvedValue(null);
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { filePath: "image.png" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.content[0].text).toContain("STOP");
+      expect(mockedBuildPhase1Response).toHaveBeenCalledWith(sampleAnalysis);
+      expect(mockedExecuteTiling).not.toHaveBeenCalled();
+      expect(mockedAppendTilesPage).not.toHaveBeenCalled();
+    });
+
+    it("returns Phase 2 response when preview gate passes with explicit model", async () => {
+      mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "openai", outputDir: "/out" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedExecuteTiling).toHaveBeenCalledWith(
+        "/images/photo.png",
+        "/output/tiles",
+        expect.objectContaining({ model: "openai" })
+      );
+      expect(mockedBuildPhase2Response).toHaveBeenCalled();
+      expect(mockedAppendTilesPage).toHaveBeenCalled();
+      expect(mockedAnalyzeAndPreview).not.toHaveBeenCalled();
+      expect(mockedComputeElicitationData).not.toHaveBeenCalled();
+    });
+
+    it("Phase 2 uses cheapest model when no explicit model and elicitation unavailable", async () => {
+      mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
+      mockedTryElicitation.mockResolvedValue(null);
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png", outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedComputeElicitationData).toHaveBeenCalled();
+      expect(mockedFindCheapestModel).toHaveBeenCalled();
+      expect(mockedExecuteTiling).toHaveBeenCalledWith(
+        "/images/photo.png",
+        "/output/tiles",
+        expect.objectContaining({ model: "gemini" })
+      );
+      expect(mockedBuildPhase2Response).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ model: "gemini", autoSelected: true })
+      );
+      expect(mockedAppendTilesPage).toHaveBeenCalled();
+    });
+
+    it("Phase 2 uses elicitation-selected model when available", async () => {
+      mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
+      mockedTryElicitation.mockResolvedValue("openai");
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png", outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedExecuteTiling).toHaveBeenCalledWith(
+        "/images/photo.png",
+        "/output/tiles",
+        expect.objectContaining({ model: "openai" })
+      );
+      expect(mockedBuildPhase2Response).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ model: "openai", autoSelected: false })
+      );
+      expect(mockedAppendTilesPage).toHaveBeenCalled();
+    });
+
+    it("passes source params to resolveImageSource", async () => {
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png", sourceUrl: "https://example.com/img.png", model: "claude" },
+        {} as any
+      );
+      expect(mockedResolveSource).toHaveBeenCalledWith({
+        filePath: "image.png",
+        sourceUrl: "https://example.com/img.png",
+        dataUrl: undefined,
+        imageBase64: undefined,
+      });
+    });
+
+    it("calls cleanup on source after success", async () => {
+      const cleanup = vi.fn().mockResolvedValue(undefined);
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        {} as any
+      );
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    it("calls cleanup even on error", async () => {
+      const cleanup = vi.fn().mockResolvedValue(undefined);
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      mockedExecuteTiling.mockRejectedValue(new Error("fail"));
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        {} as any
+      );
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    it("calls cleanup when Phase 1 response is returned", async () => {
+      const cleanup = vi.fn().mockResolvedValue(undefined);
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      mockedTryElicitation.mockResolvedValue(null);
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        {} as any
+      );
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    it("appends cleanup warning to response content on success", async () => {
+      const cleanup = vi.fn().mockResolvedValue("Failed to clean up temp file /tmp/x.png: EPERM");
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        {} as any
+      );
+      const res = result as any;
+      const lastBlock = res.content[res.content.length - 1];
+      expect(lastBlock.text).toContain("Failed to clean up temp file");
+      expect(lastBlock.text).toContain("EPERM");
+    });
+
+    it("does not append cleanup warning on error response", async () => {
+      const cleanup = vi.fn().mockResolvedValue("Failed to clean up temp file /tmp/x.png: EPERM");
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/from-url.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      mockedExecuteTiling.mockRejectedValue(new Error("fail"));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      const allText = res.content.map((c: any) => c.text).join("");
+      expect(allText).not.toContain("Failed to clean up");
+    });
+
+    it("wraps errors from pipeline", async () => {
+      mockedAnalyzeAndPreview.mockRejectedValue(new Error("Sharp failed"));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { filePath: "bad.png", model: "claude" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Error tiling image");
+      expect(res.content[0].text).toContain("Sharp failed");
+    });
+
+    it("wraps non-Error throws", async () => {
+      mockedAnalyzeAndPreview.mockRejectedValue("string error");
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { filePath: "bad.png", model: "claude" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("string error");
+    });
+
+    it("wraps errors from tryElicitation", async () => {
+      mockedTryElicitation.mockRejectedValue(new Error("Transport closed"));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { filePath: "image.png" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Error tiling image");
+      expect(res.content[0].text).toContain("Transport closed");
+    });
+
+    it("passes outputDir and model through to pipeline", async () => {
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png", model: "openai", outputDir: "/custom" },
+        {} as any
+      );
+      expect(mockedResolveOutputDir).toHaveBeenCalledWith("file", "/images/photo.png", "/custom");
+    });
+
+    it("skips analyzeAndPreview when preview gate passes (but calls computeElicitationData)", async () => {
+      mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png" },
+        {} as any
+      );
+      expect(mockedCheckPreviewGate).toHaveBeenCalledWith("/output/tiles");
+      expect(mockedAnalyzeAndPreview).not.toHaveBeenCalled();
+      expect(mockedComputeElicitationData).toHaveBeenCalled();
+      expect(mockedExecuteTiling).toHaveBeenCalled();
+      expect(mockedAppendTilesPage).toHaveBeenCalled();
+    });
+
+    it("calls appendTilesPage with page=0 on Phase 2", async () => {
+      mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedAppendTilesPage).toHaveBeenCalledWith(
+        phase2Response,
+        "/output/tiles",
+        undefined
+      );
+    });
+
+    it("passes custom page parameter through to appendTilesPage", async () => {
+      mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out", page: 3 },
+        {} as any
+      );
+      expect(mockedAppendTilesPage).toHaveBeenCalledWith(
+        phase2Response,
+        "/output/tiles",
+        3
+      );
+    });
+
+    it("returns result from appendTilesPage (not raw buildPhase2Response)", async () => {
+      mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        {} as any
+      );
+      expect(result).toBe(appendedResponse);
+    });
+
+    it("calls appendTilesPage on elicitation fast path (Phase 1 → immediate tile)", async () => {
+      mockedCheckPreviewGate.mockResolvedValue(null);
+      mockedTryElicitation.mockResolvedValue("claude");
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png" },
+        {} as any
+      );
+      expect(mockedAppendTilesPage).toHaveBeenCalledWith(
+        phase2Response,
+        "/output/tiles",
+        undefined
+      );
+    });
+  });
+
+  // ─── Get Tiles Mode ───────────────────────────────────────────────────────
+
+  describe("get-tiles mode", () => {
+    it("returns up to 5 tiles (max batch)", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(20));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: undefined },
+        {} as any
+      );
+      const res = result as any;
+      const imageBlocks = res.content.filter((c: any) => c.type === "image");
+      expect(imageBlocks).toHaveLength(5);
+    });
+
+    it("respects custom start/end range", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(20));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 5, end: 7 },
+        {} as any
+      );
+      const res = result as any;
+      const imageBlocks = res.content.filter((c: any) => c.type === "image");
+      expect(imageBlocks).toHaveLength(3);
+    });
+
+    it("clamps end to totalTiles - 1", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(3));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 10 },
+        {} as any
+      );
+      const res = result as any;
+      const imageBlocks = res.content.filter((c: any) => c.type === "image");
+      expect(imageBlocks).toHaveLength(3);
+    });
+
+    it("errors when start >= totalTiles", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(5));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 5, end: undefined },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("out of range");
+    });
+
+    it("errors when batch size exceeds MAX_TILES_PER_BATCH", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(20));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 5 },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("max batch size is 5");
+    });
+
+    it("summary shows 1-indexed tile range", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(10));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 4 },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.content[0].text).toBe("Tiles 1-5 of 10");
+    });
+
+    it("includes 1-indexed tile labels with row/col in content", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(4));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 0 },
+        {} as any
+      );
+      const res = result as any;
+      const labels = res.content.filter(
+        (c: any) => c.type === "text" && c.text.includes("Tile 1/")
+      );
+      expect(labels).toHaveLength(1);
+      expect(labels[0].text).toContain("[row 0, col 0]");
+    });
+
+    it("returns image blocks with correct mime type", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(4));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 0 },
+        {} as any
+      );
+      const res = result as any;
+      const images = res.content.filter((c: any) => c.type === "image");
+      expect(images[0].mimeType).toBe("image/png");
+      expect(images[0].data).toBe("AAAA");
+    });
+
+    it("wraps errors from listTilesInDirectory", async () => {
+      mockedListTiles.mockRejectedValue(new Error("Dir not found"));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/missing", start: 0, end: undefined },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Error retrieving tiles");
+      expect(res.content[0].text).toContain("Dir not found");
+    });
+
+    it("wraps non-Error throws", async () => {
+      mockedListTiles.mockRejectedValue("unexpected");
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: undefined },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("unexpected");
+    });
+
+    it("returns summary with correct 1-indexed tile range info", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(10));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 3, end: 4 },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.content[0].text).toBe("Tiles 4-5 of 10");
+    });
+
+    it("errors when end < start", async () => {
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 10, end: 5 },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("end index (5) must be >= start index (10)");
+    });
+
+    it("returns 5 tiles from non-zero start when end is undefined", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(20));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 15, end: undefined },
+        {} as any
+      );
+      const res = result as any;
+      const imageBlocks = res.content.filter((c: any) => c.type === "image");
+      expect(imageBlocks).toHaveLength(5);
+      expect(res.content[0].text).toBe("Tiles 16-20 of 20");
+    });
+
+    it("returns image/webp MIME type for webp tiles", async () => {
+      mockedListTiles.mockResolvedValue([
+        "/tiles/tile_000_000.webp",
+        "/tiles/tile_000_001.webp",
+      ]);
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 0 },
+        {} as any
+      );
+      const res = result as any;
+      const images = res.content.filter((c: any) => c.type === "image");
+      expect(images[0].mimeType).toBe("image/webp");
+    });
+
+    it("handles malformed tile filename with row=-1, col=-1", async () => {
+      mockedListTiles.mockResolvedValue([
+        "/tiles/tile_000_000.png",
+        "/tiles/corrupted_file.png",
+      ]);
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 1, end: 1 },
+        {} as any
+      );
+      const res = result as any;
+      const labels = res.content.filter(
+        (c: any) => c.type === "text" && c.text.includes("Tile 2/")
+      );
+      expect(labels).toHaveLength(1);
+      expect(labels[0].text).toContain("[row -1, col -1]");
+    });
+  });
+
+  // ─── Capture and Tile Mode ────────────────────────────────────────────────
+
+  describe("capture-and-tile mode", () => {
+    it("returns Phase 1 response with capture info when elicitation returns null", async () => {
+      mockedTryElicitation.mockResolvedValue(null);
+      mockedBuildPhase1Response.mockReturnValue({
+        content: [
+          { type: "text", text: "Image: 1280 x 800\n\nSTOP" },
+          { type: "text", text: '{"status":"pending_confirmation"}' },
+        ],
+      });
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.content[0].text).toContain("Captured 1280x800 screenshot");
+      expect(res.content[0].text).toContain("Screenshot saved to:");
+      expect(mockedBuildPhase1Response).toHaveBeenCalledWith(
+        sampleAnalysis,
+        expect.objectContaining({ screenshotPath: expect.any(String) })
+      );
+      expect(mockedExecuteTiling).not.toHaveBeenCalled();
+    });
+
+    it("still captures screenshot before returning Phase 1", async () => {
+      mockedTryElicitation.mockResolvedValue(null);
+      mockedBuildPhase1Response.mockReturnValue({
+        content: [
+          { type: "text", text: "Image: 1280 x 800" },
+          { type: "text", text: '{"status":"pending_confirmation"}' },
+        ],
+      });
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp" },
+        {} as any
+      );
+      expect(mockedCaptureUrl).toHaveBeenCalled();
+    });
+
+    it("returns combined capture + tiling result on Phase 2", async () => {
+      mockedAppendTilesPage.mockResolvedValue({
+        content: [
+          { type: "text", text: "Captured 1280x800 screenshot of https://example.com\nTiled 1280x800 image for Claude" },
+          { type: "text", text: JSON.stringify({ model: "claude", outputDir: "/output/tiles", page: { current: 0, tilesReturned: 2, totalTiles: 2, hasMore: false } }) },
+          { type: "text", text: "Tile 1/2 [row 0, col 0]" },
+          { type: "image", data: "AAAA", mimeType: "image/webp" },
+          { type: "text", text: "Tile 2/2 [row 0, col 1]" },
+          { type: "image", data: "AAAA", mimeType: "image/webp" },
+        ],
+      });
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      const textBlocks = res.content.filter((c: any) => c.type === "text");
+      const imageBlocks = res.content.filter((c: any) => c.type === "image");
+      expect(textBlocks.length).toBeGreaterThanOrEqual(2);
+      expect(imageBlocks).toHaveLength(2);
+    });
+
+    it("prepends capture info to Phase 2 summary", async () => {
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp" },
+        {} as any
+      );
+      const passedResponse = mockedAppendTilesPage.mock.calls[0][0];
+      expect(passedResponse.content[0].text).toContain("Captured 1280x800 screenshot of https://example.com");
+    });
+
+    it("includes scroll-stitch segments in summary", async () => {
+      mockedCaptureUrl.mockResolvedValue({
+        buffer: Buffer.from("screenshot-data"),
+        pageWidth: 1280,
+        pageHeight: 20000,
+        url: "https://example.com",
+        segmentsStitched: 2,
+      });
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp" },
+        {} as any
+      );
+      const passedResponse = mockedAppendTilesPage.mock.calls[0][0];
+      expect(passedResponse.content[0].text).toContain("Scroll-stitched 2 segments");
+    });
+
+    it("wraps errors from captureUrl", async () => {
+      mockedCaptureUrl.mockRejectedValue(new Error("Chrome crashed"));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Error capturing and tiling URL");
+      expect(res.content[0].text).toContain("Chrome crashed");
+    });
+
+    it("returns webp MIME type for tile images", async () => {
+      mockedAppendTilesPage.mockResolvedValue({
+        content: [
+          { type: "text", text: "summary" },
+          { type: "text", text: "{}" },
+          { type: "text", text: "Tile 1/2" },
+          { type: "image", data: "AAAA", mimeType: "image/webp" },
+        ],
+      });
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      const imageBlocks = res.content.filter((c: any) => c.type === "image");
+      for (const img of imageBlocks) {
+        expect(img.mimeType).toBe("image/webp");
+      }
+    });
+
+    it("calls appendTilesPage with correct arguments", async () => {
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { url: "https://example.com", page: 2, format: "webp" },
+        {} as any
+      );
+      expect(mockedAppendTilesPage).toHaveBeenCalledWith(
+        expect.objectContaining({ content: expect.any(Array) }),
+        "/output/tiles",
+        2
+      );
+    });
+
+    it("skips captureUrl when screenshotPath is provided and accessible", async () => {
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp", screenshotPath: "/existing/screenshot.png" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedCaptureUrl).not.toHaveBeenCalled();
+    });
+
+    it("passes captureInfo to buildPhase2Response", async () => {
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp" },
+        {} as any
+      );
+      expect(mockedBuildPhase2Response).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          captureInfo: expect.objectContaining({
+            url: "https://example.com",
+            pageWidth: 1280,
+            pageHeight: 800,
+          }),
+        })
+      );
+    });
+
+    it("triggers capture mode with screenshotPath alone (no url)", async () => {
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { screenshotPath: "/existing/screenshot.png", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedCaptureUrl).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── Phase 1 Stop Instruction ─────────────────────────────────────────────
+
+  describe("Phase 1 stop instruction", () => {
+    it("Phase 1 response starts with STOP instruction (pipeline level)", async () => {
+      // This tests the actual buildPhase1Response from tiling-pipeline
+      // (tested in tiling-pipeline.test.ts), but we verify the mock returns it
+      mockedTryElicitation.mockResolvedValue(null);
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { filePath: "image.png" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.content[0].text).toMatch(/^STOP/);
+    });
+  });
+});

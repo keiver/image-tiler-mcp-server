@@ -13,18 +13,20 @@ function makeTempPath(ext: string): string {
   return path.join(os.tmpdir(), `tiler-src-${randomUUID()}${ext}`);
 }
 
-function makeIdempotentCleanup(tempPath: string): () => Promise<void> {
+function makeIdempotentCleanup(tempPath: string): () => Promise<string | undefined> {
   let cleaned = false;
   return async () => {
-    if (cleaned) return;
+    if (cleaned) return undefined;
     cleaned = true;
     try {
       await fs.unlink(tempPath);
+      return undefined;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[image-tiler] Failed to clean up temp file ${tempPath}: ${msg}`);
+        return `Failed to clean up temp file ${tempPath}: ${msg}`;
       }
+      return undefined;
     }
   };
 }
@@ -101,7 +103,7 @@ async function resolveUrl(url: string): Promise<ResolvedImageSource> {
 }
 
 async function resolveDataUrl(dataUrl: string): Promise<ResolvedImageSource> {
-  const match = dataUrl.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/s);
+  const match = dataUrl.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/);
   if (!match) {
     throw new Error(
       'Invalid data URL format. Expected "data:image/<format>;base64,<data>".'

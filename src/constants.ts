@@ -65,12 +65,8 @@ export const MAX_DATA_URL_LENGTH = MAX_BASE64_LENGTH + 256; // base64 payload + 
 // Remainder absorption: if a remainder strip is < 15% of tileSize, absorb it into the last tile
 export const MIN_REMAINDER_RATIO = 0.15;
 
-// Intent and budget enums for recommend-settings
-export const IMAGE_INTENTS = ["text_heavy", "ui_screenshot", "diagram", "photo", "general"] as const;
-export type ImageIntent = (typeof IMAGE_INTENTS)[number];
-
-export const BUDGET_LEVELS = ["low", "default", "max_detail"] as const;
-export type BudgetLevel = (typeof BUDGET_LEVELS)[number];
+// Sharp operation timeout (guards against hangs on corrupted images)
+export const SHARP_OPERATION_TIMEOUT_MS = 30_000; // 30 seconds
 
 // Tile output formats
 export const TILE_OUTPUT_FORMATS = ["png", "webp"] as const;
@@ -78,6 +74,7 @@ export type TileOutputFormat = (typeof TILE_OUTPUT_FORMATS)[number];
 export const WEBP_QUALITY = 80;
 
 // URL capture
+export const MAX_STITCH_BYTES = 500 * 1024 * 1024; // 500 MB cumulative buffer limit for scroll-stitching
 export const MAX_CAPTURE_HEIGHT = 200_000; // max page height for scroll-stitching (~12 segments)
 export const CHROME_MAX_CAPTURE_HEIGHT = 16384;
 export const CAPTURE_DEFAULT_VIEWPORT_WIDTH = 1280;

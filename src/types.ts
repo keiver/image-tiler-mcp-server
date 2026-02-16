@@ -40,6 +40,7 @@ export interface TileImageResult {
   outputDir: string;
   tiles: TileInfo[];
   resize?: ResizeInfo; // present only when downscaling occurred
+  warnings?: string[];
 }
 
 // Image source resolution
@@ -47,7 +48,7 @@ export type ImageSourceType = "file" | "url" | "data_url" | "base64";
 
 export interface ResolvedImageSource {
   localPath: string;
-  cleanup?: () => Promise<void>;
+  cleanup?: () => Promise<string | undefined>;
   sourceType: ImageSourceType;
   originalSource: string;
 }
@@ -78,16 +79,13 @@ export interface TileMetadata {
   isBlank: boolean;
 }
 
-// Elicitation confirmation
-export interface ConfirmTilingResult {
-  confirmed: boolean;
-  /** When confirmed=false due to lack of elicitation, contains data for the tool to return */
-  pendingConfirmation?: {
-    allModels: ModelEstimate[];
-    summary: string;
-  };
-  /** When confirmed=true via elicitation, the user may have selected a different model */
-  selectedModel?: string;
+// Tiling pipeline: Phase 1 analysis result
+export interface AnalysisResult {
+  outputDir: string;
+  previewPath?: string;
+  sourceImage: { width: number; height: number };
+  allModels: ModelEstimate[];
+  warnings?: string[];
 }
 
 // Recommend-settings output
@@ -101,26 +99,3 @@ export interface ModelEstimate {
   tokens: number;
 }
 
-export interface RecommendationResult {
-  recommended: {
-    model: string;
-    tileSize: number;
-    maxDimension: number;
-  };
-  rationale: string[];
-  imageInfo: {
-    width: number;
-    height: number;
-    megapixels: number;
-    aspectRatio: number;
-  };
-  estimate: {
-    gridCols: number;
-    gridRows: number;
-    totalTiles: number;
-    estimatedTokens: number;
-  };
-  allModels: ModelEstimate[];
-  warnings: string[];
-  previewPath?: string;
-}

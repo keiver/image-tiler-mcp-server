@@ -10,7 +10,7 @@ Published as `image-tiler-mcp-server` on npm. Requires **Node >= 20**. This is a
 
 **Supported image formats:** PNG, JPEG, WebP, TIFF, GIF.
 
-**Default tile output format:** WebP (quality 80). All tiling tools accept a `format` param (`"webp"` | `"png"`) to override.
+**Default tile output format:** WebP (quality 80). The `tiler` tool accepts a `format` param (`"webp"` | `"png"`) to override.
 
 **URL capture:** Requires Chrome/Chromium installed. Set `CHROME_PATH` env var to override auto-detection. Supports `http:` and `https:` URLs. Pages taller than 16,384px are automatically scroll-stitched.
 
@@ -18,7 +18,7 @@ Published as `image-tiler-mcp-server` on npm. Requires **Node >= 20**. This is a
 
 | Model | Default tile | Tokens/tile | Max tile |
 |-------|-------------|-------------|----------|
-| Claude (default) | 1092px | 1590 | 1568px |
+| Claude | 1092px | 1590 | 1568px |
 | OpenAI (GPT-4o/o-series) | 768px | 765 | 2048px |
 | Gemini | 768px | 258 | 768px |
 | Gemini 3 | 1536px | 1120 | 3072px |
@@ -51,34 +51,31 @@ No linter is configured.
 
 **Transport:** stdio only (single-session, local). Entry point is `src/index.ts` which creates an `McpServer` and connects via `StdioServerTransport`.
 
-**Six MCP tools registered:**
+**One unified MCP tool registered:**
 
-1. **`tiler_tile_image`** (`src/tools/tile-image.ts`) — Accepts an image from file path, URL, data URL, or base64. Splits it into a grid of tiles (WebP default) saved to `tiles/{name}/` next to the source image (or a custom output directory). `maxDimension` param (default: 10000px) auto-downscales images before tiling. Optional `includeMetadata` triggers per-tile content analysis. Returns JSON metadata (model, grid dimensions, token estimate, file paths, preview path, optional resize info, optional tile metadata) and generates an interactive HTML preview. **Two-phase confirmation:** without `confirmed=true`, returns a model comparison table (no tiling). With elicitation-capable clients, shows an interactive model picker instead. Optional `confirmed` param bypasses confirmation on phase 2.
+**`tiler`** (`src/tools/tiler.ts`) — Single tool that handles all image tiling operations. Mode is auto-detected based on which params are provided:
 
-2. **`tiler_get_tiles`** (`src/tools/get-tiles.ts`) — Reads tiles from disk and returns them as base64 image content blocks in batches of 5. Supports pagination via `start`/`end` indices. Handles both `.png` and `.webp` tiles with dynamic MIME types.
+- **Tile-image mode** (has `filePath`/`sourceUrl`/`dataUrl`/`imageBase64`) — Accepts an image from file path, URL, data URL, or base64. Splits it into a grid of tiles (WebP default) saved to `tiles/{name}/` next to the source image (or a custom output directory). Returns tiles inline with pagination via `page` param. `maxDimension` param (default: 10000px) auto-downscales images before tiling. Optional `includeMetadata` triggers per-tile content analysis. Returns JSON metadata plus up to 5 tile images inline. Generates an interactive HTML preview.
+- **Capture-and-tile mode** (has `url` or `screenshotPath`) — Captures a URL screenshot via Chrome CDP, tiles it, and returns the first batch of tile images inline. Includes capture metadata in structured output. `screenshotPath` param reuses an existing screenshot. Stop after Phase 1 for screenshot-only use cases.
+- **Get-tiles mode** (has `tilesDir`) — Reads tiles from disk and returns them as base64 image content blocks in batches of 5. Supports pagination via `start`/`end` indices. Handles both `.png` and `.webp` tiles with dynamic MIME types.
 
-3. **`tiler_recommend_settings`** (`src/tools/recommend-settings.ts`) — Dry-run estimator: reads image dimensions and returns cost estimates without tiling. Includes heuristic-based recommendations (intent/budget), per-model comparison across all 4 models, and grid dimensions. Read-only — no tiles are created.
-
-4. **`tiler_prepare_image`** (`src/tools/prepare-image.ts`) — One-shot convenience: chains tile-image + get-tiles into a single tool call. Returns tiling metadata plus the first batch of tile images inline. Supports pagination via `page` param. Same two-phase confirmation as `tiler_tile_image`.
-
-5. **`tiler_capture_url`** (`src/tools/capture-url.ts`) — Captures a full-page screenshot from a URL using Chrome CDP. Saves as WebP (default) or PNG. Supports `viewportWidth`, `waitUntil` (load/networkidle/domcontentloaded), and `delay` params. Scroll-stitches pages taller than 16,384px.
-
-6. **`tiler_capture_and_tile`** (`src/tools/capture-and-tile.ts`) — One-shot: captures URL screenshot → tiles → returns first batch of tile images. Combines capture-url + tile-image + get-tiles in a single call. Includes capture metadata (URL, page dimensions, segments stitched) in structured output. Same two-phase confirmation, plus `screenshotPath` param to skip re-capturing on phase 2.
+**Mandatory two-phase workflow:** Phase 1 returns a model comparison table with STOP instruction; Phase 2 (with user's chosen model + outputDir) performs tiling. With elicitation-capable clients, shows an interactive model picker. When model is omitted on Phase 2, auto-selects cheapest preset.
 
 **Key layers:**
 
-- `src/tools/` — Tool registration and MCP response formatting. Each file exports a `register*Tool(server)` function.
+- `src/tools/tiler.ts` — Single unified tool registration with mode detection and MCP response formatting. Exports `registerTilerTool(server)`.
 - `src/services/image-processor.ts` — All Sharp image operations: metadata reading, grid calculation, tile extraction (WebP/PNG), base64 encoding, directory listing.
-- `src/services/image-source-resolver.ts` — Resolves image sources (file path, URL, data URL, base64) to a local file path with cleanup. Includes Content-Type validation for URL downloads, buffer size checks, base64 input validation, and exported helper functions (`isImageContentType`, `getImageMagicBytes`, `isImageSubtype`). Used by tile-image, recommend-settings, and prepare-image tools.
-- `src/services/url-capture.ts` — Chrome DevTools Protocol capture: Chrome detection (`findChromePath`), headless Chrome spawning, CDP WebSocket communication, wait conditions (load/networkidle/domcontentloaded), scroll-stitching for pages >16,384px, cleanup. Used by capture-url and capture-and-tile tools.
+- `src/services/image-source-resolver.ts` — Resolves image sources (file path, URL, data URL, base64) to a local file path with cleanup. Includes Content-Type validation for URL downloads, buffer size checks, base64 input validation, and exported helper functions (`isImageContentType`, `getImageMagicBytes`, `isImageSubtype`). Used by tile-image mode.
+- `src/services/url-capture.ts` — Chrome DevTools Protocol capture: Chrome detection (`findChromePath`), headless Chrome spawning, CDP WebSocket communication, wait conditions (load/networkidle/domcontentloaded), scroll-stitching for pages >16,384px, cleanup. Used by capture-and-tile mode.
 - `src/services/tile-analyzer.ts` — Per-tile content analysis using Sharp `.stats()`. Classifies tiles by stdDev: low-detail/blank (<5), text-heavy (5-25), mixed (25-60), image-rich (>60). Used when `includeMetadata: true`.
 - `src/services/preview-generator.ts` — Generates a static HTML preview (`preview.html`) visualizing the tile grid layout with overlay annotations.
 - `src/services/interactive-preview-generator.ts` — Generates an interactive HTML preview with per-model tabs showing grid overlays, token estimates, and model comparison.
-- `src/services/elicitation.ts` — Two-path confirmation: (1) elicitation-capable clients get a `oneOf` model picker via `server.elicitInput()` with per-model token estimates; (2) non-elicitation clients get a `pendingConfirmation` response with a model comparison table for the LLM to present. `confirmed=true` bypasses both paths. Used by tile-image, prepare-image, and capture-and-tile tools.
-- `src/utils.ts` — Shared utilities: `escapeHtml()` for safe HTML output in preview generators.
-- `src/schemas/index.ts` — Zod input schemas for all 6 tools. Shared `imageSourceFields` (tile-image, recommend-settings, prepare-image) and `captureFields` (capture-url, capture-and-tile).
-- `src/types.ts` — TypeScript interfaces (`ImageMetadata`, `TileGridInfo`, `TileInfo`, `TileImageResult`, `ResolvedImageSource`, `RecommendationResult`, `CaptureUrlOptions`, `CaptureResult`, `TileMetadata`).
-- `src/constants.ts` — Model vision configs (`MODEL_CONFIGS` keyed by `"claude" | "openai" | "gemini" | "gemini3"`), per-model tile sizes and token rates, backward-compatible aliases, batch limit (5), PNG compression level (6), WebP quality (80), download limits, intent/budget enums, Chrome capture constants (max height, viewport, timeouts), wait-until options, allowed protocols.
+- `src/services/elicitation.ts` — Elicitation fast path: elicitation-capable clients get a `oneOf` model picker via `server.elicitInput()` with per-model token estimates; non-elicitation clients fall through to the preview gate flow. Used by the tiler tool.
+- `src/services/tiling-pipeline.ts` — Shared tiling pipeline used by the tiler tool. Exports: `resolveOutputDir()`, `resolveOutputDirForCapture()`, `validateFormat()`, `clampTileSize()`, `findCheapestModel()` (picks model with lowest token estimate), `computeElicitationData()` (lightweight metadata + all-model estimates without preview generation), `checkPreviewGate()`, `analyzeAndPreview()` (Phase 1), `executeTiling()` (Phase 2), `buildPhase1Response()` (starts with STOP instruction), `buildPhase2Response()` (accepts `Phase2ResponseOptions` with `autoSelected` flag — when true, appends comparison table + override instructions to the response), `appendTilesPage()`.
+- `src/utils.ts` — Shared utilities: `escapeHtml()`, `getDefaultOutputBase()`, `sanitizeHostname()`, `getVersionedFilePath()`, `getVersionedOutputDir()`, `stripVersionSuffix()`, `formatModelComparisonTable()`, `simulateDownscale()`, `buildTileHints()`.
+- `src/schemas/index.ts` — Zod input schema (`TilerInputSchema`) — unified superset covering all three modes (image source fields, capture fields, tile retrieval fields, tiling config).
+- `src/types.ts` — TypeScript interfaces (`ImageMetadata`, `TileGridInfo`, `TileInfo`, `TileImageResult`, `ResolvedImageSource`, `CaptureUrlOptions`, `CaptureResult`, `TileMetadata`).
+- `src/constants.ts` — Model vision configs (`MODEL_CONFIGS` keyed by `"claude" | "openai" | "gemini" | "gemini3"`), per-model tile sizes and token rates, backward-compatible aliases, batch limit (5), PNG compression level (6), WebP quality (80), download limits, Chrome capture constants (max height, viewport, timeouts), wait-until options, allowed protocols.
 
 **Sharp configuration** (in `image-processor.ts`): Cache limited to 10 items / 200MB, concurrency set to 2. Tiles are extracted sequentially row-by-row, left-to-right.
 
@@ -99,20 +96,16 @@ No linter is configured.
 **Test structure:**
 
 - `constants.test.ts` — Value snapshot tests for all exported constants
-- `schemas.test.ts` — Zod schema boundary validation (min/max, defaults, required fields) for all 6 schemas
+- `schemas.test.ts` — Zod schema boundary validation (min/max, defaults, required fields) for the unified TilerInputSchema
 - `image-processor.test.ts` — Core logic with mocked Sharp + fs (calculateGrid, tileImage, readTileAsBase64, listTilesInDirectory)
 - `image-source-resolver.test.ts` — Source resolution: file passthrough, data URL parsing, base64 decoding, cleanup idempotency, URL resolution (success, HTTP errors, timeout, size limits, Content-Type validation), helper function tests (`isImageContentType`, `getImageMagicBytes`, `isImageSubtype`)
-- `tile-image-tool.test.ts` — Tool handler: format validation, response formatting, error wrapping, source resolution integration
-- `get-tiles-tool.test.ts` — Tool handler: pagination, batch limits, content block structure
-- `recommend-settings-tool.test.ts` — Recommend tool: heuristic rules, all-model comparison, intent/budget effects
-- `prepare-image-tool.test.ts` — Prepare tool: combined tile+get response, pagination, cleanup
+- `tiler-tool.test.ts` — Unified tool handler: all three modes (tile-image, get-tiles, capture-and-tile), format validation, response formatting, error wrapping, source resolution, pagination, Phase 1 stop instruction
+- `tiling-pipeline.test.ts` — Shared pipeline: resolveOutputDir, validateFormat, clampTileSize, findCheapestModel, computeElicitationData, analyzeAndPreview, checkPreviewGate, executeTiling, buildPhase1Response, buildPhase2Response (including autoSelected flag), appendTilesPage
 - `preview-generator.test.ts` — Preview HTML generation: template rendering, file writing, error handling
 - `utils.test.ts` — `escapeHtml` unit tests covering HTML entities, mixed content, empty strings
 - `interactive-preview-generator.test.ts` — Interactive preview HTML generation: model tabs, grid rendering, token estimates
 - `tile-analyzer.test.ts` — Tile content analysis: stdDev thresholds, isBlank detection, boundary values, batch analysis
 - `url-capture.test.ts` — Chrome detection (CHROME_PATH env, not found), CDP flow, URL validation, cleanup on error
-- `capture-url-tool.test.ts` — Capture-url tool handler: registration, response format, scroll-stitch info, error wrapping, option passthrough
-- `capture-and-tile-tool.test.ts` — Capture-and-tile tool handler: combined flow, capture metadata in output, pagination, WebP MIME
 - `elicitation.test.ts` — Elicitation confirmation: accept/decline/cancel, capability detection, error propagation, message content, schema structure
 - `integration.test.ts` — Real Sharp + real filesystem using `assets/landscape.png` (7680×4032) and `assets/portrait.png` (3600×22810)
 

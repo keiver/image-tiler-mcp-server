@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { confirmTiling } from "../services/elicitation.js";
+import { tryElicitation } from "../services/elicitation.js";
 import type { ModelEstimate } from "../types.js";
 
 const sampleAllModels: ModelEstimate[] = [
@@ -14,10 +14,6 @@ function makeOptions(overrides?: Record<string, unknown>) {
     width: 7680,
     height: 4032,
     model: "claude",
-    gridCols: 8,
-    gridRows: 4,
-    totalTiles: 32,
-    estimatedTokens: 50880,
     allModels: sampleAllModels,
     ...overrides,
   };
@@ -43,61 +39,58 @@ function createMockMcpServer(opts: {
   };
 }
 
-describe("confirmTiling", () => {
-  describe("confirmed bypass (Path 0)", () => {
-    it("returns confirmed when confirmed=true, skipping everything", async () => {
-      const server = createMockMcpServer({ supportsElicitation: true });
-      const result = await confirmTiling(server as any, makeOptions({ confirmed: true }));
-      expect(result).toEqual({ confirmed: true });
+describe("tryElicitation", () => {
+  describe("no elicitation support", () => {
+    it("returns null when client lacks elicitation support", async () => {
+      const server = createMockMcpServer({ supportsElicitation: false });
+      const result = await tryElicitation(server as any, makeOptions());
+      expect(result).toBeNull();
       expect(server.server.elicitInput).not.toHaveBeenCalled();
-      expect(server.server.getClientCapabilities).not.toHaveBeenCalled();
     });
 
-    it("returns confirmed when confirmed=true even without elicitation support", async () => {
-      const server = createMockMcpServer({ supportsElicitation: false });
-      const result = await confirmTiling(server as any, makeOptions({ confirmed: true }));
-      expect(result).toEqual({ confirmed: true });
+    it("returns null when client capabilities are undefined", async () => {
+      const server = createMockMcpServer({ capsUndefined: true });
+      const result = await tryElicitation(server as any, makeOptions());
+      expect(result).toBeNull();
     });
   });
 
-  describe("elicitation-capable clients (Path A)", () => {
-    it("returns confirmed when user accepts", async () => {
+  describe("elicitation-capable clients", () => {
+    it("returns selected model when user accepts", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
         elicitResult: { action: "accept", content: { model: "claude" } },
       });
-      const result = await confirmTiling(server as any, makeOptions());
-      expect(result.confirmed).toBe(true);
-      expect(result.selectedModel).toBeUndefined(); // same model, no change
+      const result = await tryElicitation(server as any, makeOptions());
+      expect(result).toBe("claude");
       expect(server.server.elicitInput).toHaveBeenCalledTimes(1);
     });
 
-    it("returns selectedModel when user picks a different model", async () => {
+    it("returns different model when user picks a different one", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
         elicitResult: { action: "accept", content: { model: "openai" } },
       });
-      const result = await confirmTiling(server as any, makeOptions({ model: "claude" }));
-      expect(result.confirmed).toBe(true);
-      expect(result.selectedModel).toBe("openai");
+      const result = await tryElicitation(server as any, makeOptions({ model: "claude" }));
+      expect(result).toBe("openai");
     });
 
-    it("returns not confirmed when user declines", async () => {
+    it("returns null when user declines", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
         elicitResult: { action: "decline" },
       });
-      const result = await confirmTiling(server as any, makeOptions());
-      expect(result).toEqual({ confirmed: false });
+      const result = await tryElicitation(server as any, makeOptions());
+      expect(result).toBeNull();
     });
 
-    it("returns not confirmed when user cancels", async () => {
+    it("returns null when user cancels", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
         elicitResult: { action: "cancel" },
       });
-      const result = await confirmTiling(server as any, makeOptions());
-      expect(result).toEqual({ confirmed: false });
+      const result = await tryElicitation(server as any, makeOptions());
+      expect(result).toBeNull();
     });
 
     it("sends oneOf enum schema with all models", async () => {
@@ -105,7 +98,7 @@ describe("confirmTiling", () => {
         supportsElicitation: true,
         elicitResult: { action: "accept", content: { model: "claude" } },
       });
-      await confirmTiling(server as any, makeOptions());
+      await tryElicitation(server as any, makeOptions());
       const call = server.server.elicitInput.mock.calls[0][0];
       const schema = call.requestedSchema;
       expect(schema.properties.model.type).toBe("string");
@@ -124,7 +117,7 @@ describe("confirmTiling", () => {
         supportsElicitation: true,
         elicitResult: { action: "accept", content: { model: "claude" } },
       });
-      await confirmTiling(server as any, makeOptions());
+      await tryElicitation(server as any, makeOptions());
       const call = server.server.elicitInput.mock.calls[0][0];
       expect(call.message).toContain("7680x4032");
     });
@@ -133,40 +126,26 @@ describe("confirmTiling", () => {
       const server = createMockMcpServer({ supportsElicitation: true });
       server.server.elicitInput.mockRejectedValue(new Error("Transport closed"));
       await expect(
-        confirmTiling(server as any, makeOptions())
+        tryElicitation(server as any, makeOptions())
       ).rejects.toThrow("Transport closed");
     });
-  });
 
-  describe("non-elicitation clients (Path B)", () => {
-    it("returns pendingConfirmation when client lacks elicitation support", async () => {
-      const server = createMockMcpServer({ supportsElicitation: false });
-      const result = await confirmTiling(server as any, makeOptions());
-      expect(result.confirmed).toBe(false);
-      expect(result.pendingConfirmation).toBeDefined();
-      expect(result.pendingConfirmation!.allModels).toEqual(sampleAllModels);
-      expect(result.pendingConfirmation!.summary).toContain("7680 x 4032");
-      expect(result.pendingConfirmation!.summary).toContain("confirmed=true");
-      expect(server.server.elicitInput).not.toHaveBeenCalled();
+    it("falls back to options.model when user accepts without selecting a model", async () => {
+      const server = createMockMcpServer({
+        supportsElicitation: true,
+        elicitResult: { action: "accept", content: {} },
+      });
+      const result = await tryElicitation(server as any, makeOptions({ model: "openai" }));
+      expect(result).toBe("openai");
     });
 
-    it("returns pendingConfirmation when client capabilities are undefined", async () => {
-      const server = createMockMcpServer({ capsUndefined: true });
-      const result = await confirmTiling(server as any, makeOptions());
-      expect(result.confirmed).toBe(false);
-      expect(result.pendingConfirmation).toBeDefined();
-      expect(result.pendingConfirmation!.allModels).toHaveLength(4);
-    });
-
-    it("pendingConfirmation summary includes model comparison table", async () => {
-      const server = createMockMcpServer({ supportsElicitation: false });
-      const result = await confirmTiling(server as any, makeOptions());
-      const summary = result.pendingConfirmation!.summary;
-      expect(summary).toContain("Preset");
-      expect(summary).toContain("Tile Size");
-      expect(summary).toContain("Grid");
-      expect(summary).toContain("Tiles");
-      expect(summary).toContain("Est. Tokens");
+    it("falls back to VISION_MODELS[0] when options.model is invalid", async () => {
+      const server = createMockMcpServer({
+        supportsElicitation: true,
+        elicitResult: { action: "accept", content: {} },
+      });
+      const result = await tryElicitation(server as any, makeOptions({ model: "invalid-model" }));
+      expect(result).toBe("claude"); // VISION_MODELS[0]
     });
   });
 });

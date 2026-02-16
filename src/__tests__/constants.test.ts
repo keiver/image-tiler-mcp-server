@@ -17,10 +17,9 @@ import {
   DOWNLOAD_TIMEOUT_MS,
   ALLOWED_URL_PROTOCOLS,
   MAX_BASE64_LENGTH,
-  IMAGE_INTENTS,
-  BUDGET_LEVELS,
   MIN_REMAINDER_RATIO,
   MIN_PREVIEW_WIDTH,
+  SHARP_OPERATION_TIMEOUT_MS,
 } from "../constants.js";
 
 
@@ -77,6 +76,10 @@ describe("constants", () => {
 
     it("MIN_PREVIEW_WIDTH is 800", () => {
       expect(MIN_PREVIEW_WIDTH).toBe(800);
+    });
+
+    it("SHARP_OPERATION_TIMEOUT_MS is 30 seconds", () => {
+      expect(SHARP_OPERATION_TIMEOUT_MS).toBe(30_000);
     });
   });
 
@@ -210,13 +213,4 @@ describe("constants", () => {
     });
   });
 
-  describe("intent and budget enums", () => {
-    it("IMAGE_INTENTS has 5 values", () => {
-      expect(IMAGE_INTENTS).toEqual(["text_heavy", "ui_screenshot", "diagram", "photo", "general"]);
-    });
-
-    it("BUDGET_LEVELS has 3 values", () => {
-      expect(BUDGET_LEVELS).toEqual(["low", "default", "max_detail"]);
-    });
-  });
 });

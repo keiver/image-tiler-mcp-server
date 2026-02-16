@@ -7,6 +7,7 @@ import sharp from "sharp";
 import WebSocket from "ws";
 import {
   MAX_CAPTURE_HEIGHT,
+  MAX_STITCH_BYTES,
   CHROME_MAX_CAPTURE_HEIGHT,
   CAPTURE_DEFAULT_VIEWPORT_WIDTH,
   CAPTURE_DEFAULT_VIEWPORT_HEIGHT,
@@ -14,7 +15,9 @@ import {
   CAPTURE_STITCH_SETTLE_MS,
   CAPTURE_IDLE_TIMEOUT_MS,
   ALLOWED_CAPTURE_PROTOCOLS,
+  SHARP_OPERATION_TIMEOUT_MS,
 } from "../constants.js";
+import { withTimeout } from "../utils.js";
 import type { CaptureUrlOptions, CaptureResult } from "../types.js";
 
 // ─── Display Detection ──────────────────────────────────────────────
@@ -77,7 +80,7 @@ export function findChromePath(): string {
   if (platform === "darwin") {
     const macPath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
     try {
-      fs.accessSync(macPath, fs.constants.F_OK);
+      fs.accessSync(macPath, fs.constants.X_OK);
       return macPath;
     } catch {
       // fall through
@@ -102,7 +105,7 @@ export function findChromePath(): string {
     ];
     for (const p of candidates) {
       try {
-        fs.accessSync(p, fs.constants.F_OK);
+        fs.accessSync(p, fs.constants.X_OK);
         return p;
       } catch {
         // try next
@@ -130,6 +133,62 @@ interface CdpEvent {
   params?: Record<string, unknown>;
 }
 
+/**
+ * Creates a settle/cleanup pair for a WebSocket promise.
+ * Ensures exactly one resolve/reject per promise and removes all listeners on settlement.
+ *
+ * @param ws       - WebSocket to manage listeners on
+ * @param timers   - Timers to clear on settlement
+ * @param label    - Human-readable context for error messages
+ * @param reject   - The promise's reject function
+ * @returns { settle, addListener } — settle guards against double-settlement,
+ *   addListener registers a WS listener that will be removed on cleanup.
+ */
+function createWsSettler(
+  ws: WebSocket,
+  timers: Array<ReturnType<typeof setTimeout>>,
+  label: string,
+  reject: (reason: Error) => void
+): {
+  settle: (fn: () => void) => void;
+  addListener: <E extends string>(event: E, handler: (...args: unknown[]) => void) => void;
+} {
+  let settled = false;
+  const listeners: Array<{ event: string; handler: (...args: unknown[]) => void }> = [];
+
+  function cleanup(): void {
+    for (const t of timers) clearTimeout(t);
+    for (const { event, handler } of listeners) ws.removeListener(event, handler);
+  }
+
+  function settle(fn: () => void): void {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    fn();
+  }
+
+  function addListener<E extends string>(event: E, handler: (...args: unknown[]) => void): void {
+    listeners.push({ event, handler });
+    ws.on(event, handler);
+  }
+
+  // Register close/error handlers that every WS promise needs
+  addListener("close", (code: unknown, reason: unknown) => {
+    const reasonStr = reason instanceof Buffer ? reason.toString() : String(reason ?? "");
+    settle(() => reject(new Error(
+      `WebSocket closed while ${label} (code ${code}, reason: ${reasonStr || "none"})`
+    )));
+  });
+
+  addListener("error", (err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    settle(() => reject(new Error(`WebSocket error while ${label}: ${msg}`)));
+  });
+
+  return { settle, addListener };
+}
+
 function sendCdpCommand(
   ws: WebSocket,
   method: string,
@@ -139,67 +198,61 @@ function sendCdpCommand(
   const id = ++cdpCommandId;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      ws.removeListener("message", handler);
-      reject(new Error(`CDP command '${method}' timed out after ${timeout}ms`));
+      settle(() => reject(new Error(`CDP command '${method}' timed out after ${timeout}ms`)));
     }, timeout);
 
-    function handler(data: WebSocket.RawData) {
-      const msg = JSON.parse(data.toString()) as CdpResponse;
-      if (msg.id === id) {
-        clearTimeout(timer);
-        ws.removeListener("message", handler);
-        if (msg.error) {
-          reject(new Error(`CDP error (${msg.error.code}): ${msg.error.message}`));
-        } else {
-          resolve(msg.result ?? {});
-        }
-      }
-    }
+    const { settle, addListener } = createWsSettler(
+      ws, [timer], `awaiting CDP command '${method}'`, reject
+    );
 
-    ws.on("message", handler);
-    ws.send(JSON.stringify({ id, method, params }));
+    addListener("message", (data: unknown) => {
+      const msg = JSON.parse((data as WebSocket.RawData).toString()) as CdpResponse;
+      if (msg.id === id) {
+        settle(() => {
+          if (msg.error) {
+            reject(new Error(`CDP error (${msg.error.code}): ${msg.error.message}`));
+          } else {
+            resolve(msg.result ?? {});
+          }
+        });
+      }
+    });
+
+    try {
+      ws.send(JSON.stringify({ id, method, params }));
+    } catch (err) {
+      settle(() => reject(new Error(`ws.send failed for CDP command '${method}': ${(err as Error).message}`)));
+    }
   });
 }
 
 // ─── Wait Conditions ────────────────────────────────────────────────
 
-function waitForLoad(ws: WebSocket, timeout: number): Promise<void> {
+/**
+ * Waits for a single CDP event by method name (e.g. "Page.loadEventFired").
+ * Used for both load and DOMContentLoaded wait conditions.
+ */
+function waitForCdpEvent(
+  ws: WebSocket,
+  eventName: string,
+  label: string,
+  timeout: number
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      ws.removeListener("message", handler);
-      reject(new Error(`Page load timed out after ${timeout}ms`));
+      settle(() => reject(new Error(`${label} timed out after ${timeout}ms`)));
     }, timeout);
 
-    function handler(data: WebSocket.RawData) {
-      const msg = JSON.parse(data.toString()) as CdpEvent;
-      if (msg.method === "Page.loadEventFired") {
-        clearTimeout(timer);
-        ws.removeListener("message", handler);
-        resolve();
+    const { settle, addListener } = createWsSettler(
+      ws, [timer], `waiting for ${label}`, reject
+    );
+
+    addListener("message", (data: unknown) => {
+      const msg = JSON.parse((data as WebSocket.RawData).toString()) as CdpEvent;
+      if (msg.method === eventName) {
+        settle(() => resolve());
       }
-    }
-
-    ws.on("message", handler);
-  });
-}
-
-function waitForDomContentLoaded(ws: WebSocket, timeout: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      ws.removeListener("message", handler);
-      reject(new Error(`DOMContentLoaded timed out after ${timeout}ms`));
-    }, timeout);
-
-    function handler(data: WebSocket.RawData) {
-      const msg = JSON.parse(data.toString()) as CdpEvent;
-      if (msg.method === "Page.domContentEventFired") {
-        clearTimeout(timer);
-        ws.removeListener("message", handler);
-        resolve();
-      }
-    }
-
-    ws.on("message", handler);
+    });
   });
 }
 
@@ -207,34 +260,26 @@ function waitForNetworkIdle(ws: WebSocket, timeout: number): Promise<void> {
   return new Promise((resolve, reject) => {
     let pending = 0;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
-    let resolved = false;
 
     const overallTimer = setTimeout(() => {
-      cleanup();
-      reject(new Error(`Network idle timed out after ${timeout}ms`));
+      settle(() => reject(new Error(`Network idle timed out after ${timeout}ms`)));
     }, timeout);
 
-    function cleanup() {
-      if (idleTimer) clearTimeout(idleTimer);
-      clearTimeout(overallTimer);
-      ws.removeListener("message", handler);
-    }
+    const { settle, addListener } = createWsSettler(
+      ws, [overallTimer], "waiting for network idle", reject
+    );
 
-    function checkIdle() {
+    function checkIdle(): void {
       if (idleTimer) clearTimeout(idleTimer);
       if (pending <= 0) {
         idleTimer = setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            cleanup();
-            resolve();
-          }
+          settle(() => resolve());
         }, CAPTURE_IDLE_TIMEOUT_MS);
       }
     }
 
-    function handler(data: WebSocket.RawData) {
-      const msg = JSON.parse(data.toString()) as CdpEvent;
+    addListener("message", (data: unknown) => {
+      const msg = JSON.parse((data as WebSocket.RawData).toString()) as CdpEvent;
       if (msg.method === "Network.requestWillBeSent") {
         pending++;
         if (idleTimer) clearTimeout(idleTimer);
@@ -245,9 +290,8 @@ function waitForNetworkIdle(ws: WebSocket, timeout: number): Promise<void> {
         pending = Math.max(0, pending - 1);
         checkIdle();
       }
-    }
+    });
 
-    ws.on("message", handler);
     // Start the idle check in case there are no network requests at all
     checkIdle();
   });
@@ -263,13 +307,19 @@ async function captureWithStitching(
   const segmentHeight = CHROME_MAX_CAPTURE_HEIGHT;
   const segments: { buffer: Buffer; top: number }[] = [];
   let offset = 0;
+  let cumulativeBytes = 0;
 
   while (offset < fullHeight) {
     const captureHeight = Math.min(segmentHeight, fullHeight - offset);
 
-    // Scroll to offset
+    // Defense-in-depth: ensure offset is a safe integer before injecting into JS expression
+    if (!Number.isFinite(offset)) {
+      throw new Error(`Invalid scroll offset: ${offset}`);
+    }
+
+    // Scroll to offset (bitwise OR floors to integer, guarding against fractional drift)
     await sendCdpCommand(ws, "Runtime.evaluate", {
-      expression: `window.scrollTo(0, ${offset})`,
+      expression: `window.scrollTo(0, ${offset | 0})`,
     });
 
     // Wait for rendering to settle
@@ -289,32 +339,43 @@ async function captureWithStitching(
     });
 
     const data = result.data as string;
+    const segmentBuffer = Buffer.from(data, "base64");
+    cumulativeBytes += segmentBuffer.length;
+    if (cumulativeBytes > MAX_STITCH_BYTES) {
+      throw new Error(
+        `Scroll-stitch buffer exceeded ${MAX_STITCH_BYTES} bytes (${cumulativeBytes} bytes after ${segments.length + 1} segments). Page is too large to stitch.`
+      );
+    }
     segments.push({
-      buffer: Buffer.from(data, "base64"),
+      buffer: segmentBuffer,
       top: offset,
     });
 
     offset += captureHeight;
   }
 
-  // Stitch segments with Sharp
+  // Stitch segments with Sharp (use longer timeout since stitching processes multiple segments)
   const compositeInputs = segments.map((seg) => ({
     input: seg.buffer,
     top: seg.top,
     left: 0,
   }));
 
-  const stitched = await sharp({
-    create: {
-      width,
-      height: fullHeight,
-      channels: 4 as const,
-      background: { r: 255, g: 255, b: 255, alpha: 1 },
-    },
-  })
-    .composite(compositeInputs)
-    .png()
-    .toBuffer();
+  const stitched = await withTimeout(
+    sharp({
+      create: {
+        width,
+        height: fullHeight,
+        channels: 4 as const,
+        background: { r: 255, g: 255, b: 255, alpha: 1 },
+      },
+    })
+      .composite(compositeInputs)
+      .png()
+      .toBuffer(),
+    SHARP_OPERATION_TIMEOUT_MS * 2,
+    "scroll-stitch composite"
+  );
 
   return { buffer: stitched, segments: segments.length };
 }
@@ -480,9 +541,9 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
 
     let waitPromise: Promise<void>;
     if (waitUntil === "load") {
-      waitPromise = waitForLoad(ws, remainingTimeout);
+      waitPromise = waitForCdpEvent(ws, "Page.loadEventFired", "Page load", remainingTimeout);
     } else if (waitUntil === "domcontentloaded") {
-      waitPromise = waitForDomContentLoaded(ws, remainingTimeout);
+      waitPromise = waitForCdpEvent(ws, "Page.domContentEventFired", "DOMContentLoaded", remainingTimeout);
     } else {
       waitPromise = waitForNetworkIdle(ws, remainingTimeout);
     }
@@ -561,19 +622,19 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
   } finally {
     clearTimeout(overallTimer);
 
-    // Close WebSocket
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.close();
+    // Close WebSocket (safe to call in any state — handles CONNECTING, OPEN, etc.)
+    if (ws) {
+      try { ws.close(); } catch { /* already closed or failed — safe to ignore */ }
     }
 
     // Kill Chrome
     if (chrome && !chrome.killed) {
       try {
-        chrome.kill("SIGTERM");
         const killTimer = setTimeout(() => {
           try { if (chrome && !chrome.killed) chrome.kill("SIGKILL"); } catch { /* already dead */ }
         }, 2000);
         chrome.on("exit", () => clearTimeout(killTimer));
+        chrome.kill("SIGTERM");
       } catch {
         // Process already dead — safe to ignore
       }

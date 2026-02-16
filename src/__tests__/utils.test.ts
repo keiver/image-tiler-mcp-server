@@ -18,7 +18,7 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
 }));
 
-import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath, stripVersionSuffix, buildTileHints, formatModelComparisonTable } from "../utils.js";
+import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath, stripVersionSuffix, buildTileHints, formatModelComparisonTable, simulateDownscale } from "../utils.js";
 import type { TileMetadata, ModelEstimate } from "../types.js";
 
 describe("escapeHtml", () => {
@@ -273,15 +273,15 @@ describe("formatModelComparisonTable", () => {
     expect(result).toContain("gemini3");
   });
 
-  it("includes confirmation prompt", () => {
+  it("does not include confirmation instruction (moved to pipeline)", () => {
     const result = formatModelComparisonTable(2144, 2144, allModels);
-    expect(result).toContain("confirmed=true");
+    expect(result).not.toContain("confirmed=true");
   });
 
   it("handles empty models array", () => {
     const result = formatModelComparisonTable(100, 100, []);
     expect(result).toContain("Image: 100 x 100");
-    expect(result).toContain("confirmed=true");
+    expect(result).toContain("Preset");
   });
 });
 
@@ -320,5 +320,46 @@ describe("buildTileHints", () => {
       { index: 0, contentHint: "mixed", meanBrightness: 150, stdDev: 40, isBlank: false },
     ];
     expect(buildTileHints(metadata)).toEqual({ mixed: [0] });
+  });
+});
+
+describe("simulateDownscale", () => {
+  it("returns original dimensions when within limit", () => {
+    expect(simulateDownscale(800, 600, 1000)).toEqual({ width: 800, height: 600 });
+  });
+
+  it("downscales landscape image by longest side", () => {
+    const result = simulateDownscale(2000, 1000, 1000);
+    expect(result).toEqual({ width: 1000, height: 500 });
+  });
+
+  it("downscales portrait image by longest side", () => {
+    const result = simulateDownscale(1000, 2000, 1000);
+    expect(result).toEqual({ width: 500, height: 1000 });
+  });
+
+  it("returns original dimensions at exact boundary", () => {
+    expect(simulateDownscale(1000, 1000, 1000)).toEqual({ width: 1000, height: 1000 });
+  });
+
+  it("returns original dimensions when maxDimension is 0 (passthrough)", () => {
+    expect(simulateDownscale(5000, 3000, 0)).toEqual({ width: 5000, height: 3000 });
+  });
+
+  it("returns original dimensions when maxDimension is negative", () => {
+    expect(simulateDownscale(5000, 3000, -1)).toEqual({ width: 5000, height: 3000 });
+  });
+
+  it("downscales square image", () => {
+    const result = simulateDownscale(2000, 2000, 1000);
+    expect(result).toEqual({ width: 1000, height: 1000 });
+  });
+
+  it("rounds dimensions to nearest integer", () => {
+    const result = simulateDownscale(3000, 1999, 1000);
+    expect(result.width).toBe(Math.round(3000 * (1000 / 3000)));
+    expect(result.height).toBe(Math.round(1999 * (1000 / 3000)));
+    expect(Number.isInteger(result.width)).toBe(true);
+    expect(Number.isInteger(result.height)).toBe(true);
   });
 });

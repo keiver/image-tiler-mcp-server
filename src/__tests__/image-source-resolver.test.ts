@@ -134,7 +134,15 @@ describe("resolveImageSource", () => {
       expect(mockedUnlink).toHaveBeenCalledTimes(1);
     });
 
-    it("cleanup silently ignores ENOENT", async () => {
+    it("cleanup returns undefined on success", async () => {
+      const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const result = await resolveImageSource({ imageBase64: pngHeader.toString("base64") });
+
+      const warning = await result.cleanup!();
+      expect(warning).toBeUndefined();
+    });
+
+    it("cleanup returns undefined for ENOENT (file already gone)", async () => {
       const err = new Error("ENOENT") as NodeJS.ErrnoException;
       err.code = "ENOENT";
       mockedUnlink.mockRejectedValueOnce(err);
@@ -142,8 +150,31 @@ describe("resolveImageSource", () => {
       const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
       const result = await resolveImageSource({ imageBase64: pngHeader.toString("base64") });
 
-      // Should not throw
+      const warning = await result.cleanup!();
+      expect(warning).toBeUndefined();
+    });
+
+    it("cleanup returns warning string on non-ENOENT failure", async () => {
+      const err = new Error("EPERM: operation not permitted") as NodeJS.ErrnoException;
+      err.code = "EPERM";
+      mockedUnlink.mockRejectedValueOnce(err);
+
+      const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const result = await resolveImageSource({ imageBase64: pngHeader.toString("base64") });
+
+      const warning = await result.cleanup!();
+      expect(warning).toBeDefined();
+      expect(warning).toContain("Failed to clean up temp file");
+      expect(warning).toContain("EPERM");
+    });
+
+    it("cleanup returns undefined on second call (idempotent)", async () => {
+      const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const result = await resolveImageSource({ imageBase64: pngHeader.toString("base64") });
+
       await result.cleanup!();
+      const secondCall = await result.cleanup!();
+      expect(secondCall).toBeUndefined();
     });
   });
 

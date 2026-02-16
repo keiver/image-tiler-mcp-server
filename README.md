@@ -121,7 +121,7 @@ LLM vision systems have a **maximum input resolution**. When you send an image l
 
 1. Reads the image dimensions and the target model's vision config
 2. Calculates an optimal grid that keeps every tile within the model's sweet spot
-3. Extracts tiles as individual PNGs and saves them to disk
+3. Extracts tiles as individual images (WebP default, PNG optional) and saves them to disk
 4. Returns metadata (grid layout, file paths, estimated token cost)
 5. Serves tiles back as base64 in paginated batches for the LLM to analyze
 
@@ -133,7 +133,7 @@ Each tile is processed at **full resolution** - no downscaling - preserving text
 
 | Model | Default tile | Tokens/tile | Max tile | ID |
 |-------|-------------|-------------|----------|-----|
-| Claude (default) | 1092px | 1590 | 1568px | `claude` |
+| Claude | 1092px | 1590 | 1568px | `claude` |
 | OpenAI (GPT-4o/o-series) | 768px | 765 | 2048px | `openai` |
 | Gemini | 768px | 258 | 768px | `gemini` |
 | Gemini 3 | 1536px | 1120 | 3072px | `gemini3` |
@@ -144,9 +144,29 @@ Each tile is processed at **full resolution** - no downscaling - preserving text
 
 ## Tools
 
-### `tiler_tile_image`
+### `tiler`
 
-Splits a large image into tiles and saves them to disk.
+One unified tool that handles all image tiling operations. The mode is auto-detected from the parameters you provide:
+
+- **`tilesDir`** present → **Tile retrieval mode** (read-only pagination)
+- **`url`** or **`screenshotPath`** present → **URL capture mode** (screenshot + tile)
+- **`filePath`**, **`sourceUrl`**, **`dataUrl`**, or **`imageBase64`** present → **Tile-image mode**
+
+> **Mode priority:** When multiple mode params are present, the tool resolves by priority:
+> `tilesDir` > `url`/`screenshotPath` > `filePath`/`sourceUrl`/`dataUrl`/`imageBase64`.
+> Avoid passing params from different modes in the same call.
+
+**Mandatory two-phase workflow:**
+
+1. **Phase 1** — Provide only the image source. Returns a model comparison table with a STOP instruction.
+   Present the options to the user and wait for their choice.
+2. **Phase 2** — Call again with the user's chosen `model` + `outputDir` from Phase 1, plus:
+   - **Tile-image mode:** re-include your original image source (`filePath`, `sourceUrl`, etc.)
+   - **Capture mode:** include `screenshotPath` from Phase 1 (not the original `url`)
+
+> With elicitation-capable clients, the server shows an interactive model picker instead of the comparison table, streamlining Phase 1 into a single step.
+
+#### Parameters — Image Source (tile-image mode)
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
@@ -154,66 +174,67 @@ Splits a large image into tiles and saves them to disk.
 | `sourceUrl` | string | no* | - | HTTPS URL to download the image from (max 50MB, 30s timeout) |
 | `dataUrl` | string | no* | - | Data URL with base64-encoded image |
 | `imageBase64` | string | no* | - | Raw base64-encoded image data |
-| `model` | string | no | `"claude"` | Target vision model: `"claude"`, `"openai"`, `"gemini"`, `"gemini3"` |
-| `tileSize` | number | no | Model default | Tile size in pixels. Clamped to model min/max with a warning if out of bounds. |
-| `maxDimension` | number | no | `10000` | Max dimension in px (0-65536). Pre-downscales the image so its longest side fits within this value before tiling. Defaults to 10000px. Set to 0 to disable auto-downscaling. No-op if already within bounds. |
-| `outputDir` | string | no | `tiles/{name}` subfolder next to source | Directory to save tiles |
 
-*At least one image source (`filePath`, `sourceUrl`, `dataUrl`, or `imageBase64`) is required.
+*At least one image source is required for tile-image mode.
 
-Returns JSON metadata with grid dimensions, tile count, model used, estimated token cost, and per-tile file paths.
-
-### `tiler_get_tiles`
-
-Returns tile images as base64 in batches of 5 for the LLM to see directly.
+#### Parameters — URL Capture (capture mode)
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `tilesDir` | string | yes | - | Path to tiles directory (from `tiler_tile_image`) |
-| `start` | number | no | 0 | Start tile index (0-based, inclusive) |
-| `end` | number | no | start + 4 | End tile index (0-based, inclusive) |
+| `url` | string | no | - | URL of the web page to capture. Requires Chrome/Chromium installed (or `CHROME_PATH` env var). |
+| `screenshotPath` | string | no | - | Path to a previously captured screenshot. Skips URL capture when provided. |
+| `viewportWidth` | number | no | Auto-detect (fallback 1280) | Browser viewport width in pixels (320-3840) |
+| `waitUntil` | string | no | `"load"` | When to consider the page loaded: `"load"`, `"networkidle"`, or `"domcontentloaded"` |
+| `delay` | number | no | `0` | Additional delay in ms after page load (max 30000) |
 
-Returns text labels + image content blocks. Includes pagination hint for the next batch.
+Supports scroll-stitching for pages taller than 16,384px.
 
-### `tiler_recommend_settings`
-
-Dry-run estimator: reads image dimensions and returns cost estimates **without tiling**.
-
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `filePath` | string | no* | - | Path to image file |
-| `sourceUrl` | string | no* | - | HTTPS URL to download from |
-| `dataUrl` | string | no* | - | Data URL with base64 image |
-| `imageBase64` | string | no* | - | Raw base64 image data |
-| `model` | string | no | `"claude"` | Target vision model |
-| `tileSize` | number | no | Model default | Override tile size (skips heuristics) |
-| `maxDimension` | number | no | - | Override max dimension (skips heuristics) |
-| `intent` | string | no | - | `"text_heavy"`, `"ui_screenshot"`, `"diagram"`, `"photo"`, `"general"` |
-| `budget` | string | no | - | `"low"`, `"default"`, `"max_detail"` |
-
-*At least one image source required.
-
-Returns JSON with recommended settings, rationale, image info, grid estimate, and a comparison across all 4 models.
-
-### `tiler_prepare_image`
-
-One-shot convenience tool: tiles an image AND returns the first batch of tiles in a single call.
+#### Parameters — Tile Retrieval (pagination mode)
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `filePath` | string | no* | - | Path to image file |
-| `sourceUrl` | string | no* | - | HTTPS URL to download from |
-| `dataUrl` | string | no* | - | Data URL with base64 image |
-| `imageBase64` | string | no* | - | Raw base64 image data |
-| `model` | string | no | `"claude"` | Target vision model |
-| `tileSize` | number | no | Model default | Override tile size |
-| `maxDimension` | number | no | `10000` | Max dimension for auto-downscaling |
-| `outputDir` | string | no | `tiles/{name}` subfolder | Directory to save tiles |
-| `page` | number | no | `0` | Tile page (0 = tiles 0-4, 1 = tiles 5-9, etc.) |
+| `tilesDir` | string | no | - | Path to tiles directory (returned by a previous tiling call as `outputDir`) |
+| `start` | number | no | `0` | Start tile index (0-based, inclusive) |
+| `end` | number | no | start + 4 | End tile index (0-based, inclusive). Max 5 tiles per batch. |
 
-*At least one image source required.
+#### Parameters — Tiling Config (shared across modes)
 
-Returns tiling metadata + up to 5 tile images inline. Saves a round-trip compared to calling `tiler_tile_image` then `tiler_get_tiles` separately.
+| Parameter | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `model` | string | no | Auto (cheapest) | Target vision model: `"claude"`, `"openai"`, `"gemini"`, `"gemini3"`. Auto-selects the most token-efficient preset when omitted. Provide on Phase 2, not Phase 1. |
+| `tileSize` | number | no | Model default | Tile size in pixels. Clamped to model's supported range with a warning if out of bounds. |
+| `maxDimension` | number | no | `10000` | Max dimension in px (0-65536). Pre-downscales the image before tiling. Set to 0 to disable. |
+| `outputDir` | string | no | `tiles/{name}/` next to source | Directory to save tiles. For captures, defaults to `~/Desktop/tiles/capture_<timestamp>/`. |
+| `page` | number | no | `0` | Tile page to return (0 = first 5, 1 = next 5, etc.) |
+| `format` | string | no | `"webp"` | Output format: `"webp"` (smaller, default) or `"png"` (lossless) |
+| `includeMetadata` | boolean | no | `true` | Analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats |
+
+#### Response Structure
+
+**Phase 1 JSON** (second content block):
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | string | Always `"pending_confirmation"` |
+| `outputDir` | string | Directory to pass back on Phase 2 |
+| `previewPath` | string \| null | Interactive HTML preview path |
+| `allModels` | array | `{ model, label, tileSize, cols, rows, tiles, tokens }` per preset |
+| `screenshotPath` | string | *(capture mode only)* Path to screenshot for Phase 2 |
+
+**Phase 2 JSON** (second content block):
+
+| Field | Type | Description |
+|---|---|---|
+| `model` | string | Selected model ID |
+| `sourceImage` | object | `{ width, height }` of the (possibly resized) source |
+| `grid` | object | `{ cols, rows, totalTiles, tileSize, estimatedTokens }` |
+| `outputDir` | string | Tiles directory |
+| `page` | object | `{ current, tilesReturned, totalTiles, hasMore }` |
+| `capture` | object | *(capture mode only)* `{ url, pageWidth, pageHeight, segmentsStitched, viewportWidth, waitUntil }` |
+| `autoSelected` | boolean | `true` when model was auto-selected (no elicitation) |
+| `tileHints` | array | *(when `includeMetadata: true`)* Per-tile content analysis |
+| `resize` | object | *(when downscaled)* `{ originalWidth, originalHeight, resizedWidth, resizedHeight, scaleFactor }` |
+| `previewPath` | string | Interactive HTML preview path (when available) |
 
 ## Usage
 
@@ -223,19 +244,45 @@ Returns tiling metadata + up to 5 tile images inline. Saves a round-trip compare
 > Tile the screenshot at ./screenshots/full-page.png and analyze the layout
 
 Your MCP client will:
-1. Call tiler_recommend_settings(filePath="./screenshots/full-page.png") to preview token costs
-2. Call tiler_prepare_image(filePath="./screenshots/full-page.png") to tile and get the first batch
-3. Call tiler_get_tiles(tilesDir="...", start=5, end=9) for subsequent batches
+1. Call tiler(filePath="./screenshots/full-page.png") → see model comparison table (Phase 1)
+2. Call tiler(filePath="./screenshots/full-page.png", model="claude", outputDir="...") → get first batch of tiles (Phase 2)
+3. Call tiler(tilesDir="...", start=5, end=9) for subsequent batches
 ```
 
+> **Auto-model selection:** When `model` is omitted on Phase 2, the server automatically picks the most token-efficient preset for the image dimensions. The response includes a comparison table so you can override with a specific model if needed.
+
 ### With Other Models
+
+The `model` parameter is optional — omit it for automatic selection, or specify explicitly to override:
 
 ```
 > Tile this image for GPT-4o analysis
 
 Your MCP client will:
-1. Call tiler_tile_image(filePath="./image.png", model="openai")
-2. Tiles sized at 768px for OpenAI's vision pipeline
+1. Call tiler(filePath="./image.png", model="openai", outputDir="...")
+2. Tiles sized at 768px for OpenAI's vision pipeline, returned inline
+```
+
+### URL Capture + Tiling
+
+Capture full-page screenshots directly from URLs:
+
+```
+> Capture and tile the page at https://example.com
+
+Your MCP client will:
+1. Call tiler(url="https://example.com") → screenshot + model comparison (Phase 1)
+2. Call tiler(screenshotPath="...", model="claude", outputDir="...") → tiles inline (Phase 2)
+```
+
+Screenshot only (no tiling) — stop after Phase 1:
+
+```
+> Take a screenshot of https://example.com
+
+Your MCP client will:
+1. Call tiler(url="https://example.com") → screenshot saved, comparison returned
+2. (No second call needed — screenshot path is in the response)
 ```
 
 ### Auto-Downscaling
@@ -246,7 +293,7 @@ Images over 10,000px are automatically downscaled before tiling. You can customi
 > Tile this 7680x4032 screenshot but downscale to 2048px first to save tokens
 
 Your MCP client will:
-1. Call tiler_tile_image(filePath="./image.png", maxDimension=2048)
+1. Call tiler(filePath="./image.png", maxDimension=2048)
 2. Image is downscaled to 2048x1076 before tiling
 3. Fewer tiles = lower token cost (e.g., 4 tiles instead of 32)
 ```
@@ -257,60 +304,24 @@ To disable auto-downscaling entirely:
 > Tile this image at full resolution, no downscaling
 
 Your MCP client will:
-1. Call tiler_tile_image(filePath="./image.png", maxDimension=0)
+1. Call tiler(filePath="./image.png", maxDimension=0)
 2. Image is tiled at its original dimensions
-```
-
-### Estimating Costs
-
-Use `tiler_recommend_settings` to preview token costs before tiling:
-
-```
-> How many tokens would it cost to tile this 3600x22810 screenshot?
-
-Your MCP client will:
-1. Call tiler_recommend_settings(filePath="./screenshot.png")
-2. See cost estimates for all 4 models
-3. Make an informed decision before committing to tiling
-```
-
-With intent and budget hints:
-
-```
-> Estimate costs for this long document screenshot, keeping tokens low
-
-Your MCP client will:
-1. Call tiler_recommend_settings(filePath="./doc.png", intent="text_heavy", budget="low")
-2. Get optimized maxDimension recommendation for text-heavy content
 ```
 
 ### Using URLs / Base64
 
-All image-accepting tools (`tiler_tile_image`, `tiler_recommend_settings`, `tiler_prepare_image`) support multiple input sources:
+The `tiler` tool supports multiple input sources:
 
 ```
 > Tile this image from a URL
 
 Your MCP client will:
-1. Call tiler_tile_image(sourceUrl="https://example.com/screenshot.png")
+1. Call tiler(sourceUrl="https://example.com/screenshot.png")
 
 > Tile this base64 image
 
 Your MCP client will:
-1. Call tiler_tile_image(imageBase64="iVBORw0KGgo...")
-```
-
-### One-Shot Usage
-
-Use `tiler_prepare_image` to tile and get the first batch in one call:
-
-```
-> Analyze this screenshot
-
-Your MCP client will:
-1. Call tiler_prepare_image(filePath="./screenshot.png")
-2. Get tiling metadata + first 5 tiles in a single response
-3. Continue with tiler_get_tiles for remaining tiles if needed
+1. Call tiler(imageBase64="iVBORw0KGgo...")
 ```
 
 ### Typical Workflow
@@ -363,7 +374,7 @@ PNG, JPEG, WebP, TIFF, GIF
 
 ## Troubleshooting
 
-**"Command not found"** - Make sure Node.js 18+ is installed: `node --version`
+**"Command not found"** - Make sure Node.js 20+ is installed: `node --version`
 
 **"File not found"** - Use absolute paths. Relative paths resolve from the MCP server's working directory.
 
@@ -377,7 +388,7 @@ Local stdio server — runs with the same filesystem permissions as the MCP clie
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20+
 - Compatible MCP client (Claude Code, Codex CLI, VS Code, Cursor, Claude Desktop)
 
 ## License

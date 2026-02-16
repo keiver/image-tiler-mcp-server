@@ -120,10 +120,28 @@ export function formatModelComparisonTable(
     lines.push(`  ${preset} | ${tile}   | ${grid} | ${tiles} | ${tokens}`);
   }
 
-  lines.push("");
-  lines.push("Call this tool again with confirmed=true (and optionally a different model) to proceed with tiling.");
-
   return lines.join("\n");
+}
+
+export function simulateDownscale(
+  width: number,
+  height: number,
+  maxDimension: number,
+): { width: number; height: number } {
+  if (maxDimension <= 0) return { width, height };
+  const longestSide = Math.max(width, height);
+  if (longestSide <= maxDimension) return { width, height };
+  const scale = maxDimension / longestSide;
+  return { width: Math.round(width * scale), height: Math.round(height * scale) };
+}
+
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Sharp operation timed out after ${ms}ms (${label})`)), ms)
+    ),
+  ]);
 }
 
 export function buildTileHints(metadata: TileMetadata[]): Record<string, number[]> {

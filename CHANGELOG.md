@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Temp file cleanup warnings now surfaced as structured warnings in MCP responses instead of logging to stderr
+- Low-severity `qs` dependency vulnerability resolved via audit fix
+
+### Added
+- `test:coverage` script for vitest coverage reporting
+- `types` field in package.json for explicit TypeScript declaration entry point
+
+### Changed
+- Consolidated 3 MCP tools (`tiler_tile_image`, `tiler_get_tiles`, `tiler_capture_and_tile`) into 1 unified `tiler` tool
+- Mode auto-detected from parameters: `tilesDir` for pagination, `url`/`screenshotPath` for capture, image source fields for tiling
+- `model` parameter description now explicitly discourages use on Phase 1 (first call)
+- Phase 1 response now starts with "STOP" instruction before the comparison table
+- Unified `TilerInputSchema` replaces 3 separate schemas
+
 ## [1.5.0] - 2026-02-13
 
 ### Added

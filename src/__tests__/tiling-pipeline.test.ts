@@ -1,0 +1,689 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { TileImageResult, ModelEstimate } from "../types.js";
+
+vi.mock("../services/image-processor.js", () => ({
+  getImageMetadata: vi.fn(),
+  computeEstimateForModel: vi.fn(),
+  tileImage: vi.fn(),
+  listTilesInDirectory: vi.fn(),
+  readTileAsBase64: vi.fn(),
+}));
+
+vi.mock("../services/interactive-preview-generator.js", () => ({
+  generateInteractivePreview: vi.fn(),
+}));
+
+vi.mock("../services/tile-analyzer.js", () => ({
+  analyzeTiles: vi.fn(),
+}));
+
+vi.mock("../utils.js", () => ({
+  getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
+  getVersionedOutputDir: vi.fn(async (baseDir: string) => `${baseDir}_v1`),
+  stripVersionSuffix: vi.fn((name: string) => name.replace(/_v\d+$/, "")),
+  formatModelComparisonTable: vi.fn().mockReturnValue("Image: 2000 x 1000\n\n  Preset  | ..."),
+  buildTileHints: vi.fn().mockReturnValue({}),
+  escapeHtml: vi.fn((s: string) => s),
+  simulateDownscale: vi.fn((w: number, h: number) => ({ width: w, height: h })),
+  sanitizeHostname: vi.fn().mockReturnValue("example-com"),
+}));
+
+vi.mock("node:fs/promises", () => ({
+  readdir: vi.fn(),
+  mkdir: vi.fn().mockResolvedValue(undefined),
+  copyFile: vi.fn().mockResolvedValue(undefined),
+}));
+
+import * as fsPromises from "node:fs/promises";
+import { getImageMetadata, computeEstimateForModel, tileImage, listTilesInDirectory, readTileAsBase64 } from "../services/image-processor.js";
+import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
+import { analyzeTiles } from "../services/tile-analyzer.js";
+
+import {
+  resolveOutputDir,
+  resolveOutputDirForCapture,
+  validateFormat,
+  clampTileSize,
+  checkPreviewGate,
+  analyzeAndPreview,
+  buildPhase1Response,
+  executeTiling,
+  buildPhase2Response,
+  appendTilesPage,
+  findCheapestModel,
+  computeElicitationData,
+} from "../services/tiling-pipeline.js";
+
+const mockedGetMetadata = vi.mocked(getImageMetadata);
+const mockedComputeEstimate = vi.mocked(computeEstimateForModel);
+const mockedTileImage = vi.mocked(tileImage);
+const mockedListTiles = vi.mocked(listTilesInDirectory);
+const mockedReadBase64 = vi.mocked(readTileAsBase64);
+const mockedGeneratePreview = vi.mocked(generateInteractivePreview);
+const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
+const mockedReaddir = vi.mocked(fsPromises.readdir);
+
+const sampleAllModels: ModelEstimate[] = [
+  { model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 2, tiles: 4, tokens: 6360 },
+  { model: "openai", label: "OpenAI", tileSize: 768, cols: 3, rows: 2, tiles: 6, tokens: 4590 },
+  { model: "gemini", label: "Gemini", tileSize: 768, cols: 3, rows: 2, tiles: 6, tokens: 1548 },
+  { model: "gemini3", label: "Gemini 3", tileSize: 1536, cols: 2, rows: 1, tiles: 2, tokens: 2240 },
+];
+
+function makeTileResult(overrides?: Partial<TileImageResult>): TileImageResult {
+  return {
+    sourceImage: { width: 2144, height: 2144, format: "png", fileSize: 50000, channels: 4 },
+    grid: { cols: 2, rows: 2, totalTiles: 4, tileSize: 1092, estimatedTokens: 6360 },
+    outputDir: "/output/tiles",
+    tiles: [
+      { index: 0, row: 0, col: 0, x: 0, y: 0, width: 1092, height: 1092, filename: "tile_000_000.webp", filePath: "/output/tiles/tile_000_000.webp" },
+      { index: 1, row: 0, col: 1, x: 1092, y: 0, width: 1092, height: 1092, filename: "tile_000_001.webp", filePath: "/output/tiles/tile_000_001.webp" },
+      { index: 2, row: 1, col: 0, x: 0, y: 1092, width: 1092, height: 1092, filename: "tile_001_000.webp", filePath: "/output/tiles/tile_001_000.webp" },
+      { index: 3, row: 1, col: 1, x: 1092, y: 1092, width: 1092, height: 1092, filename: "tile_001_001.webp", filePath: "/output/tiles/tile_001_001.webp" },
+    ],
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockedGetMetadata.mockResolvedValue({ width: 2000, height: 1000, format: "png", fileSize: 50000, channels: 4 });
+  mockedComputeEstimate.mockReturnValue(sampleAllModels[0]);
+  mockedGeneratePreview.mockResolvedValue("/output/preview.html");
+  mockedAnalyzeTiles.mockResolvedValue([]);
+});
+
+// ─── resolveOutputDir ─────────────────────────────────────────────────────
+
+describe("resolveOutputDir", () => {
+  it("returns explicit outputDir when provided", async () => {
+    const dir = await resolveOutputDir("file", "/img.png", "/custom/dir");
+    expect(dir).toBe("/custom/dir");
+  });
+
+  it("returns versioned tiles subfolder for file sources", async () => {
+    const dir = await resolveOutputDir("file", "/images/photo.png");
+    expect(dir).toContain("tiles");
+    expect(dir).toContain("photo");
+    expect(dir).toContain("_v1");
+  });
+
+  it("returns tiled_<timestamp> for non-file sources", async () => {
+    const dir = await resolveOutputDir("url", "/tmp/from-url.png");
+    expect(dir).toMatch(/tiled_\d+/);
+  });
+});
+
+describe("resolveOutputDirForCapture", () => {
+  it("returns explicit outputDir when provided", () => {
+    const dir = resolveOutputDirForCapture("/custom/dir");
+    expect(dir).toBe("/custom/dir");
+  });
+
+  it("returns capture_<timestamp> when no outputDir given", () => {
+    const dir = resolveOutputDirForCapture();
+    expect(dir).toMatch(/capture_\d+/);
+  });
+});
+
+// ─── validateFormat ──────────────────────────────────────────────────────
+
+describe("validateFormat", () => {
+  it("returns null for supported formats", () => {
+    expect(validateFormat("/img.png")).toBeNull();
+    expect(validateFormat("/img.jpg")).toBeNull();
+    expect(validateFormat("/img.webp")).toBeNull();
+  });
+
+  it("returns error for unsupported formats", () => {
+    const err = validateFormat("/img.bmp");
+    expect(err).toContain("Unsupported image format");
+    expect(err).toContain(".bmp");
+  });
+
+  it("returns null for files with no extension", () => {
+    expect(validateFormat("/imagefile")).toBeNull();
+  });
+});
+
+// ─── clampTileSize ──────────────────────────────────────────────────────
+
+describe("clampTileSize", () => {
+  it("uses model default when no tileSize provided", () => {
+    const { effectiveTileSize, warnings } = clampTileSize("claude");
+    expect(effectiveTileSize).toBe(1092);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("clamps above max with warning", () => {
+    const { effectiveTileSize, warnings } = clampTileSize("claude", 2000);
+    expect(effectiveTileSize).toBe(1568);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("clamped");
+  });
+
+  it("clamps below min with warning", () => {
+    const { effectiveTileSize, warnings } = clampTileSize("claude", 100);
+    expect(effectiveTileSize).toBe(256);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("clamped");
+  });
+
+  it("passes through valid tileSize without warnings", () => {
+    const { effectiveTileSize, warnings } = clampTileSize("claude", 800);
+    expect(effectiveTileSize).toBe(800);
+    expect(warnings).toHaveLength(0);
+  });
+});
+
+// ─── checkPreviewGate ────────────────────────────────────────────────────
+
+describe("checkPreviewGate", () => {
+  it("returns preview path when preview exists", async () => {
+    mockedReaddir.mockResolvedValue(["tile_000_000.webp", "image-preview.html"] as any);
+    const result = await checkPreviewGate("/output/tiles");
+    expect(result).toBe("/output/tiles/image-preview.html");
+  });
+
+  it("returns null when no preview exists", async () => {
+    mockedReaddir.mockResolvedValue(["tile_000_000.webp", "tile_000_001.webp"] as any);
+    const result = await checkPreviewGate("/output/tiles");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when directory doesn't exist", async () => {
+    mockedReaddir.mockRejectedValue(new Error("ENOENT"));
+    const result = await checkPreviewGate("/nonexistent");
+    expect(result).toBeNull();
+  });
+});
+
+// ─── findCheapestModel ───────────────────────────────────────────────────
+
+describe("findCheapestModel", () => {
+  it("picks the model with lowest tokens", () => {
+    expect(findCheapestModel(sampleAllModels)).toBe("gemini");
+  });
+
+  it("returns first model when only one model", () => {
+    expect(findCheapestModel([sampleAllModels[0]])).toBe("claude");
+  });
+
+  it("returns first of tied models", () => {
+    const tied = [
+      { model: "openai", label: "OpenAI", tileSize: 768, cols: 3, rows: 2, tiles: 6, tokens: 1000 },
+      { model: "gemini", label: "Gemini", tileSize: 768, cols: 3, rows: 2, tiles: 6, tokens: 1000 },
+    ];
+    expect(findCheapestModel(tied)).toBe("openai");
+  });
+});
+
+// ─── computeElicitationData ──────────────────────────────────────────────
+
+describe("computeElicitationData", () => {
+  it("returns image dimensions and allModels estimates", async () => {
+    const result = await computeElicitationData("/img.png", 10000);
+    expect(result.width).toBe(2000);
+    expect(result.height).toBe(1000);
+    expect(result.allModels).toBeDefined();
+    expect(mockedComputeEstimate).toHaveBeenCalledTimes(4); // 4 vision models
+  });
+
+  it("passes undefined maxDimension when set to 0", async () => {
+    await computeElicitationData("/img.png", 0);
+    expect(mockedComputeEstimate).toHaveBeenCalledWith(
+      expect.any(String), 2000, 1000, undefined, undefined
+    );
+  });
+});
+
+// ─── analyzeAndPreview ───────────────────────────────────────────────────
+
+describe("analyzeAndPreview", () => {
+  it("returns analysis with allModels and previewPath", async () => {
+    const result = await analyzeAndPreview("/img.png", "/output", {
+      model: "claude",
+      maxDimension: 10000,
+    });
+    expect(result.outputDir).toBe("/output");
+    expect(result.previewPath).toBe("/output/preview.html");
+    expect(result.sourceImage).toEqual({ width: 2000, height: 1000 });
+    expect(result.allModels).toBeDefined();
+  });
+
+  it("handles preview generation failure gracefully and surfaces warning", async () => {
+    mockedGeneratePreview.mockRejectedValue(new Error("write failed"));
+    const result = await analyzeAndPreview("/img.png", "/output", {
+      model: "claude",
+      maxDimension: 10000,
+    });
+    expect(result.previewPath).toBeUndefined();
+    expect(result.warnings).toEqual(["Preview generation failed: write failed"]);
+  });
+
+  it("does not include warnings when preview succeeds", async () => {
+    const result = await analyzeAndPreview("/img.png", "/output", {
+      model: "claude",
+      maxDimension: 10000,
+    });
+    expect(result.previewPath).toBe("/output/preview.html");
+    expect(result.warnings).toBeUndefined();
+  });
+});
+
+// ─── buildPhase1Response ─────────────────────────────────────────────────
+
+describe("buildPhase1Response", () => {
+  it("returns 2 content blocks with table and structured JSON", () => {
+    const analysis = {
+      outputDir: "/output",
+      previewPath: "/output/preview.html",
+      sourceImage: { width: 2000, height: 1000 },
+      allModels: sampleAllModels,
+    };
+    const response = buildPhase1Response(analysis);
+    expect(response.content).toHaveLength(2);
+    expect(response.content[0].text).toContain("STOP");
+    expect(response.content[0].text).toContain("Preview: /output/preview.html");
+    expect(response.content[0].text).not.toContain("outputDir=");
+
+    const json = JSON.parse(response.content[1].text);
+    expect(json.status).toBe("pending_confirmation");
+    expect(json.outputDir).toBe("/output");
+    expect(json.allModels).toBeDefined();
+  });
+
+  it("includes extra fields in structured JSON", () => {
+    const analysis = {
+      outputDir: "/output",
+      sourceImage: { width: 2000, height: 1000 },
+      allModels: sampleAllModels,
+    };
+    const response = buildPhase1Response(analysis, { screenshotPath: "/output/screenshot.png" });
+    const json = JSON.parse(response.content[1].text);
+    expect(json.screenshotPath).toBe("/output/screenshot.png");
+  });
+
+  it("includes warnings in text and structured output when present", () => {
+    const analysis = {
+      outputDir: "/output",
+      sourceImage: { width: 2000, height: 1000 },
+      allModels: sampleAllModels,
+      warnings: ["Preview generation failed: write failed"],
+    };
+    const response = buildPhase1Response(analysis);
+    expect(response.content[0].text).toContain("Preview generation failed: write failed");
+    const json = JSON.parse(response.content[1].text);
+    expect(json.warnings).toEqual(["Preview generation failed: write failed"]);
+  });
+
+  it("omits warnings from output when none present", () => {
+    const analysis = {
+      outputDir: "/output",
+      previewPath: "/output/preview.html",
+      sourceImage: { width: 2000, height: 1000 },
+      allModels: sampleAllModels,
+    };
+    const response = buildPhase1Response(analysis);
+    expect(response.content[0].text).not.toContain("⚠");
+    const json = JSON.parse(response.content[1].text);
+    expect(json.warnings).toBeUndefined();
+  });
+});
+
+// ─── executeTiling ───────────────────────────────────────────────────────
+
+describe("executeTiling", () => {
+  it("calls tileImage with correct parameters", async () => {
+    mockedTileImage.mockResolvedValue(makeTileResult());
+    await executeTiling("/img.png", "/output", {
+      model: "claude",
+      tileSize: undefined,
+      maxDimension: 10000,
+      format: "webp",
+      includeMetadata: true,
+    });
+    expect(mockedTileImage).toHaveBeenCalledWith(
+      "/img.png", 1092, "/output", 1590, 10000, 1568, "webp"
+    );
+  });
+
+  it("clamps tile size and returns warnings", async () => {
+    mockedTileImage.mockResolvedValue(makeTileResult());
+    const { warnings } = await executeTiling("/img.png", "/output", {
+      model: "claude",
+      tileSize: 5000,
+      maxDimension: 10000,
+      format: "webp",
+      includeMetadata: true,
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("clamped");
+    expect(mockedTileImage).toHaveBeenCalledWith(
+      "/img.png", 1568, "/output", 1590, 10000, 1568, "webp"
+    );
+  });
+
+  it("passes undefined maxDimension when set to 0", async () => {
+    mockedTileImage.mockResolvedValue(makeTileResult());
+    await executeTiling("/img.png", "/output", {
+      model: "claude",
+      maxDimension: 0,
+      format: "webp",
+      includeMetadata: true,
+    });
+    expect(mockedTileImage).toHaveBeenCalledWith(
+      "/img.png", 1092, "/output", 1590, undefined, 1568, "webp"
+    );
+  });
+
+  it("merges tileImage warnings with clampTileSize warnings", async () => {
+    mockedTileImage.mockResolvedValue(makeTileResult({
+      warnings: ["Failed to clean up temp file /tmp/x.png: EPERM"],
+    }));
+    const { warnings } = await executeTiling("/img.png", "/output", {
+      model: "claude",
+      tileSize: 5000,
+      maxDimension: 10000,
+      format: "webp",
+      includeMetadata: true,
+    });
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain("clamped");
+    expect(warnings[1]).toContain("Failed to clean up temp file");
+  });
+
+  it("returns only clampTileSize warnings when tileImage has none", async () => {
+    mockedTileImage.mockResolvedValue(makeTileResult());
+    const { warnings } = await executeTiling("/img.png", "/output", {
+      model: "claude",
+      tileSize: 5000,
+      maxDimension: 10000,
+      format: "webp",
+      includeMetadata: true,
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("clamped");
+  });
+
+  it("returns only tileImage warnings when clampTileSize has none", async () => {
+    mockedTileImage.mockResolvedValue(makeTileResult({
+      warnings: ["Failed to clean up temp file /tmp/x.png: EPERM"],
+    }));
+    const { warnings } = await executeTiling("/img.png", "/output", {
+      model: "claude",
+      maxDimension: 10000,
+      format: "webp",
+      includeMetadata: true,
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("Failed to clean up temp file");
+  });
+});
+
+// ─── buildPhase2Response ─────────────────────────────────────────────────
+
+describe("buildPhase2Response", () => {
+  beforeEach(() => {
+    mockedReaddir.mockResolvedValue([] as any);
+  });
+
+  it("returns summary and structured JSON", async () => {
+    const result = makeTileResult();
+    const response = await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: false,
+      warnings: [],
+      maxDimension: 10000,
+    });
+    expect(response.content).toHaveLength(2);
+    expect(response.content[0].text).toContain("2x2 grid");
+    expect(response.content[0].text).toContain("4 tiles");
+    expect(response.content[0].text).toContain("for Claude");
+
+    const json = JSON.parse(response.content[1].text);
+    expect(json.model).toBe("claude");
+    expect(json.grid.totalTiles).toBe(4);
+  });
+
+  it("includes resize info in summary and JSON when present", async () => {
+    const result = makeTileResult({
+      resize: { originalWidth: 7680, originalHeight: 4032, resizedWidth: 2048, resizedHeight: 1076, scaleFactor: 0.267 },
+    });
+    const response = await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: false,
+      warnings: [],
+      maxDimension: 10000,
+    });
+    expect(response.content[0].text).toContain("Downscaled from 7680×4032");
+    const json = JSON.parse(response.content[1].text);
+    expect(json.resize).toBeDefined();
+  });
+
+  it("includes warnings in summary and JSON", async () => {
+    const result = makeTileResult();
+    const response = await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: false,
+      warnings: ["Tile size clamped"],
+      maxDimension: 10000,
+    });
+    expect(response.content[0].text).toContain("⚠ Tile size clamped");
+    const json = JSON.parse(response.content[1].text);
+    expect(json.warnings).toContain("Tile size clamped");
+  });
+
+  it("calls analyzeTiles when includeMetadata is true", async () => {
+    const result = makeTileResult();
+    await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: true,
+      warnings: [],
+      maxDimension: 10000,
+    });
+    expect(mockedAnalyzeTiles).toHaveBeenCalledWith([
+      "/output/tiles/tile_000_000.webp",
+      "/output/tiles/tile_000_001.webp",
+      "/output/tiles/tile_001_000.webp",
+      "/output/tiles/tile_001_001.webp",
+    ]);
+  });
+
+  it("does not call analyzeTiles when includeMetadata is false", async () => {
+    const result = makeTileResult();
+    await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: false,
+      warnings: [],
+      maxDimension: 10000,
+    });
+    expect(mockedAnalyzeTiles).not.toHaveBeenCalled();
+  });
+
+  it("adds warning when Phase 2 preview generation fails", async () => {
+    // Source file exists but no preview — triggers preview generation
+    mockedReaddir.mockResolvedValue(["source.png"] as any);
+    mockedGeneratePreview.mockRejectedValue(new Error("disk full"));
+
+    const result = makeTileResult();
+    const response = await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: false,
+      warnings: [],
+      maxDimension: 10000,
+    });
+
+    expect(response.content[0].text).toContain("Preview generation failed: disk full");
+    const json = JSON.parse(response.content[1].text);
+    expect(json.warnings).toContain("Preview generation failed: disk full");
+  });
+
+  it("includes captureInfo when provided", async () => {
+    const result = makeTileResult();
+    const response = await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: false,
+      warnings: [],
+      maxDimension: 10000,
+      captureInfo: { url: "https://example.com", pageWidth: 1280, pageHeight: 800 },
+    });
+    const json = JSON.parse(response.content[1].text);
+    expect(json.capture).toBeDefined();
+    expect(json.capture.url).toBe("https://example.com");
+  });
+
+  it("includes auto-selection notice and comparison table when autoSelected is true", async () => {
+    const result = makeTileResult();
+    const response = await buildPhase2Response(result, {
+      model: "gemini",
+      includeMetadata: false,
+      warnings: [],
+      maxDimension: 10000,
+      autoSelected: true,
+    });
+    expect(response.content[0].text).toContain("Auto-selected Gemini preset");
+    expect(response.content[0].text).toContain("lowest token cost");
+    expect(response.content[0].text).toContain('specify model=');
+
+    const json = JSON.parse(response.content[1].text);
+    expect(json.autoSelected).toBe(true);
+    expect(json.allModels).toBeDefined();
+  });
+
+  it("does not include auto-selection notice when autoSelected is false/undefined", async () => {
+    const result = makeTileResult();
+    const response = await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: false,
+      warnings: [],
+      maxDimension: 10000,
+    });
+    expect(response.content[0].text).not.toContain("Auto-selected");
+    expect(response.content[0].text).not.toContain("specify model=");
+
+    const json = JSON.parse(response.content[1].text);
+    expect(json.autoSelected).toBeUndefined();
+    expect(json.allModels).toBeUndefined();
+  });
+});
+
+// ─── appendTilesPage ──────────────────────────────────────────────────────
+
+describe("appendTilesPage", () => {
+  beforeEach(() => {
+    mockedListTiles.mockResolvedValue([
+      "/output/tiles/tile_000_000.webp",
+      "/output/tiles/tile_000_001.webp",
+      "/output/tiles/tile_001_000.webp",
+      "/output/tiles/tile_001_001.webp",
+    ]);
+    mockedReadBase64.mockResolvedValue("AAAA");
+  });
+
+  it("patches structured JSON with page info", async () => {
+    const input = {
+      content: [
+        { type: "text" as const, text: "Summary" },
+        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
+      ],
+    };
+    const result = await appendTilesPage(input, "/output/tiles", 0);
+    const json = JSON.parse((result.content[1] as { type: "text"; text: string }).text);
+    expect(json.page.current).toBe(0);
+    expect(json.page.totalTiles).toBe(4);
+    expect(json.page.tilesReturned).toBe(4);
+    expect(json.page.hasMore).toBe(false);
+  });
+
+  it("appends tile images as content blocks", async () => {
+    const input = {
+      content: [
+        { type: "text" as const, text: "Summary" },
+        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
+      ],
+    };
+    const result = await appendTilesPage(input, "/output/tiles", 0);
+    const imageBlocks = result.content.filter((c) => c.type === "image");
+    expect(imageBlocks).toHaveLength(4);
+  });
+
+  it("uses webp MIME type for .webp tiles", async () => {
+    const input = {
+      content: [
+        { type: "text" as const, text: "Summary" },
+        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
+      ],
+    };
+    const result = await appendTilesPage(input, "/output/tiles", 0);
+    const imageBlocks = result.content.filter((c) => c.type === "image");
+    for (const img of imageBlocks) {
+      if (img.type === "image") {
+        expect(img.mimeType).toBe("image/webp");
+      }
+    }
+  });
+
+  it("paginates correctly with hasMore=true", async () => {
+    mockedListTiles.mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => {
+        const row = Math.floor(i / 4);
+        const col = i % 4;
+        return `/output/tiles/tile_${String(row).padStart(3, "0")}_${String(col).padStart(3, "0")}.webp`;
+      })
+    );
+
+    const input = {
+      content: [
+        { type: "text" as const, text: "Summary" },
+        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
+      ],
+    };
+    const result = await appendTilesPage(input, "/output/tiles", 0);
+    const imageBlocks = result.content.filter((c) => c.type === "image");
+    expect(imageBlocks).toHaveLength(5);
+
+    const json = JSON.parse((result.content[1] as { type: "text"; text: string }).text);
+    expect(json.page.hasMore).toBe(true);
+    expect(json.page.tilesReturned).toBe(5);
+  });
+
+  it("returns correct page when page > 0", async () => {
+    mockedListTiles.mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => {
+        const row = Math.floor(i / 4);
+        const col = i % 4;
+        return `/output/tiles/tile_${String(row).padStart(3, "0")}_${String(col).padStart(3, "0")}.webp`;
+      })
+    );
+
+    const input = {
+      content: [
+        { type: "text" as const, text: "Summary" },
+        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
+      ],
+    };
+    const result = await appendTilesPage(input, "/output/tiles", 1);
+    const imageBlocks = result.content.filter((c) => c.type === "image");
+    expect(imageBlocks).toHaveLength(5); // tiles 5-9
+
+    const json = JSON.parse((result.content[1] as { type: "text"; text: string }).text);
+    expect(json.page.current).toBe(1);
+    expect(json.page.hasMore).toBe(true);
+  });
+
+  it("returns 0 tiles when page is beyond range", async () => {
+    const input = {
+      content: [
+        { type: "text" as const, text: "Summary" },
+        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
+      ],
+    };
+    const result = await appendTilesPage(input, "/output/tiles", 10);
+    const imageBlocks = result.content.filter((c) => c.type === "image");
+    expect(imageBlocks).toHaveLength(0);
+
+    const json = JSON.parse((result.content[1] as { type: "text"; text: string }).text);
+    expect(json.page.tilesReturned).toBe(0);
+  });
+});

@@ -10,9 +10,11 @@ import {
   TOKENS_PER_TILE,
   MIN_REMAINDER_RATIO,
   MODEL_CONFIGS,
+  SHARP_OPERATION_TIMEOUT_MS,
 } from "../constants.js";
 import type { TileOutputFormat } from "../constants.js";
 import type { ImageMetadata, ResizeInfo, TileGridInfo, TileInfo, TileImageResult, ModelEstimate } from "../types.js";
+import { withTimeout, simulateDownscale } from "../utils.js";
 
 sharp.cache({ items: 10, memory: 200 });
 sharp.concurrency(2);
@@ -21,7 +23,11 @@ export async function getImageMetadata(
   filePath: string
 ): Promise<ImageMetadata> {
   const stats = await fs.stat(filePath);
-  const metadata = await sharp(filePath).metadata();
+  const metadata = await withTimeout(
+    sharp(filePath).metadata(),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "metadata"
+  );
 
   if (!metadata.width || !metadata.height) {
     throw new Error(
@@ -97,17 +103,9 @@ export function computeEstimateForModel(
   // Clamp to model bounds
   tileSize = Math.max(config.minTileSize, Math.min(tileSize, config.maxTileSize));
 
-  // Simulate downscale
-  let w = imageWidth;
-  let h = imageHeight;
-  if (effectiveMaxDimension && effectiveMaxDimension > 0) {
-    const longestSide = Math.max(w, h);
-    if (longestSide > effectiveMaxDimension) {
-      const scale = effectiveMaxDimension / longestSide;
-      w = Math.round(w * scale);
-      h = Math.round(h * scale);
-    }
-  }
+  const { width: w, height: h } = simulateDownscale(
+    imageWidth, imageHeight, effectiveMaxDimension ?? 0
+  );
 
   const grid = calculateGrid(w, h, tileSize, config.tokensPerTile, config.maxTileSize);
   return {
@@ -126,7 +124,11 @@ export async function resizeImage(
   maxDimension: number,
   outputPath: string
 ): Promise<ResizeInfo | null> {
-  const metadata = await sharp(filePath).metadata();
+  const metadata = await withTimeout(
+    sharp(filePath).metadata(),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "resize-metadata"
+  );
   if (!metadata.width || !metadata.height) {
     throw new Error(
       `Unable to read image dimensions from ${filePath}. File may be corrupted or not a supported image format.`
@@ -142,10 +144,14 @@ export async function resizeImage(
   const resizedWidth = Math.round(metadata.width * scaleFactor);
   const resizedHeight = Math.round(metadata.height * scaleFactor);
 
-  await sharp(filePath)
-    .resize(resizedWidth, resizedHeight, { fit: "inside", withoutEnlargement: true })
-    .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
-    .toFile(outputPath);
+  await withTimeout(
+    sharp(filePath)
+      .resize(resizedWidth, resizedHeight, { fit: "inside", withoutEnlargement: true })
+      .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
+      .toFile(outputPath),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "resize"
+  );
 
   return {
     originalWidth: metadata.width,
@@ -181,6 +187,7 @@ export async function tileImage(
   let sourcePath = resolvedPath;
   let resizeInfo: ResizeInfo | null = null;
   let resizedTempPath: string | null = null;
+  const warnings: string[] = [];
 
   if (maxDimension !== undefined) {
     const tempPath = path.join(resolvedOutputDir, `__resized_${randomUUID()}.png`);
@@ -190,6 +197,8 @@ export async function tileImage(
       resizedTempPath = tempPath;
     }
   }
+
+  let result: TileImageResult | undefined;
 
   try {
     const imageMetadata = await getImageMetadata(sourcePath);
@@ -233,7 +242,7 @@ export async function tileImage(
             pipeline.png({ compressionLevel: PNG_COMPRESSION_LEVEL });
           }
 
-          await pipeline.toFile(tilePath);
+          await withTimeout(pipeline.toFile(tilePath), SHARP_OPERATION_TIMEOUT_MS, `tile_${row}_${col}`);
 
           tiles.push({
             index,
@@ -257,7 +266,7 @@ export async function tileImage(
       throw error;
     }
 
-    const result: TileImageResult = {
+    result = {
       sourceImage: imageMetadata,
       grid,
       outputDir: resolvedOutputDir,
@@ -278,9 +287,15 @@ export async function tileImage(
         // Anything else = orphaned temp file, surface it.
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
           const msg = err instanceof Error ? err.message : String(err);
-          console.warn(`[image-tiler] Failed to clean up temp file ${resizedTempPath}: ${msg}`);
+          warnings.push(`Failed to clean up temp file ${resizedTempPath}: ${msg}`);
         }
       }
+    }
+    // Attach warnings to result. On success paths, result exists and the caller
+    // receives the mutated object. On throw paths, result is undefined and
+    // warnings are discarded (the error itself is the signal).
+    if (warnings.length > 0 && result) {
+      result.warnings = warnings;
     }
   }
 }
@@ -299,7 +314,7 @@ export async function listTilesInDirectory(
     await fs.access(resolvedDir);
   } catch {
     throw new Error(
-      `Tiles directory not found: ${resolvedDir}. Run tiler_tile_image first to generate tiles.`
+      `Tiles directory not found: ${resolvedDir}. Run tiler first to generate tiles.`
     );
   }
 
@@ -310,7 +325,7 @@ export async function listTilesInDirectory(
 
   if (tileFiles.length === 0) {
     throw new Error(
-      `No tile files found in ${resolvedDir}. Run tiler_tile_image first to generate tiles.`
+      `No tile files found in ${resolvedDir}. Run tiler first to generate tiles.`
     );
   }
 
