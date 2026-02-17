@@ -105,7 +105,7 @@ No linter is configured.
 - `tile-analyzer.test.ts` — Tile content analysis: stdDev thresholds, isBlank detection, boundary values, batch analysis
 - `url-capture.test.ts` — Chrome detection (CHROME_PATH env, not found), CDP flow, URL validation, cleanup on error
 - `elicitation.test.ts` — Elicitation confirmation: accept/decline/cancel, capability detection, error propagation, message content, schema structure
-- `integration.test.ts` — Real Sharp + real filesystem using `assets/landscape.png` (7680×4032) and `assets/portrait.png` (3600×22810)
+- `integration.test.ts` — Real Sharp + real filesystem using `assets/landscape.png` (3584×1866) and `assets/portrait.png` (3600×8412)
 
 **Mocking strategy:** Unit tests mock Sharp (via `vi.hoisted` + `vi.mock`) and `node:fs/promises`. Tool handler tests mock the entire service layer. Integration tests use no mocks.
 
