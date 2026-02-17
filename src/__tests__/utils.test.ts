@@ -159,6 +159,15 @@ describe("sanitizeHostname", () => {
     const result = sanitizeHostname(`https://${longHost}/page`);
     expect(result.length).toBeLessThanOrEqual(60);
   });
+
+  it("sanitizes IPv6 addresses to filename-safe chars", () => {
+    // URL.hostname returns "[::1]" — brackets and colons become hyphens, collapsed
+    expect(sanitizeHostname("http://[::1]:3000/page")).toBe("-1-");
+  });
+
+  it("collapses consecutive hyphens from special chars", () => {
+    expect(sanitizeHostname("https://[2001:db8::1]/page")).toBe("-2001-db8-1-");
+  });
 });
 
 describe("getVersionedFilePath", () => {

@@ -40,7 +40,7 @@ export function getDefaultOutputBase(): string {
 export function sanitizeHostname(url: string): string {
   try {
     const hostname = new URL(url).hostname;
-    return hostname.replace(/\./g, "-").slice(0, 60);
+    return hostname.replace(/[^A-Za-z0-9-]/g, "-").replace(/-{2,}/g, "-").slice(0, 60);
   } catch {
     return "screenshot";
   }
