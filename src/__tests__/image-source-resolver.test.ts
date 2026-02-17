@@ -134,7 +134,15 @@ describe("resolveImageSource", () => {
       expect(mockedUnlink).toHaveBeenCalledTimes(1);
     });
 
-    it("cleanup silently ignores ENOENT", async () => {
+    it("cleanup returns undefined on success", async () => {
+      const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const result = await resolveImageSource({ imageBase64: pngHeader.toString("base64") });
+
+      const warning = await result.cleanup!();
+      expect(warning).toBeUndefined();
+    });
+
+    it("cleanup returns undefined for ENOENT (file already gone)", async () => {
       const err = new Error("ENOENT") as NodeJS.ErrnoException;
       err.code = "ENOENT";
       mockedUnlink.mockRejectedValueOnce(err);
@@ -142,8 +150,31 @@ describe("resolveImageSource", () => {
       const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
       const result = await resolveImageSource({ imageBase64: pngHeader.toString("base64") });
 
-      // Should not throw
+      const warning = await result.cleanup!();
+      expect(warning).toBeUndefined();
+    });
+
+    it("cleanup returns warning string on non-ENOENT failure", async () => {
+      const err = new Error("EPERM: operation not permitted") as NodeJS.ErrnoException;
+      err.code = "EPERM";
+      mockedUnlink.mockRejectedValueOnce(err);
+
+      const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const result = await resolveImageSource({ imageBase64: pngHeader.toString("base64") });
+
+      const warning = await result.cleanup!();
+      expect(warning).toBeDefined();
+      expect(warning).toContain("Failed to clean up temp file");
+      expect(warning).toContain("EPERM");
+    });
+
+    it("cleanup returns undefined on second call (idempotent)", async () => {
+      const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const result = await resolveImageSource({ imageBase64: pngHeader.toString("base64") });
+
       await result.cleanup!();
+      const secondCall = await result.cleanup!();
+      expect(secondCall).toBeUndefined();
     });
   });
 
@@ -223,12 +254,26 @@ describe("sourceUrl resolution", () => {
       }
 
       const headers = new Headers(overrides.headers ?? { "content-type": "image/png" });
-      const buffer = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const defaultBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const getBuffer = overrides.arrayBuffer
+        ?? (() => Promise.resolve(defaultBuffer.buffer.slice(defaultBuffer.byteOffset, defaultBuffer.byteOffset + defaultBuffer.byteLength)));
+      const resolvedArrayBuffer = await getBuffer();
+      const bodyData = new Uint8Array(resolvedArrayBuffer);
+
+      // Create a ReadableStream body for streaming reads (response.body.getReader())
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(bodyData);
+          controller.close();
+        },
+      });
+
       return {
         ok: overrides.ok ?? true,
         status: overrides.status ?? 200,
         headers,
-        arrayBuffer: overrides.arrayBuffer ?? (() => Promise.resolve(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength))),
+        arrayBuffer: () => Promise.resolve(resolvedArrayBuffer),
+        body,
       } as unknown as Response;
     });
   }
@@ -294,7 +339,7 @@ describe("sourceUrl resolution", () => {
     });
     await expect(
       resolveImageSource({ sourceUrl: "https://example.com/sneaky-big.png" })
-    ).rejects.toThrow("exceeding the");
+    ).rejects.toThrow("byte limit");
   });
 
   it("rejects non-image Content-Type", async () => {
@@ -311,10 +356,37 @@ describe("sourceUrl resolution", () => {
     ).rejects.toThrow("non-image Content-Type");
   });
 
-  it("accepts application/octet-stream Content-Type", async () => {
-    mockFetch({ headers: { "content-type": "application/octet-stream" } });
+  it("accepts application/octet-stream with valid image magic bytes", async () => {
+    // PNG magic bytes
+    const pngBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    mockFetch({
+      headers: { "content-type": "application/octet-stream" },
+      arrayBuffer: () => Promise.resolve(pngBuffer.buffer.slice(pngBuffer.byteOffset, pngBuffer.byteOffset + pngBuffer.byteLength)),
+    });
     const result = await resolveImageSource({ sourceUrl: "https://example.com/binary" });
     expect(result.sourceType).toBe("url");
+  });
+
+  it("rejects application/octet-stream with non-image magic bytes", async () => {
+    const nonImageBuffer = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+    mockFetch({
+      headers: { "content-type": "application/octet-stream" },
+      arrayBuffer: () => Promise.resolve(nonImageBuffer.buffer.slice(nonImageBuffer.byteOffset, nonImageBuffer.byteOffset + nonImageBuffer.byteLength)),
+    });
+    await expect(
+      resolveImageSource({ sourceUrl: "https://example.com/binary" })
+    ).rejects.toThrow("not a recognized image format");
+  });
+
+  it("rejects missing Content-Type with non-image magic bytes", async () => {
+    const nonImageBuffer = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+    mockFetch({
+      headers: {},
+      arrayBuffer: () => Promise.resolve(nonImageBuffer.buffer.slice(nonImageBuffer.byteOffset, nonImageBuffer.byteOffset + nonImageBuffer.byteLength)),
+    });
+    await expect(
+      resolveImageSource({ sourceUrl: "https://example.com/noheader" })
+    ).rejects.toThrow("not a recognized image format");
   });
 
   it("accepts missing Content-Type (no rejection)", async () => {
@@ -389,8 +461,8 @@ describe("guessExtensionFromMagicBytes", () => {
     expect(guessExtensionFromMagicBytes(buf)).toBe(".jpg");
   });
 
-  it("detects WebP (RIFF header)", () => {
-    const buf = Buffer.from([0x52, 0x49, 0x46, 0x46]);
+  it("detects WebP (RIFF+WEBP header)", () => {
+    const buf = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
     expect(guessExtensionFromMagicBytes(buf)).toBe(".webp");
   });
 

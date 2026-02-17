@@ -4,13 +4,18 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   MAX_IMAGE_DIMENSION,
+  MAX_IMAGE_PIXELS,
   MAX_TOTAL_TILES,
   PNG_COMPRESSION_LEVEL,
+  WEBP_QUALITY,
   TOKENS_PER_TILE,
   MIN_REMAINDER_RATIO,
   MODEL_CONFIGS,
+  SHARP_OPERATION_TIMEOUT_MS,
 } from "../constants.js";
+import type { TileOutputFormat } from "../constants.js";
 import type { ImageMetadata, ResizeInfo, TileGridInfo, TileInfo, TileImageResult, ModelEstimate } from "../types.js";
+import { withTimeout, simulateDownscale } from "../utils.js";
 
 sharp.cache({ items: 10, memory: 200 });
 sharp.concurrency(2);
@@ -19,7 +24,11 @@ export async function getImageMetadata(
   filePath: string
 ): Promise<ImageMetadata> {
   const stats = await fs.stat(filePath);
-  const metadata = await sharp(filePath).metadata();
+  const metadata = await withTimeout(
+    sharp(filePath).metadata(),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "metadata"
+  );
 
   if (!metadata.width || !metadata.height) {
     throw new Error(
@@ -30,6 +39,14 @@ export async function getImageMetadata(
   if (metadata.width > MAX_IMAGE_DIMENSION || metadata.height > MAX_IMAGE_DIMENSION) {
     throw new Error(
       `Image dimensions ${metadata.width}×${metadata.height} exceed maximum allowed ${MAX_IMAGE_DIMENSION}px. ` +
+      `Resize the image before tiling.`
+    );
+  }
+
+  const totalPixels = metadata.width * metadata.height;
+  if (totalPixels > MAX_IMAGE_PIXELS) {
+    throw new Error(
+      `Image pixel count ${metadata.width}×${metadata.height} = ${totalPixels.toLocaleString()} pixels exceeds the ${MAX_IMAGE_PIXELS.toLocaleString()} pixel safety limit. ` +
       `Resize the image before tiling.`
     );
   }
@@ -95,17 +112,9 @@ export function computeEstimateForModel(
   // Clamp to model bounds
   tileSize = Math.max(config.minTileSize, Math.min(tileSize, config.maxTileSize));
 
-  // Simulate downscale
-  let w = imageWidth;
-  let h = imageHeight;
-  if (effectiveMaxDimension && effectiveMaxDimension > 0) {
-    const longestSide = Math.max(w, h);
-    if (longestSide > effectiveMaxDimension) {
-      const scale = effectiveMaxDimension / longestSide;
-      w = Math.round(w * scale);
-      h = Math.round(h * scale);
-    }
-  }
+  const { width: w, height: h } = simulateDownscale(
+    imageWidth, imageHeight, effectiveMaxDimension ?? 0
+  );
 
   const grid = calculateGrid(w, h, tileSize, config.tokensPerTile, config.maxTileSize);
   return {
@@ -124,7 +133,11 @@ export async function resizeImage(
   maxDimension: number,
   outputPath: string
 ): Promise<ResizeInfo | null> {
-  const metadata = await sharp(filePath).metadata();
+  const metadata = await withTimeout(
+    sharp(filePath).metadata(),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "resize-metadata"
+  );
   if (!metadata.width || !metadata.height) {
     throw new Error(
       `Unable to read image dimensions from ${filePath}. File may be corrupted or not a supported image format.`
@@ -140,10 +153,14 @@ export async function resizeImage(
   const resizedWidth = Math.round(metadata.width * scaleFactor);
   const resizedHeight = Math.round(metadata.height * scaleFactor);
 
-  await sharp(filePath)
-    .resize(resizedWidth, resizedHeight, { fit: "inside", withoutEnlargement: true })
-    .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
-    .toFile(outputPath);
+  await withTimeout(
+    sharp(filePath)
+      .resize(resizedWidth, resizedHeight, { fit: "inside", withoutEnlargement: true })
+      .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
+      .toFile(outputPath),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "resize"
+  );
 
   return {
     originalWidth: metadata.width,
@@ -160,7 +177,8 @@ export async function tileImage(
   outputDir: string,
   tokensPerTile: number = TOKENS_PER_TILE,
   maxDimension?: number,
-  maxTileSize?: number
+  maxTileSize?: number,
+  format: TileOutputFormat = "webp"
 ): Promise<TileImageResult> {
   const resolvedPath = path.resolve(filePath);
 
@@ -178,6 +196,7 @@ export async function tileImage(
   let sourcePath = resolvedPath;
   let resizeInfo: ResizeInfo | null = null;
   let resizedTempPath: string | null = null;
+  const warnings: string[] = [];
 
   if (maxDimension !== undefined) {
     const tempPath = path.join(resolvedOutputDir, `__resized_${randomUUID()}.png`);
@@ -187,6 +206,8 @@ export async function tileImage(
       resizedTempPath = tempPath;
     }
   }
+
+  let result: TileImageResult | undefined;
 
   try {
     const imageMetadata = await getImageMetadata(sourcePath);
@@ -217,13 +238,20 @@ export async function tileImage(
           const tileWidth = col === grid.cols - 1 ? imageMetadata.width - x : tileSize;
           const tileHeight = row === grid.rows - 1 ? imageMetadata.height - y : tileSize;
 
-          const filename = `tile_${String(row).padStart(3, "0")}_${String(col).padStart(3, "0")}.png`;
+          const ext = format === "webp" ? "webp" : "png";
+          const filename = `tile_${String(row).padStart(3, "0")}_${String(col).padStart(3, "0")}.${ext}`;
           const tilePath = path.join(resolvedOutputDir, filename);
 
-          await sharp(sourcePath)
-            .extract({ left: x, top: y, width: tileWidth, height: tileHeight })
-            .png({ compressionLevel: PNG_COMPRESSION_LEVEL })
-            .toFile(tilePath);
+          const pipeline = sharp(sourcePath)
+            .extract({ left: x, top: y, width: tileWidth, height: tileHeight });
+
+          if (format === "webp") {
+            pipeline.webp({ quality: WEBP_QUALITY });
+          } else {
+            pipeline.png({ compressionLevel: PNG_COMPRESSION_LEVEL });
+          }
+
+          await withTimeout(pipeline.toFile(tilePath), SHARP_OPERATION_TIMEOUT_MS, `tile_${row}_${col}`);
 
           tiles.push({
             index,
@@ -241,13 +269,27 @@ export async function tileImage(
         }
       }
     } catch (error) {
+      const cleanupFailures: string[] = [];
       for (const tile of tiles) {
-        await fs.unlink(tile.filePath).catch(() => {});
+        try {
+          await fs.unlink(tile.filePath);
+        } catch (unlinkErr: unknown) {
+          if ((unlinkErr as NodeJS.ErrnoException).code !== "ENOENT") {
+            const msg = unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr);
+            cleanupFailures.push(`${tile.filename}: ${msg}`);
+          }
+        }
+      }
+      if (cleanupFailures.length > 0) {
+        const original = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `${original} (additionally, failed to clean up ${cleanupFailures.length} orphaned tile(s): ${cleanupFailures.join("; ")})`
+        );
       }
       throw error;
     }
 
-    const result: TileImageResult = {
+    result = {
       sourceImage: imageMetadata,
       grid,
       outputDir: resolvedOutputDir,
@@ -268,9 +310,15 @@ export async function tileImage(
         // Anything else = orphaned temp file, surface it.
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
           const msg = err instanceof Error ? err.message : String(err);
-          console.warn(`[image-tiler] Failed to clean up temp file ${resizedTempPath}: ${msg}`);
+          warnings.push(`Failed to clean up temp file ${resizedTempPath}: ${msg}`);
         }
       }
+    }
+    // Attach warnings to result. On success paths, result exists and the caller
+    // receives the mutated object. On throw paths, result is undefined and
+    // warnings are discarded (the error itself is the signal).
+    if (warnings.length > 0 && result) {
+      result.warnings = warnings;
     }
   }
 }
@@ -289,18 +337,18 @@ export async function listTilesInDirectory(
     await fs.access(resolvedDir);
   } catch {
     throw new Error(
-      `Tiles directory not found: ${resolvedDir}. Run tiler_tile_image first to generate tiles.`
+      `Tiles directory not found: ${resolvedDir}. Run tiler first to generate tiles.`
     );
   }
 
   const entries = await fs.readdir(resolvedDir);
   const tileFiles = entries
-    .filter((f) => f.startsWith("tile_") && f.endsWith(".png"))
+    .filter((f) => f.startsWith("tile_") && (f.endsWith(".png") || f.endsWith(".webp")))
     .sort();
 
   if (tileFiles.length === 0) {
     throw new Error(
-      `No tile files found in ${resolvedDir}. Run tiler_tile_image first to generate tiles.`
+      `No tile files found in ${resolvedDir}. Run tiler first to generate tiles.`
     );
   }
 

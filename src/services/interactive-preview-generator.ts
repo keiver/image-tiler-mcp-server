@@ -1,6 +1,8 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { escapeHtml } from "../utils.js";
+import sharp from "sharp";
+import { escapeHtml, withTimeout } from "../utils.js";
+import { MAX_PREVIEW_PIXELS, WEBP_QUALITY, MIN_PREVIEW_WIDTH, SHARP_OPERATION_TIMEOUT_MS } from "../constants.js";
 import type { ModelEstimate } from "../types.js";
 
 export interface InteractivePreviewData {
@@ -24,15 +26,44 @@ export async function generateInteractivePreview(
     effectiveHeight,
     originalWidth,
     originalHeight,
+    maxDimension,
     models,
   } = data;
 
-  const relativeSourcePath = path.relative(
-    outputDir,
-    path.resolve(sourceImagePath)
-  );
-
   const filename = path.basename(sourceImagePath);
+
+  // Generate an embedded base64 preview image (eliminates TCC/sandbox file access issues)
+  const sharpMeta = await withTimeout(
+    sharp(path.resolve(sourceImagePath)).metadata(),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "preview metadata"
+  );
+  const sourcePixels = (sharpMeta.width ?? 0) * (sharpMeta.height ?? 0);
+
+  let scale = 1;
+  if (sourcePixels > MAX_PREVIEW_PIXELS && sharpMeta.width && sharpMeta.height) {
+    scale = Math.min(scale, Math.sqrt(MAX_PREVIEW_PIXELS / sourcePixels));
+  }
+  const maxDim = Math.max(sharpMeta.width ?? 0, sharpMeta.height ?? 0);
+  if (maxDim > maxDimension) {
+    scale = Math.min(scale, maxDimension / maxDim);
+  }
+  // Prevent width from getting crushed on tall images
+  const srcWidth = sharpMeta.width ?? 0;
+  if (srcWidth > MIN_PREVIEW_WIDTH && Math.round(srcWidth * scale) < MIN_PREVIEW_WIDTH) {
+    scale = MIN_PREVIEW_WIDTH / srcWidth;
+  }
+
+  let pipeline = sharp(path.resolve(sourceImagePath));
+  if (scale < 1 && sharpMeta.width && sharpMeta.height) {
+    pipeline = pipeline.resize(Math.round(sharpMeta.width * scale), Math.round(sharpMeta.height * scale));
+  }
+  const { data: previewBuffer } = await withTimeout(
+    pipeline.webp({ quality: WEBP_QUALITY }).toBuffer({ resolveWithObject: true }),
+    SHARP_OPERATION_TIMEOUT_MS,
+    "preview webp encode"
+  );
+  const previewDataUrl = `data:image/webp;base64,${previewBuffer.toString("base64")}`;
   const wasResized = effectiveWidth !== originalWidth || effectiveHeight !== originalHeight;
 
   const modelsJson = JSON.stringify(
@@ -56,16 +87,18 @@ export async function generateInteractivePreview(
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #141422; color: #e0e0e0; padding: 24px 28px; }
-  .header { margin-bottom: 14px; }
-  .header h1 { font-size: 1.5em; margin-bottom: 8px; color: #f0f0f0; font-weight: 600; letter-spacing: -0.01em; }
+  .header { margin-bottom: 24px; text-align: center; }
+  .header h1 { font-size: 1.5em; margin-bottom: 12px; color: #f0f0f0; font-weight: 600; letter-spacing: -0.01em; }
   .header h1 .dim { font-weight: 400; color: #888; font-size: 0.7em; margin-left: 6px; }
-  .tabs { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; justify-content: center; }
+  .preview-note { font-size: 0.8em; color: #666; margin-bottom: 16px; text-align: center; }
   .tab { padding: 9px 20px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.08); background: rgba(0, 0, 0, 0.5); color: #999; cursor: pointer; font-size: 0.85em; font-weight: 500; font-family: inherit; transition: all 0.2s ease; position: relative; backdrop-filter: blur(4px); text-align: center; line-height: 1.4; }
   .tab:hover { background: rgba(0, 0, 0, 0.7); color: #ccc; border-color: rgba(255, 255, 255, 0.15); }
   .tab.active { background: rgba(0, 0, 0, 0.8); color: #f5d547; border-color: rgba(245, 213, 71, 0.35); box-shadow: 0 0 12px rgba(245, 213, 71, 0.1); }
   .tab .tab-stats { display: block; font-size: 0.75em; font-weight: 400; color: #777; }
   .tab.active .tab-stats { color: #c9b84a; }
   .tab:hover .tab-stats { color: #aaa; }
+  .preview-wrapper { text-align: center; }
   .source-container { position: relative; display: inline-block; max-width: 100%; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4); }
   .source-container img { display: block; max-width: 100%; height: auto; }
   .source-container svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -85,9 +118,13 @@ export async function generateInteractivePreview(
 
 <div class="tabs" id="model-tabs"></div>
 
+<p class="preview-note">Preview only &mdash; tiles are cut from the original full-resolution image.</p>
+
+<div class="preview-wrapper">
 <div class="source-container">
-  <img src="${escapeHtml(relativeSourcePath)}" alt="Source image" />
+  <img src="${previewDataUrl}" alt="Source image" />
   <svg id="grid-overlay" viewBox="0 0 ${effectiveWidth} ${effectiveHeight}" preserveAspectRatio="xMinYMin meet"></svg>
+</div>
 </div>
 
 <div class="footer">Generated by image-tiler-mcp-server - this file is safe to delete</div>
@@ -114,7 +151,7 @@ export async function generateInteractivePreview(
       label.textContent = (m.label || m.model) + ' \u00b7 ' + m.tileSize + 'px';
       var stats = document.createElement('span');
       stats.className = 'tab-stats';
-      stats.textContent = m.tiles + ' tiles \u00b7 ~' + m.tokens.toLocaleString() + ' tokens';
+      stats.textContent = m.cols + '\u00d7' + m.rows + ' grid \u00b7 ~' + m.tokens.toLocaleString() + ' tokens';
       btn.appendChild(label);
       btn.appendChild(stats);
       btn.setAttribute('data-model', m.model);

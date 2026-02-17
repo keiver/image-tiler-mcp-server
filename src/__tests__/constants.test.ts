@@ -4,6 +4,7 @@ import {
   MAX_TILE_SIZE,
   MIN_TILE_SIZE,
   MAX_IMAGE_DIMENSION,
+  MAX_IMAGE_PIXELS,
   MAX_TOTAL_TILES,
   MAX_TILES_PER_BATCH,
   SUPPORTED_FORMATS,
@@ -17,9 +18,11 @@ import {
   DOWNLOAD_TIMEOUT_MS,
   ALLOWED_URL_PROTOCOLS,
   MAX_BASE64_LENGTH,
-  IMAGE_INTENTS,
-  BUDGET_LEVELS,
   MIN_REMAINDER_RATIO,
+  MIN_PREVIEW_WIDTH,
+  SHARP_OPERATION_TIMEOUT_MS,
+  MAX_CHROME_STDERR_BYTES,
+  MAX_CHROME_JSON_BYTES,
 } from "../constants.js";
 
 
@@ -73,6 +76,28 @@ describe("constants", () => {
     it("MIN_REMAINDER_RATIO is 0.15", () => {
       expect(MIN_REMAINDER_RATIO).toBe(0.15);
     });
+
+    it("MIN_PREVIEW_WIDTH is 800", () => {
+      expect(MIN_PREVIEW_WIDTH).toBe(800);
+    });
+
+    it("SHARP_OPERATION_TIMEOUT_MS is 30 seconds", () => {
+      expect(SHARP_OPERATION_TIMEOUT_MS).toBe(30_000);
+    });
+
+    it("MAX_IMAGE_PIXELS is 256 megapixels", () => {
+      expect(MAX_IMAGE_PIXELS).toBe(256_000_000);
+    });
+  });
+
+  describe("security limits", () => {
+    it("MAX_CHROME_STDERR_BYTES is 1MB", () => {
+      expect(MAX_CHROME_STDERR_BYTES).toBe(1_048_576);
+    });
+
+    it("MAX_CHROME_JSON_BYTES is 1MB", () => {
+      expect(MAX_CHROME_JSON_BYTES).toBe(1_048_576);
+    });
   });
 
   describe("supported formats", () => {
@@ -92,7 +117,7 @@ describe("constants", () => {
 
   describe("VISION_MODELS", () => {
     it("contains claude, openai, gemini, gemini3", () => {
-      expect(VISION_MODELS).toEqual(["claude", "openai", "gemini", "gemini3"]);
+      expect(VISION_MODELS).toEqual(["claude", "openai", "gemini3", "gemini"]);
     });
 
     it("has exactly 4 models", () => {
@@ -205,13 +230,4 @@ describe("constants", () => {
     });
   });
 
-  describe("intent and budget enums", () => {
-    it("IMAGE_INTENTS has 5 values", () => {
-      expect(IMAGE_INTENTS).toEqual(["text_heavy", "ui_screenshot", "diagram", "photo", "general"]);
-    });
-
-    it("BUDGET_LEVELS has 3 values", () => {
-      expect(BUDGET_LEVELS).toEqual(["low", "default", "max_detail"]);
-    });
-  });
 });

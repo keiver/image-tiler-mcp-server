@@ -4,6 +4,13 @@
   "description": "MCP server that splits large images into optimally-sized tiles for LLM vision (Claude, OpenAI, Gemini, Gemini 3)",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "bin": {
     "image-tiler-mcp-server": "dist/index.js"
   },
@@ -13,13 +20,16 @@
     "LICENSE"
   ],
   "scripts": {
+    "prebuild": "rm -rf dist",
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "pretest": "npm run build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [
     "mcp",
@@ -44,15 +54,18 @@
   },
   "homepage": "https://github.com/keiver/image-tiler-mcp-server#readme",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "sharp": "^0.33.5",
+    "ws": "^8.19.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^4.0.18",
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
   }
