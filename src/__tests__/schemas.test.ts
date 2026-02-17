@@ -263,9 +263,9 @@ describe("TilerInputSchema", () => {
       expect(result.maxDimension).toBe(0);
     });
 
-    it("accepts minimum positive value (1)", () => {
+    it("clamps minimum positive value (1) to 256", () => {
       const result = tilerSchema.parse({ filePath: "test.png", maxDimension: 1 });
-      expect(result.maxDimension).toBe(1);
+      expect(result.maxDimension).toBe(256);
     });
 
     it("accepts value (256)", () => {

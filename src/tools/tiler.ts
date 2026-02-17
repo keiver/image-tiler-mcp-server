@@ -24,6 +24,7 @@ import {
 } from "../services/tiling-pipeline.js";
 import { tryElicitation } from "../services/elicitation.js";
 import { sanitizeHostname } from "../utils.js";
+import type { ResolvedImageSource } from "../types.js";
 import {
   PNG_COMPRESSION_LEVEL,
   VISION_MODELS,
@@ -87,7 +88,15 @@ export function registerTilerTool(server: McpServer): void {
     }) => {
       // ── Mode: get-tiles (read-only pagination) ──
       if (tilesDir) {
-        return handleGetTiles(tilesDir, start, end);
+        // Support `page` param for get-tiles mode: convert page to start/end
+        // when start is at default (0) and end is not specified
+        let effectiveStart = start;
+        let effectiveEnd = end;
+        if (page > 0 && start === 0 && end === undefined) {
+          effectiveStart = page * MAX_TILES_PER_BATCH;
+          effectiveEnd = effectiveStart + MAX_TILES_PER_BATCH - 1;
+        }
+        return handleGetTiles(tilesDir, effectiveStart, effectiveEnd);
       }
 
       // ── Mode: capture-and-tile ──
@@ -101,9 +110,16 @@ export function registerTilerTool(server: McpServer): void {
 
       // ── Mode: tile-image ──
       if (filePath || sourceUrl || dataUrl || imageBase64) {
+        // Issue #9: Warn when multiple source params conflict
+        const sourceCount = [filePath, sourceUrl, dataUrl, imageBase64].filter(Boolean).length;
+        const sourceWarning = sourceCount > 1
+          ? `Warning: Multiple image sources provided. Using ${filePath ? "filePath" : sourceUrl ? "sourceUrl" : dataUrl ? "dataUrl" : "imageBase64"} (precedence: filePath > sourceUrl > dataUrl > imageBase64).`
+          : undefined;
+
         return handleTileImage(server, {
           filePath, sourceUrl, dataUrl, imageBase64,
           explicitModel, tileSize, maxDimension, outputDir, page, format, includeMetadata,
+          sourceWarning,
         });
       }
 
@@ -232,18 +248,21 @@ interface TileImageParams {
   page: number;
   format: "webp" | "png";
   includeMetadata: boolean;
+  sourceWarning?: string;
 }
 
 async function handleTileImage(
   server: McpServer,
   params: TileImageParams,
 ): Promise<{ content: ContentBlock[]; isError?: boolean }> {
-  const { filePath, sourceUrl, dataUrl, imageBase64, explicitModel, tileSize, maxDimension, outputDir, page, format, includeMetadata } = params;
+  const { filePath, sourceUrl, dataUrl, imageBase64, explicitModel, tileSize, maxDimension, outputDir, page, format, includeMetadata, sourceWarning } = params;
 
-  const source = await resolveImageSource({ filePath, sourceUrl, dataUrl, imageBase64 });
+  let source: ResolvedImageSource | undefined;
   let response: { content: ContentBlock[]; isError?: boolean } | undefined;
 
   try {
+    source = await resolveImageSource({ filePath, sourceUrl, dataUrl, imageBase64 });
+
     const formatError = validateFormat(source.localPath);
     if (formatError) {
       response = { isError: true, content: [{ type: "text" as const, text: formatError }] };
@@ -252,14 +271,21 @@ async function handleTileImage(
 
     const resolvedOutputDir = await resolveOutputDir(source.sourceType, source.localPath, outputDir);
 
-    // Preview gate: if preview exists from a previous call, skip straight to Phase 2
-    const existingPreview = await checkPreviewGate(resolvedOutputDir);
+    // Phase 1 copies any source outside outputDir to "source.{ext}" in outputDir,
+    // so the preview becomes "source-preview.html". Use that stable name for lookup.
+    const previewLookupPath = source.localPath.startsWith(resolvedOutputDir)
+      ? source.localPath
+      : path.join(resolvedOutputDir, `source${path.extname(source.localPath) || ".png"}`);
+
+    // Preview gate: if preview exists for THIS source, skip straight to Phase 2
+    const existingPreview = await checkPreviewGate(resolvedOutputDir, previewLookupPath);
     if (existingPreview) {
       if (explicitModel) {
         const { result, warnings } = await executeTiling(source.localPath, resolvedOutputDir, {
           model: explicitModel, tileSize, maxDimension, format, includeMetadata,
         });
-        const phase2 = await buildPhase2Response(result, { model: explicitModel, includeMetadata, warnings, maxDimension });
+        if (sourceWarning) warnings.push(sourceWarning);
+        const phase2 = await buildPhase2Response(result, { model: explicitModel, includeMetadata, warnings, maxDimension, sourcePath: previewLookupPath });
         response = await appendTilesPage(phase2, result.outputDir, page);
         return response;
       }
@@ -267,15 +293,41 @@ async function handleTileImage(
       // No explicit model — try elicitation, fall back to cheapest
       const elicitData = await computeElicitationData(source.localPath, maxDimension);
       const cheapest = findCheapestModel(elicitData.allModels);
-      const selectedModel = await tryElicitation(server, { ...elicitData, model: cheapest });
-      const finalModel = selectedModel ?? cheapest;
+      const elicitResult = await tryElicitation(server, { ...elicitData, model: cheapest });
+
+      // User explicitly cancelled — abort
+      if (elicitResult.status === "cancelled") {
+        response = {
+          content: [{ type: "text" as const, text: "Tiling cancelled by user." }],
+        };
+        return response;
+      }
+
+      const finalModel = elicitResult.status === "selected" ? elicitResult.model : cheapest;
+      const autoSelected = elicitResult.status === "unsupported";
 
       const { result, warnings } = await executeTiling(source.localPath, resolvedOutputDir, {
         model: finalModel, tileSize, maxDimension, format, includeMetadata,
       });
+      if (sourceWarning) warnings.push(sourceWarning);
       const phase2 = await buildPhase2Response(result, {
-        model: finalModel, includeMetadata, warnings, maxDimension,
-        autoSelected: !selectedModel,
+        model: finalModel, includeMetadata, warnings, maxDimension, autoSelected, sourcePath: previewLookupPath,
+      });
+      response = await appendTilesPage(phase2, result.outputDir, page);
+      return response;
+    }
+
+    // One-shot: user provided model + outputDir upfront — generate preview then tile immediately
+    if (explicitModel && outputDir) {
+      await analyzeAndPreview(source.localPath, resolvedOutputDir, {
+        model: explicitModel, maxDimension, tileSize,
+      });
+      const { result, warnings } = await executeTiling(source.localPath, resolvedOutputDir, {
+        model: explicitModel, tileSize, maxDimension, format, includeMetadata,
+      });
+      if (sourceWarning) warnings.push(sourceWarning);
+      const phase2 = await buildPhase2Response(result, {
+        model: explicitModel, includeMetadata, warnings, maxDimension, sourcePath: previewLookupPath,
       });
       response = await appendTilesPage(phase2, result.outputDir, page);
       return response;
@@ -288,24 +340,37 @@ async function handleTileImage(
     const cheapest = findCheapestModel(analysis.allModels);
 
     // Try elicitation fast path
-    const selectedModel = await tryElicitation(server, {
+    const elicitResult = await tryElicitation(server, {
       width: analysis.sourceImage.width,
       height: analysis.sourceImage.height,
       model: explicitModel ?? cheapest,
       allModels: analysis.allModels,
     });
 
-    if (!selectedModel) {
-      response = buildPhase1Response(analysis);
+    // User explicitly cancelled — abort
+    if (elicitResult.status === "cancelled") {
+      response = {
+        content: [{ type: "text" as const, text: "Tiling cancelled by user." }],
+      };
+      return response;
+    }
+
+    if (elicitResult.status !== "selected") {
+      const phase1 = buildPhase1Response(analysis);
+      if (sourceWarning) {
+        phase1.content[0].text = `⚠ ${sourceWarning}\n\n` + phase1.content[0].text;
+      }
+      response = phase1;
       return response;
     }
 
     // Elicitation returned a model — proceed to tile
     const { result, warnings } = await executeTiling(source.localPath, resolvedOutputDir, {
-      model: selectedModel, tileSize, maxDimension, format, includeMetadata,
+      model: elicitResult.model, tileSize, maxDimension, format, includeMetadata,
     });
+    if (sourceWarning) warnings.push(sourceWarning);
 
-    const phase2 = await buildPhase2Response(result, { model: selectedModel, includeMetadata, warnings, maxDimension });
+    const phase2 = await buildPhase2Response(result, { model: elicitResult.model, includeMetadata, warnings, maxDimension, sourcePath: previewLookupPath });
     response = await appendTilesPage(phase2, result.outputDir, page);
     return response;
   } catch (error) {
@@ -313,7 +378,7 @@ async function handleTileImage(
     response = { isError: true, content: [{ type: "text" as const, text: `Error tiling image: ${message}` }] };
     return response;
   } finally {
-    const cleanupWarning = await source.cleanup?.();
+    const cleanupWarning = await source?.cleanup?.();
     if (cleanupWarning && response && !response.isError) {
       response.content.push({ type: "text" as const, text: `\n⚠ ${cleanupWarning}` });
     }
@@ -347,8 +412,9 @@ async function handleCaptureAndTile(
     explicitModel, tileSize, maxDimension, outputDir, page, format, includeMetadata,
   } = params;
 
+  const resolvedOutputDir = resolveOutputDirForCapture(outputDir);
+
   try {
-    const resolvedOutputDir = resolveOutputDirForCapture(outputDir);
     await fs.mkdir(resolvedOutputDir, { recursive: true });
 
     // 1. Capture or reuse screenshot
@@ -359,14 +425,45 @@ async function handleCaptureAndTile(
     let capturedUrl = url;
 
     if (existingScreenshotPath) {
+      // Check file existence and readability separately for distinct error messages
+      let fileExists = false;
       try {
         await fs.access(existingScreenshotPath);
-        screenshotPath = existingScreenshotPath;
-        const meta = await sharp(existingScreenshotPath).metadata();
-        captureWidth = meta.width ?? 0;
-        captureHeight = meta.height ?? 0;
+        fileExists = true;
       } catch {
-        // Stale — fall through to fresh capture (requires url)
+        // File not found
+      }
+
+      if (fileExists) {
+        try {
+          const meta = await sharp(existingScreenshotPath).metadata();
+          if (!meta.width || !meta.height) {
+            throw new Error(`invalid dimensions (${meta.width ?? 0}x${meta.height ?? 0})`);
+          }
+          screenshotPath = existingScreenshotPath;
+          captureWidth = meta.width;
+          captureHeight = meta.height;
+        } catch (metaError) {
+          // File exists but can't be read by Sharp (corrupt/truncated/wrong format)
+          if (!url) {
+            throw new Error(
+              `Screenshot at ${existingScreenshotPath} exists but could not be read: ${metaError instanceof Error ? metaError.message : String(metaError)}`
+            );
+          }
+          // Recapture from URL
+          const resolvedViewport = viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
+          const captureResult = await captureUrl({ url, viewportWidth: resolvedViewport, waitUntil, delay });
+          captureWidth = captureResult.pageWidth;
+          captureHeight = captureResult.pageHeight;
+          segmentsStitched = captureResult.segmentsStitched;
+          capturedUrl = captureResult.url;
+
+          const baseName = sanitizeHostname(url);
+          screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
+          await sharp(captureResult.buffer).png({ compressionLevel: PNG_COMPRESSION_LEVEL }).toFile(screenshotPath);
+        }
+      } else {
+        // File doesn't exist — need URL for recapture
         if (!url) {
           throw new Error(`Screenshot not found at ${existingScreenshotPath} and no url provided for recapture.`);
         }
@@ -395,8 +492,8 @@ async function handleCaptureAndTile(
       await sharp(captureResult.buffer).png({ compressionLevel: PNG_COMPRESSION_LEVEL }).toFile(screenshotPath);
     }
 
-    // 2. Preview gate: if preview exists from a previous call, skip straight to Phase 2
-    const existingPreview = await checkPreviewGate(resolvedOutputDir);
+    // 2. Preview gate: if preview exists for THIS screenshot, skip straight to Phase 2
+    const existingPreview = await checkPreviewGate(resolvedOutputDir, screenshotPath);
     if (existingPreview) {
       const captureInfo = {
         url: capturedUrl,
@@ -412,20 +509,54 @@ async function handleCaptureAndTile(
       if (!finalModel) {
         const elicitData = await computeElicitationData(screenshotPath, maxDimension);
         const cheapest = findCheapestModel(elicitData.allModels);
-        const selectedModel = await tryElicitation(server, { ...elicitData, model: cheapest });
-        finalModel = selectedModel ?? cheapest;
-        autoSelected = !selectedModel;
+        const elicitResult = await tryElicitation(server, { ...elicitData, model: cheapest });
+
+        if (elicitResult.status === "cancelled") {
+          return {
+            content: [{ type: "text" as const, text: "Tiling cancelled by user." }],
+          };
+        }
+
+        finalModel = elicitResult.status === "selected" ? elicitResult.model : cheapest;
+        autoSelected = elicitResult.status === "unsupported";
       }
 
+      // finalModel is guaranteed set: either explicitModel was truthy, or we assigned in the block above (or returned on cancel)
+      const tilingModel = finalModel!;
       const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
-        model: finalModel, tileSize, maxDimension, format, includeMetadata,
+        model: tilingModel, tileSize, maxDimension, format, includeMetadata,
       });
 
-      const phase2 = await buildPhase2Response(result, { model: finalModel, includeMetadata, warnings, maxDimension, captureInfo, autoSelected });
+      const phase2 = await buildPhase2Response(result, { model: tilingModel, includeMetadata, warnings, maxDimension, captureInfo, autoSelected, sourcePath: screenshotPath });
       const urlSuffix = capturedUrl ? ` of ${capturedUrl}` : "";
       const captureLine = `Captured ${captureWidth}x${captureHeight} screenshot${urlSuffix}${segmentsStitched ? `\n  Scroll-stitched ${segmentsStitched} segments` : ""}\n`;
       phase2.content[0].text = captureLine + phase2.content[0].text;
 
+      return appendTilesPage(phase2, result.outputDir, page);
+    }
+
+    // One-shot: user provided model + outputDir upfront — generate preview then tile immediately
+    if (explicitModel && outputDir) {
+      await analyzeAndPreview(screenshotPath, resolvedOutputDir, {
+        model: explicitModel, maxDimension, tileSize,
+      });
+      const captureInfo = {
+        url: capturedUrl,
+        pageWidth: captureWidth,
+        pageHeight: captureHeight,
+        segmentsStitched: segmentsStitched ?? null,
+        viewportWidth: viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH,
+        waitUntil,
+      };
+      const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
+        model: explicitModel, tileSize, maxDimension, format, includeMetadata,
+      });
+      const phase2 = await buildPhase2Response(result, {
+        model: explicitModel, includeMetadata, warnings, maxDimension, captureInfo, sourcePath: screenshotPath,
+      });
+      const urlSuffix = capturedUrl ? ` of ${capturedUrl}` : "";
+      const captureLine = `Captured ${captureWidth}x${captureHeight} screenshot${urlSuffix}${segmentsStitched ? `\n  Scroll-stitched ${segmentsStitched} segments` : ""}\n`;
+      phase2.content[0].text = captureLine + phase2.content[0].text;
       return appendTilesPage(phase2, result.outputDir, page);
     }
 
@@ -436,16 +567,23 @@ async function handleCaptureAndTile(
     const cheapest = findCheapestModel(analysis.allModels);
 
     // Try elicitation fast path
-    const selectedModel = await tryElicitation(server, {
+    const elicitResult = await tryElicitation(server, {
       width: analysis.sourceImage.width,
       height: analysis.sourceImage.height,
       model: explicitModel ?? cheapest,
       allModels: analysis.allModels,
     });
 
-    if (!selectedModel) {
+    // User explicitly cancelled — abort
+    if (elicitResult.status === "cancelled") {
+      return {
+        content: [{ type: "text" as const, text: "Tiling cancelled by user." }],
+      };
+    }
+
+    if (elicitResult.status !== "selected") {
       // Phase 1: return comparison + screenshot path
-      const captureSummary = `Captured ${captureWidth}x${captureHeight} screenshot of ${url}\nScreenshot saved to: ${screenshotPath}\n\n`;
+      const captureSummary = `Captured ${captureWidth}x${captureHeight} screenshot${url ? ` of ${url}` : ""}\nScreenshot saved to: ${screenshotPath}\n\n`;
       const phase1 = buildPhase1Response(analysis, { screenshotPath });
       phase1.content[0].text = captureSummary + phase1.content[0].text;
       return phase1;
@@ -462,16 +600,19 @@ async function handleCaptureAndTile(
     };
 
     const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
-      model: selectedModel, tileSize, maxDimension, format, includeMetadata,
+      model: elicitResult.model, tileSize, maxDimension, format, includeMetadata,
     });
 
-    const phase2 = await buildPhase2Response(result, { model: selectedModel, includeMetadata, warnings, maxDimension, captureInfo });
+    const phase2 = await buildPhase2Response(result, { model: elicitResult.model, includeMetadata, warnings, maxDimension, captureInfo, sourcePath: screenshotPath });
 
-    const captureLine = `Captured ${captureWidth}x${captureHeight} screenshot of ${url}${segmentsStitched ? `\n  Scroll-stitched ${segmentsStitched} segments` : ""}\n`;
+    const captureLine = `Captured ${captureWidth}x${captureHeight} screenshot${url ? ` of ${url}` : ""}${segmentsStitched ? `\n  Scroll-stitched ${segmentsStitched} segments` : ""}\n`;
     phase2.content[0].text = captureLine + phase2.content[0].text;
 
     return appendTilesPage(phase2, result.outputDir, page);
   } catch (error) {
+    // Clean up empty output directory created before capture
+    try { await fs.rmdir(resolvedOutputDir); } catch { /* not empty or already gone */ }
+
     const message = error instanceof Error ? error.message : String(error);
     return { isError: true, content: [{ type: "text" as const, text: `Error capturing and tiling URL: ${message}` }] };
   }

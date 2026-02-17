@@ -254,12 +254,26 @@ describe("sourceUrl resolution", () => {
       }
 
       const headers = new Headers(overrides.headers ?? { "content-type": "image/png" });
-      const buffer = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const defaultBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const getBuffer = overrides.arrayBuffer
+        ?? (() => Promise.resolve(defaultBuffer.buffer.slice(defaultBuffer.byteOffset, defaultBuffer.byteOffset + defaultBuffer.byteLength)));
+      const resolvedArrayBuffer = await getBuffer();
+      const bodyData = new Uint8Array(resolvedArrayBuffer);
+
+      // Create a ReadableStream body for streaming reads (response.body.getReader())
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(bodyData);
+          controller.close();
+        },
+      });
+
       return {
         ok: overrides.ok ?? true,
         status: overrides.status ?? 200,
         headers,
-        arrayBuffer: overrides.arrayBuffer ?? (() => Promise.resolve(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength))),
+        arrayBuffer: () => Promise.resolve(resolvedArrayBuffer),
+        body,
       } as unknown as Response;
     });
   }
@@ -325,7 +339,7 @@ describe("sourceUrl resolution", () => {
     });
     await expect(
       resolveImageSource({ sourceUrl: "https://example.com/sneaky-big.png" })
-    ).rejects.toThrow("exceeding the");
+    ).rejects.toThrow("byte limit");
   });
 
   it("rejects non-image Content-Type", async () => {
@@ -447,8 +461,8 @@ describe("guessExtensionFromMagicBytes", () => {
     expect(guessExtensionFromMagicBytes(buf)).toBe(".jpg");
   });
 
-  it("detects WebP (RIFF header)", () => {
-    const buf = Buffer.from([0x52, 0x49, 0x46, 0x46]);
+  it("detects WebP (RIFF+WEBP header)", () => {
+    const buf = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
     expect(guessExtensionFromMagicBytes(buf)).toBe(".webp");
   });
 

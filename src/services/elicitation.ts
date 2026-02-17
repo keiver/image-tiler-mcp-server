@@ -10,18 +10,23 @@ export interface TryElicitationOptions {
   allModels: ModelEstimate[];
 }
 
+export type ElicitationResult =
+  | { status: "selected"; model: VisionModel }
+  | { status: "cancelled" }
+  | { status: "unsupported" };
+
 /**
  * Attempts elicitation if the client supports it.
- * Returns the selected model (VisionModel) if the user picks one,
- * or null if elicitation is unavailable or user declines/cancels.
+ * Returns distinct statuses: "selected" (user picked a model), "cancelled" (user
+ * explicitly declined), or "unsupported" (client lacks elicitation capability).
  */
 export async function tryElicitation(
   server: McpServer,
   options: TryElicitationOptions,
-): Promise<VisionModel | null> {
+): Promise<ElicitationResult> {
   const caps = server.server.getClientCapabilities();
   if (!caps?.elicitation?.form) {
-    return null;
+    return { status: "unsupported" };
   }
 
   const oneOf = VISION_MODELS.map((m) => {
@@ -56,11 +61,11 @@ export async function tryElicitation(
   if (result.action === "accept") {
     const selectedModel = (result.content as Record<string, unknown>)?.model as string | undefined;
     if (selectedModel && VISION_MODELS.includes(selectedModel as VisionModel)) {
-      return selectedModel as VisionModel;
+      return { status: "selected", model: selectedModel as VisionModel };
     }
     // Fallback: user accepted but didn't pick a valid model — use the provided default
-    return options.model;
+    return { status: "selected", model: options.model };
   }
 
-  return null;
+  return { status: "cancelled" };
 }

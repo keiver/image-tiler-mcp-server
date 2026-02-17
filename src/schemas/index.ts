@@ -122,8 +122,13 @@ export const TilerInputSchema = {
     .min(0, "maxDimension must be >= 0 (0 disables auto-downscaling)")
     .max(MAX_IMAGE_DIMENSION, `maxDimension must not exceed ${MAX_IMAGE_DIMENSION}px`)
     .default(DEFAULT_MAX_DIMENSION)
+    .transform((val) => {
+      // Clamp degenerate values 1-255 up to 256 — these produce unusably small images
+      if (val > 0 && val < 256) return 256;
+      return val;
+    })
     .describe(
-      `Max dimension in px (256-${MAX_IMAGE_DIMENSION}). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. Defaults to ${DEFAULT_MAX_DIMENSION}px. Set to 0 to disable auto-downscaling.`
+      `Max dimension in px (0 to disable, or 256-${MAX_IMAGE_DIMENSION}). When set, the image is resized so its longest side fits within this value before tiling. Reduces token consumption for large images. Defaults to ${DEFAULT_MAX_DIMENSION}px. Set to 0 to disable auto-downscaling.`
     ),
   outputDir: z
     .string()

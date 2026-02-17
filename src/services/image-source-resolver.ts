@@ -83,12 +83,31 @@ async function resolveUrl(url: string): Promise<ResolvedImageSource> {
     );
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length > MAX_DOWNLOAD_SIZE_BYTES) {
-    throw new Error(
-      `Downloaded image is ${buffer.length} bytes, exceeding the ${MAX_DOWNLOAD_SIZE_BYTES} byte limit.`
-    );
+  // Stream the response body with incremental size tracking to avoid loading
+  // the entire body into memory before checking size (when Content-Length is missing)
+  const chunks: Buffer[] = [];
+  let downloadedBytes = 0;
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Response body is not readable");
   }
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      downloadedBytes += value.byteLength;
+      if (downloadedBytes > MAX_DOWNLOAD_SIZE_BYTES) {
+        await reader.cancel();
+        throw new Error(
+          `Downloaded image exceeded the ${MAX_DOWNLOAD_SIZE_BYTES} byte limit (at ${downloadedBytes} bytes). Download aborted.`
+        );
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const buffer = Buffer.concat(chunks);
 
   // When Content-Type is ambiguous (octet-stream or missing), verify magic bytes
   const ctLower = contentType?.toLowerCase() ?? "";
@@ -200,9 +219,12 @@ export function guessExtensionFromMagicBytes(buf: Buffer): string | undefined {
   if (buf.length < 4) return undefined;
   if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return ".png";
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return ".jpg";
-  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return ".webp";
+  // RIFF container: check bytes 8-11 for "WEBP" to distinguish from AVI/WAV
+  if (buf.length >= 12 && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+    && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return ".webp";
   if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return ".gif";
-  if ((buf[0] === 0x49 && buf[1] === 0x49) || (buf[0] === 0x4d && buf[1] === 0x4d)) return ".tiff";
+  if (buf[0] === 0x49 && buf[1] === 0x49 && buf[2] === 0x2a && buf[3] === 0x00) return ".tiff";
+  if (buf[0] === 0x4d && buf[1] === 0x4d && buf[2] === 0x00 && buf[3] === 0x2a) return ".tiff";
   return undefined;
 }
 

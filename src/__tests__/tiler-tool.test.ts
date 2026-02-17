@@ -56,6 +56,7 @@ vi.mock("sharp", () => {
 vi.mock("node:fs/promises", () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   access: vi.fn().mockResolvedValue(undefined),
+  rmdir: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { resolveImageSource } from "../services/image-source-resolver.js";
@@ -80,6 +81,8 @@ import {
 import { tryElicitation } from "../services/elicitation.js";
 import { registerTilerTool } from "../tools/tiler.js";
 import { createMockServer } from "./helpers/mock-server.js";
+import * as fsPromises from "node:fs/promises";
+import sharp from "sharp";
 
 const mockedResolveSource = vi.mocked(resolveImageSource);
 const mockedCaptureUrl = vi.mocked(captureUrl);
@@ -169,7 +172,7 @@ describe("registerTilerTool", () => {
     mockedResolveOutputDir.mockResolvedValue("/output/tiles");
     mockedCheckPreviewGate.mockResolvedValue(null);
     mockedAnalyzeAndPreview.mockResolvedValue(sampleAnalysis);
-    mockedTryElicitation.mockResolvedValue("claude");
+    mockedTryElicitation.mockResolvedValue({ status: "selected", model: "claude" });
     mockedFindCheapestModel.mockReturnValue("gemini");
     mockedComputeElicitationData.mockResolvedValue({
       width: 2144, height: 2144,
@@ -262,7 +265,7 @@ describe("registerTilerTool", () => {
     });
 
     it("returns Phase 1 response when no preview exists and elicitation returns null", async () => {
-      mockedTryElicitation.mockResolvedValue(null);
+      mockedTryElicitation.mockResolvedValue({ status: "unsupported" });
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
         { filePath: "image.png" },
@@ -297,7 +300,7 @@ describe("registerTilerTool", () => {
 
     it("Phase 2 uses cheapest model when no explicit model and elicitation unavailable", async () => {
       mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
-      mockedTryElicitation.mockResolvedValue(null);
+      mockedTryElicitation.mockResolvedValue({ status: "unsupported" });
       const tool = mock.getTool("tiler")!;
       await tool.handler(
         { filePath: "image.png", outputDir: "/out" },
@@ -319,7 +322,7 @@ describe("registerTilerTool", () => {
 
     it("Phase 2 uses elicitation-selected model when available", async () => {
       mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
-      mockedTryElicitation.mockResolvedValue("openai");
+      mockedTryElicitation.mockResolvedValue({ status: "selected", model: "openai" });
       const tool = mock.getTool("tiler")!;
       await tool.handler(
         { filePath: "image.png", outputDir: "/out" },
@@ -392,7 +395,7 @@ describe("registerTilerTool", () => {
         originalSource: "https://example.com/img.png",
         cleanup,
       });
-      mockedTryElicitation.mockResolvedValue(null);
+      mockedTryElicitation.mockResolvedValue({ status: "unsupported" });
       const tool = mock.getTool("tiler")!;
       await tool.handler(
         { sourceUrl: "https://example.com/img.png", model: "claude" },
@@ -494,7 +497,7 @@ describe("registerTilerTool", () => {
         { filePath: "image.png" },
         {} as any
       );
-      expect(mockedCheckPreviewGate).toHaveBeenCalledWith("/output/tiles");
+      expect(mockedCheckPreviewGate).toHaveBeenCalledWith("/output/tiles", "/output/tiles/source.png");
       expect(mockedAnalyzeAndPreview).not.toHaveBeenCalled();
       expect(mockedComputeElicitationData).toHaveBeenCalled();
       expect(mockedExecuteTiling).toHaveBeenCalled();
@@ -541,7 +544,7 @@ describe("registerTilerTool", () => {
 
     it("calls appendTilesPage on elicitation fast path (Phase 1 → immediate tile)", async () => {
       mockedCheckPreviewGate.mockResolvedValue(null);
-      mockedTryElicitation.mockResolvedValue("claude");
+      mockedTryElicitation.mockResolvedValue({ status: "selected", model: "claude" });
       const tool = mock.getTool("tiler")!;
       await tool.handler(
         { filePath: "image.png" },
@@ -755,7 +758,7 @@ describe("registerTilerTool", () => {
 
   describe("capture-and-tile mode", () => {
     it("returns Phase 1 response with capture info when elicitation returns null", async () => {
-      mockedTryElicitation.mockResolvedValue(null);
+      mockedTryElicitation.mockResolvedValue({ status: "unsupported" });
       mockedBuildPhase1Response.mockReturnValue({
         content: [
           { type: "text", text: "Image: 1280 x 800\n\nSTOP" },
@@ -778,7 +781,7 @@ describe("registerTilerTool", () => {
     });
 
     it("still captures screenshot before returning Phase 1", async () => {
-      mockedTryElicitation.mockResolvedValue(null);
+      mockedTryElicitation.mockResolvedValue({ status: "unsupported" });
       mockedBuildPhase1Response.mockReturnValue({
         content: [
           { type: "text", text: "Image: 1280 x 800" },
@@ -939,7 +942,7 @@ describe("registerTilerTool", () => {
     it("Phase 1 response starts with STOP instruction (pipeline level)", async () => {
       // This tests the actual buildPhase1Response from tiling-pipeline
       // (tested in tiling-pipeline.test.ts), but we verify the mock returns it
-      mockedTryElicitation.mockResolvedValue(null);
+      mockedTryElicitation.mockResolvedValue({ status: "unsupported" });
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
         { filePath: "image.png" },
@@ -947,6 +950,272 @@ describe("registerTilerTool", () => {
       );
       const res = result as any;
       expect(res.content[0].text).toMatch(/^STOP/);
+    });
+  });
+
+  // ─── Bug #1: resolveImageSource errors wrapped ──────────────────────────────
+
+  describe("resolveImageSource error handling", () => {
+    it("wraps resolveImageSource errors in clean error message", async () => {
+      mockedResolveSource.mockRejectedValue(new Error("HTTP 404: Not Found"));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { sourceUrl: "https://example.com/missing.png" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Error tiling image");
+      expect(res.content[0].text).toContain("HTTP 404: Not Found");
+    });
+
+    it("does not call cleanup when resolveImageSource throws", async () => {
+      mockedResolveSource.mockRejectedValue(new Error("timeout"));
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/timeout.png" },
+        {} as any
+      );
+      // No cleanup to call since source was never resolved
+    });
+
+    it("still calls cleanup if resolveImageSource succeeds but later step throws", async () => {
+      const cleanup = vi.fn().mockResolvedValue(undefined);
+      mockedResolveSource.mockResolvedValue({
+        localPath: "/tmp/img.png",
+        sourceType: "url",
+        originalSource: "https://example.com/img.png",
+        cleanup,
+      });
+      mockedValidateFormat.mockReturnValue(null);
+      mockedResolveOutputDir.mockRejectedValue(new Error("ENOSPC"));
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { sourceUrl: "https://example.com/img.png" },
+        {} as any
+      );
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ─── Bug #2-3: Screenshot validation and error separation ─────────────────
+
+  describe("screenshot reuse error handling", () => {
+    it("throws descriptive error when screenshot exists but Sharp can't read it (no url)", async () => {
+      const mockedAccess = vi.mocked(fsPromises.access);
+      mockedAccess.mockResolvedValue(undefined);
+      const mockedSharp = vi.mocked(sharp);
+      mockedSharp.mockReturnValue({
+        metadata: vi.fn().mockRejectedValue(new Error("Input file has truncated header")),
+        png: vi.fn().mockReturnThis(),
+        webp: vi.fn().mockReturnThis(),
+        toFile: vi.fn().mockResolvedValue({}),
+      } as any);
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { screenshotPath: "/existing/corrupt.png", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("exists but could not be read");
+      expect(res.content[0].text).toContain("Input file has truncated header");
+      expect(res.content[0].text).not.toContain("not found");
+    });
+
+    it("throws error when screenshot has zero dimensions", async () => {
+      const mockedAccess = vi.mocked(fsPromises.access);
+      mockedAccess.mockResolvedValue(undefined);
+      const mockedSharp = vi.mocked(sharp);
+      mockedSharp.mockReturnValue({
+        metadata: vi.fn().mockResolvedValue({ width: 0, height: 0 }),
+        png: vi.fn().mockReturnThis(),
+        webp: vi.fn().mockReturnThis(),
+        toFile: vi.fn().mockResolvedValue({}),
+      } as any);
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { screenshotPath: "/existing/empty.png", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("invalid dimensions");
+    });
+
+    it("throws error when screenshot has undefined dimensions", async () => {
+      const mockedAccess = vi.mocked(fsPromises.access);
+      mockedAccess.mockResolvedValue(undefined);
+      const mockedSharp = vi.mocked(sharp);
+      mockedSharp.mockReturnValue({
+        metadata: vi.fn().mockResolvedValue({ width: undefined, height: undefined }),
+        png: vi.fn().mockReturnThis(),
+        webp: vi.fn().mockReturnThis(),
+        toFile: vi.fn().mockResolvedValue({}),
+      } as any);
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { screenshotPath: "/existing/broken.png", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("exists but could not be read");
+      expect(res.content[0].text).toContain("invalid dimensions");
+    });
+
+    it("still says 'not found' when file truly doesn't exist (no url)", async () => {
+      const mockedAccess = vi.mocked(fsPromises.access);
+      mockedAccess.mockRejectedValue(new Error("ENOENT"));
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { screenshotPath: "/missing/screenshot.png", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("not found");
+    });
+
+    it("recaptures from url when screenshot exists but unreadable", async () => {
+      const mockedAccess = vi.mocked(fsPromises.access);
+      mockedAccess.mockResolvedValue(undefined);
+      const mockedSharp = vi.mocked(sharp);
+      mockedSharp.mockReturnValue({
+        metadata: vi.fn().mockRejectedValue(new Error("corrupt")),
+        png: vi.fn().mockReturnValue({ toFile: vi.fn().mockResolvedValue({}) }),
+        webp: vi.fn().mockReturnThis(),
+        toFile: vi.fn().mockResolvedValue({}),
+      } as any);
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { url: "https://example.com", screenshotPath: "/existing/corrupt.png", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedCaptureUrl).toHaveBeenCalled();
+    });
+  });
+
+  // ─── Bug #4: Empty directory cleanup on failure ─────────────────────────────
+
+  describe("capture failure cleanup", () => {
+    it("attempts to remove empty output directory on capture failure", async () => {
+      mockedCaptureUrl.mockRejectedValue(new Error("Chrome not found"));
+      const mockedRmdir = vi.mocked(fsPromises.rmdir);
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(mockedRmdir).toHaveBeenCalledWith("/output/tiles");
+    });
+
+    it("does not crash when rmdir fails (non-empty dir)", async () => {
+      mockedCaptureUrl.mockRejectedValue(new Error("Chrome not found"));
+      const mockedRmdir = vi.mocked(fsPromises.rmdir);
+      mockedRmdir.mockRejectedValue(new Error("ENOTEMPTY"));
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Chrome not found");
+    });
+  });
+
+  // ─── Coverage #8: page param in get-tiles mode ──────────────────────────────
+
+  describe("get-tiles page param conversion", () => {
+    it("converts page=1 to start=5, end=9 (second batch)", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(20));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: undefined, page: 1 },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.content[0].text).toBe("Tiles 6-10 of 20");
+    });
+
+    it("converts page=2 to start=10, end=14 (third batch)", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(20));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: undefined, page: 2 },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.content[0].text).toBe("Tiles 11-15 of 20");
+    });
+
+    it("page=0 uses default start=0 (first batch)", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(20));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: undefined, page: 0 },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.content[0].text).toBe("Tiles 1-5 of 20");
+    });
+
+    it("explicit start/end takes precedence over page", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(20));
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 2, end: 4, page: 3 },
+        {} as any
+      );
+      const res = result as any;
+      // start=2 is non-zero, so page should be ignored
+      expect(res.content[0].text).toBe("Tiles 3-5 of 20");
+    });
+  });
+
+  // ─── Coverage #7: Capture one-shot path (model + outputDir) ─────────────────
+
+  describe("capture one-shot path", () => {
+    it("generates preview and tiles when model + outputDir provided upfront", async () => {
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { url: "https://example.com", model: "claude", outputDir: "/custom/output", page: 0, format: "webp" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      expect(mockedAnalyzeAndPreview).toHaveBeenCalled();
+      expect(mockedExecuteTiling).toHaveBeenCalledWith(
+        expect.any(String),
+        "/output/tiles",
+        expect.objectContaining({ model: "claude" })
+      );
+      expect(mockedBuildPhase2Response).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ model: "claude", captureInfo: expect.any(Object) })
+      );
+    });
+
+    it("capture one-shot prepends capture info to response", async () => {
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { url: "https://example.com", model: "openai", outputDir: "/custom", page: 0, format: "webp" },
+        {} as any
+      );
+      const passedResponse = mockedAppendTilesPage.mock.calls[0][0];
+      expect(passedResponse.content[0].text).toContain("Captured 1280x800 screenshot");
     });
   });
 });

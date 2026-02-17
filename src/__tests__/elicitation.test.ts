@@ -43,17 +43,17 @@ function createMockMcpServer(opts: {
 
 describe("tryElicitation", () => {
   describe("no elicitation support", () => {
-    it("returns null when client lacks elicitation support", async () => {
+    it("returns unsupported when client lacks elicitation support", async () => {
       const server = createMockMcpServer({ supportsElicitation: false });
       const result = await tryElicitation(server as any, makeOptions());
-      expect(result).toBeNull();
+      expect(result).toEqual({ status: "unsupported" });
       expect(server.server.elicitInput).not.toHaveBeenCalled();
     });
 
-    it("returns null when client capabilities are undefined", async () => {
+    it("returns unsupported when client capabilities are undefined", async () => {
       const server = createMockMcpServer({ capsUndefined: true });
       const result = await tryElicitation(server as any, makeOptions());
-      expect(result).toBeNull();
+      expect(result).toEqual({ status: "unsupported" });
     });
   });
 
@@ -64,7 +64,7 @@ describe("tryElicitation", () => {
         elicitResult: { action: "accept", content: { model: "claude" } },
       });
       const result = await tryElicitation(server as any, makeOptions());
-      expect(result).toBe("claude");
+      expect(result).toEqual({ status: "selected", model: "claude" });
       expect(server.server.elicitInput).toHaveBeenCalledTimes(1);
     });
 
@@ -74,25 +74,25 @@ describe("tryElicitation", () => {
         elicitResult: { action: "accept", content: { model: "openai" } },
       });
       const result = await tryElicitation(server as any, makeOptions({ model: "claude" }));
-      expect(result).toBe("openai");
+      expect(result).toEqual({ status: "selected", model: "openai" });
     });
 
-    it("returns null when user declines", async () => {
+    it("returns cancelled when user declines", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
         elicitResult: { action: "decline" },
       });
       const result = await tryElicitation(server as any, makeOptions());
-      expect(result).toBeNull();
+      expect(result).toEqual({ status: "cancelled" });
     });
 
-    it("returns null when user cancels", async () => {
+    it("returns cancelled when user cancels", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
         elicitResult: { action: "cancel" },
       });
       const result = await tryElicitation(server as any, makeOptions());
-      expect(result).toBeNull();
+      expect(result).toEqual({ status: "cancelled" });
     });
 
     it("sends oneOf enum schema with all models", async () => {
@@ -138,7 +138,7 @@ describe("tryElicitation", () => {
         elicitResult: { action: "accept", content: {} },
       });
       const result = await tryElicitation(server as any, makeOptions({ model: "openai" }));
-      expect(result).toBe("openai");
+      expect(result).toEqual({ status: "selected", model: "openai" });
     });
 
     it("falls back to options.model directly when user accepts without selecting", async () => {
@@ -147,7 +147,7 @@ describe("tryElicitation", () => {
         elicitResult: { action: "accept", content: {} },
       });
       const result = await tryElicitation(server as any, makeOptions({ model: "gemini3" }));
-      expect(result).toBe("gemini3"); // returns the provided default directly
+      expect(result).toEqual({ status: "selected", model: "gemini3" });
     });
   });
 });

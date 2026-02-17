@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { randomBytes } from "node:crypto";
 import { getImageMetadata, computeEstimateForModel, tileImage, listTilesInDirectory, readTileAsBase64 } from "./image-processor.js";
 import { generateInteractivePreview } from "./interactive-preview-generator.js";
 import { analyzeTiles } from "./tile-analyzer.js";
@@ -28,18 +29,18 @@ export async function resolveOutputDir(
   localPath: string,
   explicitOutputDir?: string,
 ): Promise<string> {
-  if (explicitOutputDir) return explicitOutputDir;
+  if (explicitOutputDir) return path.resolve(explicitOutputDir);
   if (sourceType === "file") {
     const basename = stripVersionSuffix(path.basename(localPath, path.extname(localPath)));
     const baseOutputDir = path.join(path.dirname(path.resolve(localPath)), "tiles", basename);
     return getVersionedOutputDir(baseOutputDir);
   }
-  return path.join(getDefaultOutputBase(), "tiles", `tiled_${Date.now()}`);
+  return path.join(getDefaultOutputBase(), "tiles", `tiled_${Date.now()}_${randomBytes(3).toString("hex")}`);
 }
 
 export function resolveOutputDirForCapture(explicitOutputDir?: string): string {
   if (explicitOutputDir) return path.resolve(explicitOutputDir);
-  return path.join(getDefaultOutputBase(), "tiles", `capture_${Date.now()}`);
+  return path.join(getDefaultOutputBase(), "tiles", `capture_${Date.now()}_${randomBytes(3).toString("hex")}`);
 }
 
 // ─── Format validation ─────────────────────────────────────────────────────
@@ -104,9 +105,19 @@ export async function computeElicitationData(
 
 // ─── Preview gate ───────────────────────────────────────────────────────────
 
-export async function checkPreviewGate(outputDir: string): Promise<string | null> {
+/**
+ * Checks if a Phase 1 preview exists in outputDir.
+ * When sourcePath is provided, only matches a preview tied to that source image.
+ * This prevents stale previews from a different image skipping Phase 1.
+ */
+export async function checkPreviewGate(outputDir: string, sourcePath?: string): Promise<string | null> {
   try {
     const entries = await fs.readdir(outputDir);
+    if (sourcePath) {
+      const baseName = path.basename(sourcePath, path.extname(sourcePath));
+      const expected = `${baseName}-preview.html`;
+      return entries.includes(expected) ? path.join(outputDir, expected) : null;
+    }
     const preview = entries.find((e) => e.endsWith("-preview.html"));
     return preview ? path.join(outputDir, preview) : null;
   } catch {
@@ -282,6 +293,8 @@ export interface Phase2ResponseOptions {
   captureInfo?: Record<string, unknown>;
   /** True when model was auto-selected (non-elicitation client) */
   autoSelected?: boolean;
+  /** Source path for preview gate matching in Phase 2 */
+  sourcePath?: string;
 }
 
 export async function buildPhase2Response(
@@ -297,7 +310,7 @@ export async function buildPhase2Response(
   );
 
   // Generate preview for Phase 2 (if not already present)
-  const existingPreview = await checkPreviewGate(result.outputDir);
+  const existingPreview = await checkPreviewGate(result.outputDir, opts.sourcePath);
   let previewPath = existingPreview;
 
   if (!previewPath) {
@@ -360,7 +373,11 @@ export async function buildPhase2Response(
   }
 
   if (opts.autoSelected) {
-    const table = formatModelComparisonTable(result.sourceImage.width, result.sourceImage.height, allModels);
+    const origW = result.resize?.originalWidth ?? result.sourceImage.width;
+    const origH = result.resize?.originalHeight ?? result.sourceImage.height;
+    const effW = result.resize ? result.sourceImage.width : undefined;
+    const effH = result.resize ? result.sourceImage.height : undefined;
+    const table = formatModelComparisonTable(origW, origH, allModels, effW, effH);
     summaryLines.push("", table);
     summaryLines.push(`\nTo use a different vision preset, specify model="claude" | "openai" | "gemini" | "gemini3"`);
   }

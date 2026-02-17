@@ -1,5 +1,6 @@
 import { spawn, execSync, execFileSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { setMaxListeners } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -202,8 +203,11 @@ function sendCdpCommand(
   ws: WebSocket,
   method: string,
   params: Record<string, unknown> = {},
-  timeout = 30_000
+  timeout = 30_000,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
+  if (signal?.aborted) return Promise.reject(new Error("Capture timed out"));
+
   const id = ++cdpCommandId;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -214,8 +218,19 @@ function sendCdpCommand(
       ws, [timer], `awaiting CDP command '${method}'`, reject
     );
 
+    // Wire abort signal for overall timeout enforcement
+    if (signal) {
+      const onAbort = () => settle(() => reject(new Error("Capture timed out")));
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
     addListener("message", (data: unknown) => {
-      const msg = JSON.parse((data as WebSocket.RawData).toString()) as CdpResponse;
+      let msg: CdpResponse;
+      try {
+        msg = JSON.parse((data as WebSocket.RawData).toString()) as CdpResponse;
+      } catch {
+        return; // Ignore malformed CDP messages
+      }
       if (msg.id === id) {
         settle(() => {
           if (msg.error) {
@@ -245,8 +260,11 @@ function waitForCdpEvent(
   ws: WebSocket,
   eventName: string,
   label: string,
-  timeout: number
+  timeout: number,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new Error("Capture timed out"));
+
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       settle(() => reject(new Error(`${label} timed out after ${timeout}ms`)));
@@ -256,8 +274,18 @@ function waitForCdpEvent(
       ws, [timer], `waiting for ${label}`, reject
     );
 
+    if (signal) {
+      const onAbort = () => settle(() => reject(new Error("Capture timed out")));
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
     addListener("message", (data: unknown) => {
-      const msg = JSON.parse((data as WebSocket.RawData).toString()) as CdpEvent;
+      let msg: CdpEvent;
+      try {
+        msg = JSON.parse((data as WebSocket.RawData).toString()) as CdpEvent;
+      } catch {
+        return; // Ignore malformed CDP messages
+      }
       if (msg.method === eventName) {
         settle(() => resolve());
       }
@@ -265,7 +293,9 @@ function waitForCdpEvent(
   });
 }
 
-function waitForNetworkIdle(ws: WebSocket, timeout: number): Promise<void> {
+function waitForNetworkIdle(ws: WebSocket, timeout: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new Error("Capture timed out"));
+
   return new Promise((resolve, reject) => {
     let pending = 0;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -274,9 +304,15 @@ function waitForNetworkIdle(ws: WebSocket, timeout: number): Promise<void> {
       settle(() => reject(new Error(`Network idle timed out after ${timeout}ms`)));
     }, timeout);
 
+    const timers = [overallTimer];
     const { settle, addListener } = createWsSettler(
-      ws, [overallTimer], "waiting for network idle", reject
+      ws, timers, "waiting for network idle", reject
     );
+
+    if (signal) {
+      const onAbort = () => settle(() => reject(new Error("Capture timed out")));
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     function checkIdle(): void {
       if (idleTimer) clearTimeout(idleTimer);
@@ -284,11 +320,17 @@ function waitForNetworkIdle(ws: WebSocket, timeout: number): Promise<void> {
         idleTimer = setTimeout(() => {
           settle(() => resolve());
         }, CAPTURE_IDLE_TIMEOUT_MS);
+        timers.push(idleTimer);
       }
     }
 
     addListener("message", (data: unknown) => {
-      const msg = JSON.parse((data as WebSocket.RawData).toString()) as CdpEvent;
+      let msg: CdpEvent;
+      try {
+        msg = JSON.parse((data as WebSocket.RawData).toString()) as CdpEvent;
+      } catch {
+        return; // Ignore malformed CDP messages
+      }
       if (msg.method === "Network.requestWillBeSent") {
         pending++;
         if (idleTimer) clearTimeout(idleTimer);
@@ -311,7 +353,8 @@ function waitForNetworkIdle(ws: WebSocket, timeout: number): Promise<void> {
 async function captureWithStitching(
   ws: WebSocket,
   width: number,
-  fullHeight: number
+  fullHeight: number,
+  signal?: AbortSignal,
 ): Promise<{ buffer: Buffer; segments: number }> {
   const segmentHeight = CHROME_MAX_CAPTURE_HEIGHT;
   const segments: { buffer: Buffer; top: number }[] = [];
@@ -329,7 +372,7 @@ async function captureWithStitching(
     // Scroll to offset (bitwise OR floors to integer, guarding against fractional drift)
     await sendCdpCommand(ws, "Runtime.evaluate", {
       expression: `window.scrollTo(0, ${offset | 0})`,
-    });
+    }, 30_000, signal);
 
     // Wait for rendering to settle
     await new Promise((r) => setTimeout(r, CAPTURE_STITCH_SETTLE_MS));
@@ -345,7 +388,7 @@ async function captureWithStitching(
         scale: 1,
       },
       captureBeyondViewport: true,
-    });
+    }, 30_000, signal);
 
     const data = result.data as string;
     const segmentBuffer = Buffer.from(data, "base64");
@@ -418,17 +461,25 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
   let chrome: ChildProcess | null = null;
   let ws: WebSocket | null = null;
 
-  // Overall timeout
+  // Overall timeout — signal is wired into CDP commands and wait conditions
   const abortController = new AbortController();
+  const signal = abortController.signal;
+  // Each CDP command/wait adds an abort listener; raise limit to avoid Node warning
+  // Worst case: ~15 commands + stitch segments (MAX_CAPTURE_HEIGHT / CHROME_MAX_CAPTURE_HEIGHT ≈ 13)
+  setMaxListeners(50, signal);
   const overallTimer = setTimeout(() => abortController.abort(), timeout);
 
   try {
-    // Spawn Chrome
-    chrome = spawn(chromePath, [
+    // Only use --no-sandbox when running as root or when explicitly requested via env var.
+    // Chrome's sandbox is an important security boundary — disabling it means a Chrome
+    // RCE exploit gives the attacker the user's full permissions.
+    const needsNoSandbox = process.getuid?.() === 0 || process.env.CHROME_NO_SANDBOX === "1";
+
+    const chromeArgs = [
       "--headless=new",
       "--remote-debugging-port=0",
       "--disable-gpu",
-      "--no-sandbox",
+      ...(needsNoSandbox ? ["--no-sandbox"] : []),
       "--disable-extensions",
       "--disable-background-networking",
       "--disable-default-apps",
@@ -437,7 +488,10 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       "--metrics-recording-only",
       "--no-first-run",
       `--window-size=${viewportWidth},${CAPTURE_DEFAULT_VIEWPORT_HEIGHT}`,
-    ], {
+    ];
+
+    // Spawn Chrome
+    chrome = spawn(chromePath, chromeArgs, {
       stdio: ["ignore", "ignore", "pipe"],
     });
 
@@ -551,9 +605,9 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
     });
 
     // Enable required domains
-    await sendCdpCommand(ws, "Page.enable");
+    await sendCdpCommand(ws, "Page.enable", {}, 30_000, signal);
     if (waitUntil === "networkidle") {
-      await sendCdpCommand(ws, "Network.enable");
+      await sendCdpCommand(ws, "Network.enable", {}, 30_000, signal);
     }
 
     // Set viewport before navigation so Chrome has valid dimensions for layout
@@ -562,21 +616,21 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       height: CAPTURE_DEFAULT_VIEWPORT_HEIGHT,
       deviceScaleFactor: 1,
       mobile: false,
-    });
+    }, 30_000, signal);
 
     // Navigate and wait
     const remainingTimeout = Math.max(1000, timeout - 15_000); // reserve ~15s for setup
 
     let waitPromise: Promise<void>;
     if (waitUntil === "load") {
-      waitPromise = waitForCdpEvent(ws, "Page.loadEventFired", "Page load", remainingTimeout);
+      waitPromise = waitForCdpEvent(ws, "Page.loadEventFired", "Page load", remainingTimeout, signal);
     } else if (waitUntil === "domcontentloaded") {
-      waitPromise = waitForCdpEvent(ws, "Page.domContentEventFired", "DOMContentLoaded", remainingTimeout);
+      waitPromise = waitForCdpEvent(ws, "Page.domContentEventFired", "DOMContentLoaded", remainingTimeout, signal);
     } else {
-      waitPromise = waitForNetworkIdle(ws, remainingTimeout);
+      waitPromise = waitForNetworkIdle(ws, remainingTimeout, signal);
     }
 
-    await sendCdpCommand(ws, "Page.navigate", { url });
+    await sendCdpCommand(ws, "Page.navigate", { url }, 30_000, signal);
     await waitPromise;
 
     // Optional delay
@@ -588,10 +642,37 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       throw new Error("Capture timed out");
     }
 
+    // Check if Chrome navigated to an error page (redirect loop, DNS failure, etc.)
+    const navResult = await sendCdpCommand(ws, "Runtime.evaluate", {
+      expression: "document.location.href",
+      returnByValue: true,
+    }, 30_000, signal);
+    const currentUrl = (navResult.result as { value?: string })?.value ?? "";
+    if (currentUrl.startsWith("chrome-error://")) {
+      // Extract error text from the page for a helpful message
+      const errorTextResult = await sendCdpCommand(ws, "Runtime.evaluate", {
+        expression: "document.body?.innerText?.slice(0, 500) || ''",
+        returnByValue: true,
+      }, 30_000, signal);
+      const errorText = (errorTextResult.result as { value?: string })?.value ?? "";
+      const snippet = errorText.trim() ? `: ${errorText.split("\n")[0]}` : "";
+      throw new Error(
+        `Chrome navigated to an error page instead of ${url}${snippet}. ` +
+        `This may indicate a redirect loop, DNS failure, or authentication requirement.`
+      );
+    }
+
     // Get page dimensions
-    const layoutMetrics = await sendCdpCommand(ws, "Page.getLayoutMetrics");
+    const layoutMetrics = await sendCdpCommand(ws, "Page.getLayoutMetrics", {}, 30_000, signal);
     const contentSize = layoutMetrics.cssContentSize as { width: number; height: number } | undefined
-      ?? layoutMetrics.contentSize as { width: number; height: number };
+      ?? layoutMetrics.contentSize as { width: number; height: number } | undefined;
+
+    if (!contentSize || typeof contentSize.width !== "number" || typeof contentSize.height !== "number") {
+      throw new Error(
+        "Chrome did not return page dimensions (neither cssContentSize nor contentSize in layoutMetrics). " +
+        "This may indicate an incompatible Chrome/Chromium version."
+      );
+    }
 
     const pageWidth = Math.ceil(contentSize.width);
     const pageHeight = Math.ceil(contentSize.height);
@@ -606,12 +687,12 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
         height: pageHeight,
         deviceScaleFactor: 1,
         mobile: false,
-      });
+      }, 30_000, signal);
 
       const result = await sendCdpCommand(ws, "Page.captureScreenshot", {
         format: "png",
         captureBeyondViewport: true,
-      });
+      }, 30_000, signal);
 
       buffer = Buffer.from(result.data as string, "base64");
     } else {
@@ -628,9 +709,9 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
         height: pageHeight,
         deviceScaleFactor: 1,
         mobile: false,
-      });
+      }, 30_000, signal);
 
-      const stitchResult = await captureWithStitching(ws, pageWidth, pageHeight);
+      const stitchResult = await captureWithStitching(ws, pageWidth, pageHeight, signal);
       buffer = stitchResult.buffer;
       segmentsStitched = stitchResult.segments;
     }

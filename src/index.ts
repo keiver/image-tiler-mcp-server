@@ -51,6 +51,16 @@ async function shutdown(): Promise<void> {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+process.on("uncaughtException", (error: Error) => {
+  console.error("Uncaught exception:", error);
+  shutdown().catch(() => process.exit(1));
+});
+
+process.on("unhandledRejection", (reason: unknown) => {
+  console.error("Unhandled rejection:", reason);
+  shutdown().catch(() => process.exit(1));
+});
+
 runStdio().catch((error: unknown) => {
   console.error("Server error:", error);
   process.exit(1);

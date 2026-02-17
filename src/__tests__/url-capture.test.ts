@@ -346,6 +346,90 @@ describe("captureUrl", () => {
     await expect(promise).rejects.toThrow("Timed out waiting for Chrome DevTools WebSocket URL");
     // The important thing is it didn't crash or OOM from unbounded buffer growth
   }, 15_000);
+
+  // ─── Chrome Error Page Detection ──────────────────────────────────
+
+  it("detects chrome-error:// page and throws descriptive error", async () => {
+    mockWsInstance.send = vi.fn((data: string) => {
+      const msg = JSON.parse(data);
+      const id = msg.id;
+      setTimeout(() => {
+        if (msg.method === "Page.navigate") {
+          respondToCdp(id, {});
+          respondToCdpEvent("Page.loadEventFired");
+        } else if (msg.method === "Runtime.evaluate") {
+          if (msg.params?.expression === "document.location.href") {
+            respondToCdp(id, { result: { value: "chrome-error://chromewebdata/" } });
+          } else if (msg.params?.expression?.includes("innerText")) {
+            respondToCdp(id, { result: { value: "This site can't be reached\nDNS_PROBE_FINISHED_NXDOMAIN" } });
+          } else {
+            respondToCdp(id, { result: { value: undefined } });
+          }
+        } else {
+          respondToCdp(id, {});
+        }
+      }, 0);
+    });
+    setTimeout(emitDevToolsUrl, 0);
+
+    await expect(captureUrl({ url: "https://nonexistent.invalid" })).rejects.toThrow(
+      /Chrome navigated to an error page.*This site can't be reached/
+    );
+  });
+
+  it("handles chrome-error:// with no body text", async () => {
+    mockWsInstance.send = vi.fn((data: string) => {
+      const msg = JSON.parse(data);
+      const id = msg.id;
+      setTimeout(() => {
+        if (msg.method === "Page.navigate") {
+          respondToCdp(id, {});
+          respondToCdpEvent("Page.loadEventFired");
+        } else if (msg.method === "Runtime.evaluate") {
+          if (msg.params?.expression === "document.location.href") {
+            respondToCdp(id, { result: { value: "chrome-error://chromewebdata/" } });
+          } else {
+            respondToCdp(id, { result: { value: "" } });
+          }
+        } else {
+          respondToCdp(id, {});
+        }
+      }, 0);
+    });
+    setTimeout(emitDevToolsUrl, 0);
+
+    await expect(captureUrl({ url: "https://broken.test" })).rejects.toThrow(
+      /Chrome navigated to an error page/
+    );
+  });
+
+  // ─── Abort Signal Tests ───────────────────────────────────────────
+
+  it("rejects CDP commands when overall timeout fires", async () => {
+    // Set up auto-responder that is very slow for one command
+    mockWsInstance.send = vi.fn((data: string) => {
+      const msg = JSON.parse(data);
+      const id = msg.id;
+      setTimeout(() => {
+        if (msg.method === "Page.navigate") {
+          respondToCdp(id, {});
+          respondToCdpEvent("Page.loadEventFired");
+        } else if (msg.method === "Runtime.evaluate") {
+          respondToCdp(id, { result: { value: undefined } });
+        } else if (msg.method === "Page.getLayoutMetrics") {
+          // Never respond — simulate a hang
+        } else {
+          respondToCdp(id, {});
+        }
+      }, 0);
+    });
+    setTimeout(emitDevToolsUrl, 0);
+
+    // Short timeout so abort fires before the 30s CDP default
+    await expect(
+      captureUrl({ url: "https://example.com", timeout: 16_000 })
+    ).rejects.toThrow("Capture timed out");
+  }, 20_000);
 });
 
 // ─── detectDisplayWidth ─────────────────────────────────────────────
