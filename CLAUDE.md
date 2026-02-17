@@ -65,7 +65,7 @@ No linter is configured.
 
 - `src/tools/tiler.ts` — Single unified tool registration with mode detection and MCP response formatting. Exports `registerTilerTool(server)`.
 - `src/services/image-processor.ts` — All Sharp image operations: metadata reading, grid calculation, tile extraction (WebP/PNG), base64 encoding, directory listing.
-- `src/services/image-source-resolver.ts` — Resolves image sources (file path, URL, data URL, base64) to a local file path with cleanup. Includes Content-Type validation for URL downloads, buffer size checks, base64 input validation, and exported helper functions (`isImageContentType`, `getImageMagicBytes`, `isImageSubtype`). Used by tile-image mode.
+- `src/services/image-source-resolver.ts` — Resolves image sources (file path, URL, data URL, base64) to a local file path with cleanup. Includes Content-Type validation for URL downloads, buffer size checks, base64 input validation, and exported helper functions (`guessExtensionFromContentType`, `guessExtensionFromMagicBytes`, `mimeSubtypeToExtension`). Used by tile-image mode.
 - `src/services/url-capture.ts` — Chrome DevTools Protocol capture: Chrome detection (`findChromePath`), headless Chrome spawning, CDP WebSocket communication, wait conditions (load/networkidle/domcontentloaded), scroll-stitching for pages >16,384px, cleanup. Used by capture-and-tile mode.
 - `src/services/tile-analyzer.ts` — Per-tile content analysis using Sharp `.stats()`. Classifies tiles by stdDev: low-detail/blank (<5), text-heavy (5-25), mixed (25-60), image-rich (>60). Used when `includeMetadata: true`.
 - `src/services/interactive-preview-generator.ts` — Generates the interactive HTML preview (`{basename}-preview.html`) with per-model tabs showing grid overlays, token estimates, and model comparison. Used as the Phase 1 preview gate artifact.
@@ -97,7 +97,7 @@ No linter is configured.
 - `constants.test.ts` — Value snapshot tests for all exported constants
 - `schemas.test.ts` — Zod schema boundary validation (min/max, defaults, required fields) for the unified TilerInputSchema
 - `image-processor.test.ts` — Core logic with mocked Sharp + fs (calculateGrid, tileImage, readTileAsBase64, listTilesInDirectory)
-- `image-source-resolver.test.ts` — Source resolution: file passthrough, data URL parsing, base64 decoding, cleanup idempotency, URL resolution (success, HTTP errors, timeout, size limits, Content-Type validation), helper function tests (`isImageContentType`, `getImageMagicBytes`, `isImageSubtype`)
+- `image-source-resolver.test.ts` — Source resolution: file passthrough, data URL parsing, base64 decoding, cleanup idempotency, URL resolution (success, HTTP errors, timeout, size limits, Content-Type validation), helper function tests (`guessExtensionFromContentType`, `guessExtensionFromMagicBytes`, `mimeSubtypeToExtension`)
 - `tiler-tool.test.ts` — Unified tool handler: all three modes (tile-image, get-tiles, capture-and-tile), format validation, response formatting, error wrapping, source resolution, pagination, Phase 1 stop instruction
 - `tiling-pipeline.test.ts` — Shared pipeline: resolveOutputDir, validateFormat, clampTileSize, findCheapestModel, computeElicitationData, analyzeAndPreview, checkPreviewGate, executeTiling, buildPhase1Response, buildPhase2Response (including autoSelected flag), appendTilesPage
 - `utils.test.ts` — `escapeHtml` unit tests covering HTML entities, mixed content, empty strings

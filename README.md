@@ -156,7 +156,7 @@ One unified tool that handles all image tiling operations. The mode is auto-dete
 > `tilesDir` > `url`/`screenshotPath` > `filePath`/`sourceUrl`/`dataUrl`/`imageBase64`.
 > Avoid passing params from different modes in the same call.
 
-**Mandatory two-phase workflow:**
+**Two-phase workflow (recommended):**
 
 1. **Phase 1** — Provide only the image source. Returns a model comparison table with a STOP instruction.
    Present the options to the user and wait for their choice.
@@ -164,7 +164,9 @@ One unified tool that handles all image tiling operations. The mode is auto-dete
    - **Tile-image mode:** re-include your original image source (`filePath`, `sourceUrl`, etc.)
    - **Capture mode:** include `screenshotPath` from Phase 1 (not the original `url`)
 
-> With elicitation-capable clients, the server shows an interactive model picker instead of the comparison table, streamlining Phase 1 into a single step.
+> **One-shot bypass:** If both `model` and `outputDir` are provided on the first call, Phase 1 is skipped — the server generates the preview and tiles in one step.
+
+> **Elicitation clients:** Clients that support elicitation get an interactive model picker instead of the comparison table, streamlining the workflow into a single step.
 
 #### Parameters — Image Source (tile-image mode)
 
@@ -203,8 +205,8 @@ Supports scroll-stitching for pages taller than 16,384px.
 |---|---|---|---|---|
 | `model` | string | no | Auto (cheapest) | Target vision model: `"claude"`, `"openai"`, `"gemini"`, `"gemini3"`. Auto-selects the most token-efficient preset when omitted. Provide on Phase 2, not Phase 1. |
 | `tileSize` | number | no | Model default | Tile size in pixels. Clamped to model's supported range with a warning if out of bounds. |
-| `maxDimension` | number | no | `10000` | Max dimension in px (0-65536). Pre-downscales the image before tiling. Set to 0 to disable. |
-| `outputDir` | string | no | `tiles/{name}/` next to source | Directory to save tiles. For captures, defaults to `~/Desktop/tiles/capture_<timestamp>/`. |
+| `maxDimension` | number | no | `10000` | Max dimension in px (0 to disable, or 256-65536). Values 1-255 are silently clamped to 256. Pre-downscales the image so its longest side fits within this value before tiling. |
+| `outputDir` | string | no | See below | Directory to save tiles. Defaults: for file sources, `tiles/{name}_vN/` next to source (auto-incrementing: `_v1`, `_v2`, ..., `_vN`); for captures, `{base}/tiles/capture_{timestamp}_{hex}/` where `{base}` is `~/Desktop`, `~/Downloads`, or `~` (first available). |
 | `page` | number | no | `0` | Tile page to return (0 = first 5, 1 = next 5, etc.) |
 | `format` | string | no | `"webp"` | Output format: `"webp"` (smaller, default) or `"png"` (lossless) |
 | `includeMetadata` | boolean | no | `true` | Analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats |
@@ -220,13 +222,14 @@ Supports scroll-stitching for pages taller than 16,384px.
 | `previewPath` | string \| null | Interactive HTML preview path |
 | `allModels` | array | `{ model, label, tileSize, cols, rows, tiles, tokens }` per preset |
 | `screenshotPath` | string | *(capture mode only)* Path to screenshot for Phase 2 |
+| `warnings` | array | *(when present)* Warning messages (e.g., preview generation failures) |
 
 **Phase 2 JSON** (second content block):
 
 | Field | Type | Description |
 |---|---|---|
 | `model` | string | Selected model ID |
-| `sourceImage` | object | `{ width, height }` of the (possibly resized) source |
+| `sourceImage` | object | `{ width, height, format, fileSize, channels }` of the (possibly resized) source |
 | `grid` | object | `{ cols, rows, totalTiles, tileSize, estimatedTokens }` |
 | `outputDir` | string | Tiles directory |
 | `page` | object | `{ current, tilesReturned, totalTiles, hasMore }` |
@@ -235,6 +238,8 @@ Supports scroll-stitching for pages taller than 16,384px.
 | `tileHints` | array | *(when `includeMetadata: true`)* Per-tile content analysis |
 | `resize` | object | *(when downscaled)* `{ originalWidth, originalHeight, resizedWidth, resizedHeight, scaleFactor }` |
 | `previewPath` | string | Interactive HTML preview path (when available) |
+| `warnings` | array | *(when present)* Warning messages (e.g., tile size clamping, source conflicts) |
+| `allModels` | array | *(when `autoSelected: true`)* All model estimates for manual override |
 
 ## Usage
 
@@ -330,6 +335,18 @@ Your MCP client will:
 2. Ask your AI assistant: _"Tile `/path/to/screencapture-localhost-3000.png` and review all sections"_
 3. The client pages through tiles automatically, analyzing each batch
 
+## Behaviors
+
+**Source conflict:** When multiple image source params are provided (e.g., both `filePath` and `sourceUrl`), the server uses the highest-precedence source and emits a warning: `filePath` > `sourceUrl` > `dataUrl` > `imageBase64`.
+
+**Preview gate re-entry:** If an `outputDir` already contains a `*-preview.html` file from a previous Phase 1, the server skips Phase 1 and proceeds directly to Phase 2 (tiling).
+
+**Elicitation cancellation:** When a user cancels the elicitation model picker, the server returns `"Tiling cancelled by user."` and does not tile.
+
+**Versioned output directories:** Repeated tiling of the same source image creates `_v1`, `_v2`, ..., `_vN` directories automatically to avoid overwriting previous results.
+
+**Tile naming convention:** Tiles are named `tile_ROW_COL.{format}` with zero-padded 3-digit indices (e.g., `tile_000_003.webp`), ordered row-by-row, left-to-right.
+
 ## Token Cost Reference
 
 Costs vary by model. Formula: `tokens = totalTiles x tokensPerTile`
@@ -379,6 +396,12 @@ PNG, JPEG, WebP, TIFF, GIF
 **"File not found"** - Use absolute paths. Relative paths resolve from the MCP server's working directory.
 
 **"MCP tools not available"** - Restart your MCP client after config changes. In Claude Code, run `/mcp` to check server status.
+
+**"Chrome not found"** - Install Google Chrome or set the `CHROME_PATH` environment variable to the Chrome executable (must be an absolute path).
+
+**Running as root / in Docker** - Set `CHROME_NO_SANDBOX=1` to launch Chrome without sandbox (also enabled automatically when running as root).
+
+**`viewportWidth` auto-detection** - Auto-detection of screen width works on macOS only. On other platforms, falls back to 1280px.
 
 ## Security
 
