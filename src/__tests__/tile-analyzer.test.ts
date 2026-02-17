@@ -15,7 +15,7 @@ vi.mock("sharp", () => ({ default: mockSharp }));
 import { analyzeTile, analyzeTiles } from "../services/tile-analyzer.js";
 
 describe("analyzeTile", () => {
-  it("classifies low-detail (stdDev < 5) as low-detail + isBlank", async () => {
+  it("classifies blank (stdDev < 5) as blank + isBlank", async () => {
     mockStats.mockResolvedValue({
       channels: [
         { mean: 250, stdev: 2 },
@@ -25,14 +25,14 @@ describe("analyzeTile", () => {
     });
 
     const result = await analyzeTile("/tiles/tile_000_000.webp", 0);
-    expect(result.contentHint).toBe("low-detail");
+    expect(result.contentHint).toBe("blank");
     expect(result.isBlank).toBe(true);
     expect(result.index).toBe(0);
     expect(result.meanBrightness).toBe(250);
     expect(result.stdDev).toBe(2);
   });
 
-  it("classifies text-heavy (5 <= stdDev < 25)", async () => {
+  it("classifies low-detail (5 <= stdDev < 25)", async () => {
     mockStats.mockResolvedValue({
       channels: [
         { mean: 200, stdev: 15 },
@@ -42,12 +42,12 @@ describe("analyzeTile", () => {
     });
 
     const result = await analyzeTile("/tiles/tile_000_001.webp", 1);
-    expect(result.contentHint).toBe("text-heavy");
+    expect(result.contentHint).toBe("low-detail");
     expect(result.isBlank).toBe(false);
     expect(result.stdDev).toBe(15);
   });
 
-  it("classifies image-rich (stdDev > 60)", async () => {
+  it("classifies high-detail (stdDev > 60)", async () => {
     mockStats.mockResolvedValue({
       channels: [
         { mean: 128, stdev: 70 },
@@ -57,7 +57,7 @@ describe("analyzeTile", () => {
     });
 
     const result = await analyzeTile("/tiles/tile_001_000.webp", 2);
-    expect(result.contentHint).toBe("image-rich");
+    expect(result.contentHint).toBe("high-detail");
     expect(result.isBlank).toBe(false);
   });
 
@@ -94,17 +94,17 @@ describe("analyzeTile", () => {
     expect(result.stdDev.toString().split(".")[1]?.length ?? 0).toBeLessThanOrEqual(2);
   });
 
-  it("boundary: stdDev exactly 5 is text-heavy (not low-detail)", async () => {
+  it("boundary: stdDev exactly 5 is low-detail (not blank)", async () => {
     mockStats.mockResolvedValue({
       channels: [{ mean: 200, stdev: 5 }],
     });
 
     const result = await analyzeTile("/tiles/tile.webp", 0);
-    expect(result.contentHint).toBe("text-heavy");
+    expect(result.contentHint).toBe("low-detail");
     expect(result.isBlank).toBe(false);
   });
 
-  it("boundary: stdDev exactly 25 is mixed (not text-heavy)", async () => {
+  it("boundary: stdDev exactly 25 is mixed (not low-detail)", async () => {
     mockStats.mockResolvedValue({
       channels: [{ mean: 128, stdev: 25 }],
     });
@@ -113,7 +113,7 @@ describe("analyzeTile", () => {
     expect(result.contentHint).toBe("mixed");
   });
 
-  it("boundary: stdDev exactly 60 is mixed (not image-rich)", async () => {
+  it("boundary: stdDev exactly 60 is mixed (not high-detail)", async () => {
     mockStats.mockResolvedValue({
       channels: [{ mean: 128, stdev: 60 }],
     });

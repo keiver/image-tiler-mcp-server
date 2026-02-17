@@ -33,6 +33,10 @@ vi.mock("../services/elicitation.js", () => ({
   tryElicitation: vi.fn(),
 }));
 
+vi.mock("../services/tile-analyzer.js", () => ({
+  analyzeTiles: vi.fn(),
+}));
+
 vi.mock("../utils.js", () => ({
   getDefaultOutputBase: vi.fn().mockReturnValue("/Users/test/Desktop"),
   sanitizeHostname: vi.fn().mockReturnValue("example-com"),
@@ -79,10 +83,15 @@ import {
   computeElicitationData,
 } from "../services/tiling-pipeline.js";
 import { tryElicitation } from "../services/elicitation.js";
+import { analyzeTiles } from "../services/tile-analyzer.js";
+import { buildTileHints } from "../utils.js";
 import { registerTilerTool } from "../tools/tiler.js";
 import { createMockServer } from "./helpers/mock-server.js";
 import * as fsPromises from "node:fs/promises";
 import sharp from "sharp";
+
+const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
+const mockedBuildTileHints = vi.mocked(buildTileHints);
 
 const mockedResolveSource = vi.mocked(resolveImageSource);
 const mockedCaptureUrl = vi.mocked(captureUrl);
@@ -183,8 +192,8 @@ describe("registerTilerTool", () => {
     mockedAppendTilesPage.mockResolvedValue(appendedResponse);
     mockedBuildPhase1Response.mockReturnValue({
       content: [
-        { type: "text", text: "STOP — Do NOT call this tool again" },
-        { type: "text", text: '{"status":"pending_confirmation"}' },
+        { type: "text", text: "ACTION REQUIRED: Present the tiling options below to the user and wait for their choice.\n\n---\n\nImage: 2144 x 2144" },
+        { type: "text", text: '{"status":"awaiting_user_choice"}' },
       ],
     });
 
@@ -199,6 +208,7 @@ describe("registerTilerTool", () => {
 
     // Default mocks for get-tiles
     mockedReadBase64.mockResolvedValue("AAAA");
+    mockedAnalyzeTiles.mockResolvedValue([]);
   });
 
   it("registers the tool with correct name", () => {
@@ -209,12 +219,14 @@ describe("registerTilerTool", () => {
     );
   });
 
-  it("description includes mandatory two-phase workflow", () => {
+  it("description includes mandatory two-phase workflow and cost guidance", () => {
     const registerCall = (mock.server.registerTool as any).mock.calls[0];
     const description = registerCall[1].description as string;
     expect(description).toContain("MANDATORY two-phase workflow");
     expect(description).toContain("DO NOT skip Phase 1");
     expect(description).toContain("DO NOT include model, tileSize, or outputDir");
+    expect(description).toContain("DO NOT select a model yourself");
+    expect(description).toContain("cheapest option");
   });
 
   // ─── No input ─────────────────────────────────────────────────────────────
@@ -272,7 +284,7 @@ describe("registerTilerTool", () => {
         {} as any
       );
       const res = result as any;
-      expect(res.content[0].text).toContain("STOP");
+      expect(res.content[0].text).toContain("ACTION REQUIRED");
       expect(mockedBuildPhase1Response).toHaveBeenCalledWith(sampleAnalysis);
       expect(mockedExecuteTiling).not.toHaveBeenCalled();
       expect(mockedAppendTilesPage).not.toHaveBeenCalled();
@@ -752,17 +764,66 @@ describe("registerTilerTool", () => {
       expect(labels).toHaveLength(1);
       expect(labels[0].text).toContain("[row -1, col -1]");
     });
+
+    it("annotates tile labels with content hints from analyzeTiles", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(4));
+      mockedAnalyzeTiles.mockResolvedValue([
+        { index: 0, contentHint: "low-detail", meanBrightness: 200, stdDev: 15, isBlank: false },
+        { index: 1, contentHint: "high-detail", meanBrightness: 128, stdDev: 65, isBlank: false },
+        { index: 2, contentHint: "mixed", meanBrightness: 150, stdDev: 40, isBlank: false },
+        { index: 3, contentHint: "low-detail", meanBrightness: 210, stdDev: 12, isBlank: false },
+      ]);
+      mockedBuildTileHints.mockReturnValue({
+        "low-detail": [0, 3],
+        "high-detail": [1],
+        "mixed": [2],
+      });
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 3 },
+        {} as any
+      );
+      const res = result as any;
+      const labels = res.content.filter(
+        (c: any) => c.type === "text" && c.text.startsWith("Tile ")
+      );
+      expect(labels[0].text).toContain("(low-detail)");
+      expect(labels[1].text).toContain("(high-detail)");
+      expect(labels[2].text).toContain("(mixed)");
+      expect(labels[3].text).toContain("(low-detail)");
+    });
+
+    it("returns tiles without annotations when analyzeTiles fails", async () => {
+      mockedListTiles.mockResolvedValue(makeTilePaths(4));
+      mockedAnalyzeTiles.mockRejectedValue(new Error("Sharp crashed"));
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { tilesDir: "/tiles", start: 0, end: 3 },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBeUndefined();
+      const labels = res.content.filter(
+        (c: any) => c.type === "text" && c.text.startsWith("Tile ")
+      );
+      expect(labels).toHaveLength(4);
+      for (const label of labels) {
+        expect(label.text).not.toContain("(");
+      }
+    });
   });
 
   // ─── Capture and Tile Mode ────────────────────────────────────────────────
 
   describe("capture-and-tile mode", () => {
-    it("returns Phase 1 response with capture info when elicitation returns null", async () => {
+    it("returns Phase 1 response with capture info appended when elicitation returns null", async () => {
       mockedTryElicitation.mockResolvedValue({ status: "unsupported" });
       mockedBuildPhase1Response.mockReturnValue({
         content: [
-          { type: "text", text: "Image: 1280 x 800\n\nSTOP" },
-          { type: "text", text: '{"status":"pending_confirmation"}' },
+          { type: "text", text: "ACTION REQUIRED: Present the tiling options below to the user and wait for their choice.\n\n---\n\nImage: 1280 x 800" },
+          { type: "text", text: '{"status":"awaiting_user_choice"}' },
         ],
       });
       const tool = mock.getTool("tiler")!;
@@ -771,8 +832,11 @@ describe("registerTilerTool", () => {
         {} as any
       );
       const res = result as any;
-      expect(res.content[0].text).toContain("Captured 1280x800 screenshot");
-      expect(res.content[0].text).toContain("Screenshot saved to:");
+      // ACTION REQUIRED leads (not buried under capture info)
+      expect(res.content[0].text).toMatch(/^ACTION REQUIRED/);
+      // Capture info appended at end
+      expect(res.content[0].text).toContain("(Screenshot: 1280x800");
+      expect(res.content[0].text).toContain("example.com");
       expect(mockedBuildPhase1Response).toHaveBeenCalledWith(
         sampleAnalysis,
         expect.objectContaining({ screenshotPath: expect.any(String) })
@@ -784,8 +848,8 @@ describe("registerTilerTool", () => {
       mockedTryElicitation.mockResolvedValue({ status: "unsupported" });
       mockedBuildPhase1Response.mockReturnValue({
         content: [
-          { type: "text", text: "Image: 1280 x 800" },
-          { type: "text", text: '{"status":"pending_confirmation"}' },
+          { type: "text", text: "ACTION REQUIRED: Present the tiling options below\n\nImage: 1280 x 800" },
+          { type: "text", text: '{"status":"awaiting_user_choice"}' },
         ],
       });
       const tool = mock.getTool("tiler")!;
@@ -938,8 +1002,8 @@ describe("registerTilerTool", () => {
 
   // ─── Phase 1 Stop Instruction ─────────────────────────────────────────────
 
-  describe("Phase 1 stop instruction", () => {
-    it("Phase 1 response starts with STOP instruction (pipeline level)", async () => {
+  describe("Phase 1 ACTION REQUIRED instruction", () => {
+    it("Phase 1 response leads with ACTION REQUIRED instruction", async () => {
       // This tests the actual buildPhase1Response from tiling-pipeline
       // (tested in tiling-pipeline.test.ts), but we verify the mock returns it
       mockedTryElicitation.mockResolvedValue({ status: "unsupported" });
@@ -949,7 +1013,8 @@ describe("registerTilerTool", () => {
         {} as any
       );
       const res = result as any;
-      expect(res.content[0].text).toMatch(/^STOP/);
+      expect(res.content[0].text).toMatch(/^ACTION REQUIRED/);
+      expect(res.content[0].text).toContain("ACTION REQUIRED");
     });
   });
 

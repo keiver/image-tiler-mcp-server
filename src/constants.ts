@@ -1,4 +1,4 @@
-export const VISION_MODELS = ["claude", "openai", "gemini", "gemini3"] as const;
+export const VISION_MODELS = ["claude", "openai", "gemini3", "gemini"] as const;
 export type VisionModel = (typeof VISION_MODELS)[number];
 
 export interface ModelVisionConfig {
@@ -85,6 +85,11 @@ export const CAPTURE_IDLE_TIMEOUT_MS = 500;
 export const WAIT_UNTIL_OPTIONS = ["load", "networkidle", "domcontentloaded"] as const;
 export type WaitUntil = (typeof WAIT_UNTIL_OPTIONS)[number];
 export const ALLOWED_CAPTURE_PROTOCOLS = ["https:", "http:"] as const;
+
+// Lazy loading
+export const LAZY_LOAD_SCROLL_PAUSE_MS = 100;
+export const LAZY_LOAD_IMAGE_TIMEOUT_MS = 5000;
+export const LAZY_LOAD_TOTAL_TIMEOUT_MS = 15_000;
 
 // Security limits
 export const MAX_IMAGE_PIXELS = 256_000_000; // 256 megapixels (~1GB decoded RGBA)

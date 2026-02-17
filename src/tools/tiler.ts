@@ -23,7 +23,8 @@ import {
   computeElicitationData,
 } from "../services/tiling-pipeline.js";
 import { tryElicitation } from "../services/elicitation.js";
-import { sanitizeHostname } from "../utils.js";
+import { sanitizeHostname, buildTileHints } from "../utils.js";
+import { analyzeTiles } from "../services/tile-analyzer.js";
 import type { ResolvedImageSource } from "../types.js";
 import {
   PNG_COMPRESSION_LEVEL,
@@ -46,6 +47,7 @@ MANDATORY two-phase workflow — DO NOT skip Phase 1:
            DO NOT include model, tileSize, or outputDir.
            Returns a model comparison table with token estimates and an outputDir.
            You MUST present this table to the user and ask which preset they prefer.
+           DO NOT select a model yourself — the user decides. If you must auto-select, always use the cheapest option.
 
   Phase 2: Call again with the user's chosen model + the outputDir from Phase 1.
            Re-include your original image source (filePath, sourceUrl, etc.).
@@ -200,6 +202,19 @@ async function handleGetTiles(
     const summary = `Tiles ${start + 1}-${effectiveEnd + 1} of ${totalTiles}`;
     content.push({ type: "text" as const, text: summary });
 
+    // Analyze current batch for content hints
+    const hintMap = new Map<number, string>();
+    try {
+      const batchPaths = tilePaths.slice(start, effectiveEnd + 1);
+      const metadata = await analyzeTiles(batchPaths);
+      const hints = buildTileHints(metadata);
+      for (const [hint, indices] of Object.entries(hints)) {
+        for (const localIdx of indices) {
+          hintMap.set(start + localIdx, hint);
+        }
+      }
+    } catch { /* analysis failed — skip annotations */ }
+
     for (let i = start; i <= effectiveEnd; i++) {
       const tilePath = tilePaths[i];
       const filename = path.basename(tilePath);
@@ -208,9 +223,11 @@ async function handleGetTiles(
       const col = match ? parseInt(match[2], 10) : -1;
       const mimeType = path.extname(tilePath) === ".webp" ? "image/webp" : "image/png";
 
+      const hint = hintMap.get(i);
+      const hintSuffix = hint ? ` (${hint})` : "";
       content.push({
         type: "text" as const,
-        text: `Tile ${i + 1}/${totalTiles} [row ${row}, col ${col}]`,
+        text: `Tile ${i + 1}/${totalTiles} [row ${row}, col ${col}]${hintSuffix}`,
       });
 
       const base64Data = await readTileAsBase64(tilePath);
@@ -583,9 +600,8 @@ async function handleCaptureAndTile(
 
     if (elicitResult.status !== "selected") {
       // Phase 1: return comparison + screenshot path
-      const captureSummary = `Captured ${captureWidth}x${captureHeight} screenshot${url ? ` of ${url}` : ""}\nScreenshot saved to: ${screenshotPath}\n\n`;
       const phase1 = buildPhase1Response(analysis, { screenshotPath });
-      phase1.content[0].text = captureSummary + phase1.content[0].text;
+      phase1.content[0].text += `\n\n(Screenshot: ${captureWidth}x${captureHeight}${url ? ` of ${url}` : ""}, saved to ${screenshotPath})`;
       return phase1;
     }
 

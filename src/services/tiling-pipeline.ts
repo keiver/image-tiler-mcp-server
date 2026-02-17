@@ -19,6 +19,7 @@ import {
   formatModelComparisonTable,
   simulateDownscale,
   buildTileHints,
+  formatTileHintsSummary,
 } from "../utils.js";
 import type { ModelEstimate, TileImageResult, AnalysisResult, ImageSourceType } from "../types.js";
 
@@ -212,25 +213,24 @@ export function buildPhase1Response(
   const tableH = effectiveImage?.height ?? sourceImage.height;
   const table = formatModelComparisonTable(sourceImage.width, sourceImage.height, allModels, tableW, tableH);
 
-  const phase2Hint = extraFields?.screenshotPath
-    ? `When the user chooses, call this tool again with: model + outputDir + screenshotPath from below.`
-    : `When the user chooses, call this tool again with: model + outputDir from below, plus the original image source (filePath, sourceUrl, etc.) from your first call.`;
-
   const parts: string[] = [
-    `STOP — Do NOT call this tool again until the user chooses a tiling preset from the table below.\n` +
-    `Present these options to the user and wait for their explicit choice.\n` +
-    `${phase2Hint}\n\n`,
+    `ACTION REQUIRED: Present the tiling options below to the user and wait for their choice.\n` +
+    `Do NOT pick a model yourself — always default to the cheapest if you must choose.\n` +
+    `\n---\n\n`,
     table,
   ];
   if (previewPath) {
     parts.push(`\nPreview: ${previewPath}`);
   }
+  parts.push(
+    `\n\nAsk the user which preset they want (claude, openai, gemini3, or gemini).`
+  );
   if (warnings && warnings.length > 0) {
     parts.push(`\n\n⚠ ${warnings.join("\n⚠ ")}`);
   }
 
   const structured: Record<string, unknown> = {
-    status: "pending_confirmation",
+    status: "awaiting_user_choice",
     previewPath: previewPath ?? null,
     outputDir,
     allModels,
@@ -362,11 +362,24 @@ export async function buildPhase2Response(
     );
   }
 
+  // Compute tile hints early so we can include the summary in text output
+  let tileHints: Record<string, number[]> | undefined;
+  if (opts.includeMetadata) {
+    const tileMetadata = await analyzeTiles(result.tiles.map((t) => t.filePath));
+    tileHints = buildTileHints(tileMetadata);
+  }
+
   summaryLines.push(
     `Tiled ${result.sourceImage.width}x${result.sourceImage.height} image for ${config.label}`,
     `  ${result.grid.cols}x${result.grid.rows} grid, ${result.grid.totalTiles} tiles at ${result.grid.tileSize}px (~${result.grid.estimatedTokens.toLocaleString()} tokens)`,
-    `  Saved to: ${result.outputDir}`,
   );
+
+  if (tileHints) {
+    const hintSummary = formatTileHintsSummary(tileHints);
+    if (hintSummary) summaryLines.push(`  ${hintSummary}`);
+  }
+
+  summaryLines.push(`  Saved to: ${result.outputDir}`);
 
   if (previewPath) {
     summaryLines.push(`  Preview: ${previewPath}`);
@@ -379,7 +392,7 @@ export async function buildPhase2Response(
     const effH = result.resize ? result.sourceImage.height : undefined;
     const table = formatModelComparisonTable(origW, origH, allModels, effW, effH);
     summaryLines.push("", table);
-    summaryLines.push(`\nTo use a different vision preset, specify model="claude" | "openai" | "gemini" | "gemini3"`);
+    summaryLines.push(`\nTo use a different vision preset, specify model="claude" | "openai" | "gemini3" | "gemini"`);
   }
 
   if (warnings.length > 0) {
@@ -400,9 +413,8 @@ export async function buildPhase2Response(
     structuredOutput.allModels = allModels;
   }
 
-  if (opts.includeMetadata) {
-    const tileMetadata = await analyzeTiles(result.tiles.map((t) => t.filePath));
-    structuredOutput.tileHints = buildTileHints(tileMetadata);
+  if (tileHints) {
+    structuredOutput.tileHints = tileHints;
   }
 
   if (result.resize) structuredOutput.resize = result.resize;
@@ -445,6 +457,16 @@ export async function appendTilesPage(
   };
   jsonBlock.text = JSON.stringify(structuredOutput, null, 2);
 
+  // Build hint map from structured output (if available)
+  const hintMap = new Map<number, string>();
+  if (structuredOutput.tileHints) {
+    for (const [hint, indices] of Object.entries(structuredOutput.tileHints)) {
+      for (const idx of indices as number[]) {
+        hintMap.set(idx, hint);
+      }
+    }
+  }
+
   const content: ContentBlock[] = [...phase2Response.content];
 
   if (start < totalTiles) {
@@ -456,7 +478,9 @@ export async function appendTilesPage(
       const col = match ? parseInt(match[2], 10) : -1;
       const mimeType = path.extname(tilePath) === ".webp" ? "image/webp" : "image/png";
 
-      content.push({ type: "text" as const, text: `Tile ${i + 1}/${totalTiles} [row ${row}, col ${col}]` });
+      const hint = hintMap.get(i);
+      const hintSuffix = hint ? ` (${hint})` : "";
+      content.push({ type: "text" as const, text: `Tile ${i + 1}/${totalTiles} [row ${row}, col ${col}]${hintSuffix}` });
       const base64Data = await readTileAsBase64(tilePath);
       content.push({ type: "image" as const, data: base64Data, mimeType });
     }

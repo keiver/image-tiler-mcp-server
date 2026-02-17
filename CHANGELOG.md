@@ -9,7 +9,7 @@
 ### Added
 - **URL capture via Chrome DevTools Protocol** — full-page screenshots from `http:`/`https:` URLs with headless Chrome. `CHROME_PATH` env var overrides auto-detection. Pages taller than 16,384px are scroll-stitched automatically
 - **WebP default output** — tiles now output as WebP (quality 80) instead of PNG. `format` param (`"webp"` | `"png"`) to override
-- **Tile metadata analysis** — `includeMetadata: true` runs per-tile content classification (text-heavy, image-rich, low-detail, mixed) via Sharp stats
+- **Tile metadata analysis** — `includeMetadata: true` runs per-tile content classification (blank, low-detail, mixed, high-detail) via Sharp stats
 - **MCP elicitation support** — elicitation-capable clients get an interactive model picker; others fall through to the comparison table flow
 - **Two-phase confirmation workflow** — Phase 1 returns model comparison table with STOP instruction; Phase 2 performs tiling with user's chosen model
 - **Versioned output directories** — file-source tiling creates versioned output dirs to avoid overwriting previous runs

@@ -18,7 +18,7 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
 }));
 
-import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath, stripVersionSuffix, buildTileHints, formatModelComparisonTable, simulateDownscale, withTimeout } from "../utils.js";
+import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath, stripVersionSuffix, buildTileHints, formatTileHintsSummary, formatModelComparisonTable, simulateDownscale, withTimeout } from "../utils.js";
 import type { TileMetadata, ModelEstimate } from "../types.js";
 
 describe("escapeHtml", () => {
@@ -306,27 +306,26 @@ describe("formatModelComparisonTable", () => {
 describe("buildTileHints", () => {
   it("groups tiles by content hint", () => {
     const metadata: TileMetadata[] = [
-      { index: 0, contentHint: "text-heavy", meanBrightness: 200, stdDev: 15, isBlank: false },
-      { index: 1, contentHint: "image-rich", meanBrightness: 128, stdDev: 65, isBlank: false },
+      { index: 0, contentHint: "low-detail", meanBrightness: 200, stdDev: 15, isBlank: false },
+      { index: 1, contentHint: "high-detail", meanBrightness: 128, stdDev: 65, isBlank: false },
       { index: 2, contentHint: "mixed", meanBrightness: 150, stdDev: 40, isBlank: false },
-      { index: 3, contentHint: "text-heavy", meanBrightness: 210, stdDev: 12, isBlank: false },
+      { index: 3, contentHint: "low-detail", meanBrightness: 210, stdDev: 12, isBlank: false },
     ];
     const hints = buildTileHints(metadata);
-    expect(hints["text-heavy"]).toEqual([0, 3]);
-    expect(hints["image-rich"]).toEqual([1]);
+    expect(hints["low-detail"]).toEqual([0, 3]);
+    expect(hints["high-detail"]).toEqual([1]);
     expect(hints["mixed"]).toEqual([2]);
   });
 
-  it("uses 'blank' key for blank tiles regardless of contentHint", () => {
+  it("groups blank tiles under 'blank' key via contentHint", () => {
     const metadata: TileMetadata[] = [
-      { index: 0, contentHint: "low-detail", meanBrightness: 250, stdDev: 2, isBlank: true },
-      { index: 1, contentHint: "low-detail", meanBrightness: 248, stdDev: 3, isBlank: true },
-      { index: 2, contentHint: "text-heavy", meanBrightness: 200, stdDev: 15, isBlank: false },
+      { index: 0, contentHint: "blank", meanBrightness: 250, stdDev: 2, isBlank: true },
+      { index: 1, contentHint: "blank", meanBrightness: 248, stdDev: 3, isBlank: true },
+      { index: 2, contentHint: "low-detail", meanBrightness: 200, stdDev: 15, isBlank: false },
     ];
     const hints = buildTileHints(metadata);
     expect(hints["blank"]).toEqual([0, 1]);
-    expect(hints["text-heavy"]).toEqual([2]);
-    expect(hints["low-detail"]).toBeUndefined();
+    expect(hints["low-detail"]).toEqual([2]);
   });
 
   it("returns empty object for empty input", () => {
@@ -338,6 +337,32 @@ describe("buildTileHints", () => {
       { index: 0, contentHint: "mixed", meanBrightness: 150, stdDev: 40, isBlank: false },
     ];
     expect(buildTileHints(metadata)).toEqual({ mixed: [0] });
+  });
+});
+
+describe("formatTileHintsSummary", () => {
+  it("returns correct order and counts for multiple categories", () => {
+    const hints = {
+      "high-detail": [1],
+      "low-detail": [0, 3],
+      "blank": [4],
+      "mixed": [2, 5],
+    };
+    expect(formatTileHintsSummary(hints)).toBe("Tile content: 2 low-detail, 2 mixed, 1 high-detail, 1 blank");
+  });
+
+  it("returns single category without trailing comma", () => {
+    const hints = { "low-detail": [0, 1, 2] };
+    expect(formatTileHintsSummary(hints)).toBe("Tile content: 3 low-detail");
+  });
+
+  it("returns empty string for empty hints", () => {
+    expect(formatTileHintsSummary({})).toBe("");
+  });
+
+  it("returns summary for only blank tiles", () => {
+    const hints = { "blank": [0] };
+    expect(formatTileHintsSummary(hints)).toBe("Tile content: 1 blank");
   });
 });
 

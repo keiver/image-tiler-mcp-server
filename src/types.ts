@@ -75,7 +75,7 @@ export interface TileMetadata {
   index: number;
   meanBrightness: number;
   stdDev: number;
-  contentHint: "text-heavy" | "image-rich" | "low-detail" | "mixed";
+  contentHint: "blank" | "low-detail" | "mixed" | "high-detail";
   isBlank: boolean;
 }
 

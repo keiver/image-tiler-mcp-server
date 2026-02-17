@@ -101,7 +101,7 @@ export const TilerInputSchema = {
     .enum(VISION_MODELS)
     .optional()
     .describe(
-      `DO NOT provide on Phase 1 (first call). Only specify on Phase 2 after reviewing the comparison table. ` +
+      `DO NOT provide on Phase 1 (first call). Only specify on Phase 2 after the user has chosen from the comparison table. ` +
       `Available: ${modelDescriptions}. Auto-selects cheapest when omitted on Phase 2.`
     ),
   tileSize: z
@@ -134,7 +134,7 @@ export const TilerInputSchema = {
     .string()
     .optional()
     .describe(
-      "Directory to save tiles. Defaults to a 'tiles' subfolder next to the source image (or ~/Desktop/tiles/ for captures)."
+      "Directory to save tiles. Defaults to tiles/{name}_vN/ next to source for filePath; {base}/tiles/tiled_{ts}_{hex}/ for URL/base64 sources; {base}/tiles/capture_{ts}_{hex}/ for captures."
     ),
   page: z
     .number()
@@ -149,5 +149,5 @@ export const TilerInputSchema = {
   includeMetadata: z
     .boolean()
     .default(true)
-    .describe("Analyze each tile and return content hints (text-heavy, image-rich, low-detail, mixed) and brightness stats. Enabled by default; set to false to skip."),
+    .describe("Analyze each tile and return content hints (blank, low-detail, mixed, high-detail) and brightness stats. Enabled by default; set to false to skip."),
 };

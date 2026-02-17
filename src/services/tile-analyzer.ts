@@ -26,12 +26,12 @@ export async function analyzeTile(
   let isBlank = false;
 
   if (stdDev < 5) {
-    contentHint = "low-detail";
+    contentHint = "blank";
     isBlank = true;
   } else if (stdDev < 25) {
-    contentHint = "text-heavy";
+    contentHint = "low-detail";
   } else if (stdDev > 60) {
-    contentHint = "image-rich";
+    contentHint = "high-detail";
   } else {
     contentHint = "mixed";
   }

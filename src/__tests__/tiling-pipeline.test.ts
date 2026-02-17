@@ -23,6 +23,7 @@ vi.mock("../utils.js", () => ({
   stripVersionSuffix: vi.fn((name: string) => name.replace(/_v\d+$/, "")),
   formatModelComparisonTable: vi.fn().mockReturnValue("Image: 2000 x 1000\n\n  Preset  | ..."),
   buildTileHints: vi.fn().mockReturnValue({}),
+  formatTileHintsSummary: vi.fn().mockReturnValue(""),
   escapeHtml: vi.fn((s: string) => s),
   simulateDownscale: vi.fn((w: number, h: number, maxDim: number) => {
     if (maxDim <= 0) return { width: w, height: h };
@@ -44,7 +45,7 @@ import * as fsPromises from "node:fs/promises";
 import { getImageMetadata, computeEstimateForModel, tileImage, listTilesInDirectory, readTileAsBase64 } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
-import { formatModelComparisonTable } from "../utils.js";
+import { formatModelComparisonTable, buildTileHints, formatTileHintsSummary } from "../utils.js";
 
 import {
   resolveOutputDir,
@@ -70,6 +71,8 @@ const mockedGeneratePreview = vi.mocked(generateInteractivePreview);
 const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
 const mockedReaddir = vi.mocked(fsPromises.readdir);
 const mockedFormatTable = vi.mocked(formatModelComparisonTable);
+const mockedBuildTileHints = vi.mocked(buildTileHints);
+const mockedFormatTileHintsSummary = vi.mocked(formatTileHintsSummary);
 
 const sampleAllModels: ModelEstimate[] = [
   { model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 2, tiles: 4, tokens: 6360 },
@@ -327,12 +330,12 @@ describe("buildPhase1Response", () => {
     };
     const response = buildPhase1Response(analysis);
     expect(response.content).toHaveLength(2);
-    expect(response.content[0].text).toContain("STOP");
+    expect(response.content[0].text).toContain("ACTION REQUIRED");
     expect(response.content[0].text).toContain("Preview: /output/preview.html");
     expect(response.content[0].text).not.toContain("outputDir=");
 
     const json = JSON.parse(response.content[1].text);
-    expect(json.status).toBe("pending_confirmation");
+    expect(json.status).toBe("awaiting_user_choice");
     expect(json.outputDir).toBe("/output");
     expect(json.allModels).toBeDefined();
   });
@@ -631,6 +634,38 @@ describe("buildPhase2Response", () => {
     expect(json.autoSelected).toBeUndefined();
     expect(json.allModels).toBeUndefined();
   });
+
+  it("includes tile content summary in text when includeMetadata is true and hints exist", async () => {
+    mockedBuildTileHints.mockReturnValue({ "low-detail": [0, 3], "high-detail": [1], "blank": [2] });
+    mockedFormatTileHintsSummary.mockReturnValue("Tile content: 2 low-detail, 1 high-detail, 1 blank");
+
+    const result = makeTileResult();
+    const response = await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: true,
+      warnings: [],
+      maxDimension: 10000,
+    });
+    expect(response.content[0].text).toContain("Tile content: 2 low-detail, 1 high-detail, 1 blank");
+
+    const json = JSON.parse(response.content[1].text);
+    expect(json.tileHints).toEqual({ "low-detail": [0, 3], "high-detail": [1], "blank": [2] });
+  });
+
+  it("does not include tile content summary when includeMetadata is false", async () => {
+    const result = makeTileResult();
+    const response = await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: false,
+      warnings: [],
+      maxDimension: 10000,
+    });
+    expect(response.content[0].text).not.toContain("Tile content:");
+    expect(mockedFormatTileHintsSummary).not.toHaveBeenCalled();
+
+    const json = JSON.parse(response.content[1].text);
+    expect(json.tileHints).toBeUndefined();
+  });
 });
 
 // ─── appendTilesPage ──────────────────────────────────────────────────────
@@ -750,5 +785,42 @@ describe("appendTilesPage", () => {
 
     const json = JSON.parse((result.content[1] as { type: "text"; text: string }).text);
     expect(json.page.tilesReturned).toBe(0);
+  });
+
+  it("annotates tile labels with hints when tileHints present in structured output", async () => {
+    const input = {
+      content: [
+        { type: "text" as const, text: "Summary" },
+        { type: "text" as const, text: JSON.stringify({
+          model: "claude",
+          tileHints: { "low-detail": [0, 3], "high-detail": [1], "blank": [2] },
+        }) },
+      ],
+    };
+    const result = await appendTilesPage(input, "/output/tiles", 0);
+    const tileLabels = result.content.filter(
+      (c) => c.type === "text" && (c as { text: string }).text.startsWith("Tile ")
+    );
+    expect(tileLabels).toHaveLength(4);
+    expect((tileLabels[0] as { text: string }).text).toContain("(low-detail)");
+    expect((tileLabels[1] as { text: string }).text).toContain("(high-detail)");
+    expect((tileLabels[2] as { text: string }).text).toContain("(blank)");
+    expect((tileLabels[3] as { text: string }).text).toContain("(low-detail)");
+  });
+
+  it("does not annotate tile labels when tileHints absent from structured output", async () => {
+    const input = {
+      content: [
+        { type: "text" as const, text: "Summary" },
+        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
+      ],
+    };
+    const result = await appendTilesPage(input, "/output/tiles", 0);
+    const tileLabels = result.content.filter(
+      (c) => c.type === "text" && (c as { text: string }).text.startsWith("Tile ")
+    );
+    for (const label of tileLabels) {
+      expect((label as { text: string }).text).not.toContain("(");
+    }
   });
 });

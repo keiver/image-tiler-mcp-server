@@ -117,7 +117,7 @@ describe("constants", () => {
 
   describe("VISION_MODELS", () => {
     it("contains claude, openai, gemini, gemini3", () => {
-      expect(VISION_MODELS).toEqual(["claude", "openai", "gemini", "gemini3"]);
+      expect(VISION_MODELS).toEqual(["claude", "openai", "gemini3", "gemini"]);
     });
 
     it("has exactly 4 models", () => {

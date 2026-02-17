@@ -109,8 +109,8 @@ describe("tryElicitation", () => {
       expect(schema.properties.model.oneOf[0].title).toContain("Claude");
       expect(schema.properties.model.oneOf[0].title).toContain("32 tiles");
       expect(schema.properties.model.oneOf[1].const).toBe("openai");
-      expect(schema.properties.model.oneOf[2].const).toBe("gemini");
-      expect(schema.properties.model.oneOf[3].const).toBe("gemini3");
+      expect(schema.properties.model.oneOf[2].const).toBe("gemini3");
+      expect(schema.properties.model.oneOf[3].const).toBe("gemini");
       expect(schema.properties.model.default).toBe("claude");
     });
 

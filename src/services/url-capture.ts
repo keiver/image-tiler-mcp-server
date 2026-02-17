@@ -19,6 +19,9 @@ import {
   SHARP_OPERATION_TIMEOUT_MS,
   MAX_CHROME_STDERR_BYTES,
   MAX_CHROME_JSON_BYTES,
+  LAZY_LOAD_SCROLL_PAUSE_MS,
+  LAZY_LOAD_IMAGE_TIMEOUT_MS,
+  LAZY_LOAD_TOTAL_TIMEOUT_MS,
 } from "../constants.js";
 import { withTimeout } from "../utils.js";
 import type { CaptureUrlOptions, CaptureResult } from "../types.js";
@@ -432,6 +435,51 @@ async function captureWithStitching(
   return { buffer: stitched, segments: segments.length };
 }
 
+// ─── Lazy Loading ────────────────────────────────────────────────────
+
+/**
+ * Triggers lazy-loaded images by scrolling through the page and converting
+ * loading="lazy" to loading="eager". This ensures images that rely on
+ * IntersectionObserver are loaded before screenshot capture.
+ */
+async function triggerLazyLoading(ws: WebSocket, signal?: AbortSignal): Promise<void> {
+  await sendCdpCommand(ws, "Runtime.evaluate", {
+    expression: `(async () => {
+  const lazyImages = document.querySelectorAll('img[loading="lazy"]');
+  if (lazyImages.length === 0) return;
+
+  // Step 1: Convert loading="lazy" to loading="eager"
+  lazyImages.forEach(img => {
+    img.loading = 'eager';
+  });
+
+  // Step 2: Scroll through the page in viewport-height steps
+  const viewportHeight = window.innerHeight || 800;
+  const totalHeight = document.documentElement.scrollHeight;
+  for (let y = 0; y < totalHeight; y += viewportHeight) {
+    window.scrollTo(0, y);
+    await new Promise(r => setTimeout(r, ${LAZY_LOAD_SCROLL_PAUSE_MS}));
+  }
+
+  // Step 3: Wait for all <img> elements to finish loading
+  const images = Array.from(document.querySelectorAll('img'));
+  await Promise.all(images.map(img => {
+    if (img.complete) return Promise.resolve();
+    return new Promise(resolve => {
+      const timeout = setTimeout(resolve, ${LAZY_LOAD_IMAGE_TIMEOUT_MS});
+      img.addEventListener('load', () => { clearTimeout(timeout); resolve(); }, { once: true });
+      img.addEventListener('error', () => { clearTimeout(timeout); resolve(); }, { once: true });
+    });
+  }));
+
+  // Step 4: Scroll back to top
+  window.scrollTo(0, 0);
+})()`,
+    awaitPromise: true,
+    returnByValue: true,
+  }, LAZY_LOAD_TOTAL_TIMEOUT_MS, signal);
+}
+
 // ─── Main Capture Function ──────────────────────────────────────────
 
 export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureResult> {
@@ -637,6 +685,10 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
     if (delay > 0) {
       await new Promise((r) => setTimeout(r, delay));
     }
+
+    // Trigger lazy-loaded images (scrolls page, converts loading="lazy" → "eager",
+    // waits for images to finish loading, then scrolls back to top)
+    await triggerLazyLoading(ws, signal);
 
     if (abortController.signal.aborted) {
       throw new Error("Capture timed out");

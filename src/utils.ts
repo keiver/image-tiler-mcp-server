@@ -156,8 +156,20 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
 export function buildTileHints(metadata: TileMetadata[]): Record<string, number[]> {
   const hints: Record<string, number[]> = {};
   for (const m of metadata) {
-    const key = m.isBlank ? "blank" : m.contentHint;
+    const key = m.contentHint;
     (hints[key] ??= []).push(m.index);
   }
   return hints;
+}
+
+const HINT_DISPLAY_ORDER = ["low-detail", "mixed", "high-detail", "blank"] as const;
+
+export function formatTileHintsSummary(hints: Record<string, number[]>): string {
+  const parts: string[] = [];
+  for (const key of HINT_DISPLAY_ORDER) {
+    if (hints[key]?.length) {
+      parts.push(`${hints[key].length} ${key}`);
+    }
+  }
+  return parts.length > 0 ? `Tile content: ${parts.join(", ")}` : "";
 }

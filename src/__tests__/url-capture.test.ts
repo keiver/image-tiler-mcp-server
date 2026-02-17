@@ -403,6 +403,112 @@ describe("captureUrl", () => {
     );
   });
 
+  // ─── Lazy Loading Tests ──────────────────────────────────────────
+
+  it("triggers lazy loading via Runtime.evaluate before capture", async () => {
+    setupCdpAutoResponder(1280, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com" });
+
+    // Collect all CDP commands sent
+    const sentCommands = mockWsInstance.send.mock.calls.map(
+      (call: [string]) => JSON.parse(call[0]) as { method: string; params?: Record<string, unknown> }
+    );
+
+    // Find the Runtime.evaluate call with the lazy loading script
+    const lazyLoadCall = sentCommands.find(
+      (cmd: { method: string; params?: Record<string, unknown> }) =>
+        cmd.method === "Runtime.evaluate" &&
+        cmd.params?.awaitPromise === true &&
+        typeof cmd.params?.expression === "string" &&
+        (cmd.params.expression as string).includes('loading="lazy"') &&
+        (cmd.params.expression as string).includes("scrollTo")
+    );
+    expect(lazyLoadCall).toBeDefined();
+
+    // Verify it converts lazy → eager
+    expect(lazyLoadCall!.params!.expression).toContain('img.loading = \'eager\'');
+
+    // Verify it scrolls back to top
+    expect(lazyLoadCall!.params!.expression).toContain("scrollTo(0, 0)");
+  });
+
+  it("calls lazy loading before error page check and before capture", async () => {
+    const commandOrder: string[] = [];
+
+    mockWsInstance.send = vi.fn((data: string) => {
+      const msg = JSON.parse(data);
+      const id = msg.id;
+
+      // Track relevant command order
+      if (msg.method === "Runtime.evaluate") {
+        const expr = msg.params?.expression as string ?? "";
+        if (expr.includes('loading="lazy"')) {
+          commandOrder.push("lazy-load");
+        } else if (expr === "document.location.href") {
+          commandOrder.push("error-check");
+        }
+      } else if (msg.method === "Page.captureScreenshot") {
+        commandOrder.push("capture");
+      }
+
+      setTimeout(() => {
+        if (msg.method === "Page.navigate") {
+          respondToCdp(id, {});
+          respondToCdpEvent("Page.loadEventFired");
+        } else if (msg.method === "Page.getLayoutMetrics") {
+          respondToCdp(id, {
+            cssContentSize: { width: 1280, height: 800 },
+          });
+        } else if (msg.method === "Page.captureScreenshot") {
+          respondToCdp(id, { data: Buffer.from("screenshot-data").toString("base64") });
+        } else if (msg.method === "Runtime.evaluate") {
+          respondToCdp(id, { result: { value: undefined } });
+        } else {
+          respondToCdp(id, {});
+        }
+      }, 0);
+    });
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com" });
+
+    // Lazy loading must come before error check and capture
+    expect(commandOrder.indexOf("lazy-load")).toBeLessThan(commandOrder.indexOf("error-check"));
+    expect(commandOrder.indexOf("lazy-load")).toBeLessThan(commandOrder.indexOf("capture"));
+  });
+
+  it("skips scrolling when no lazy images exist (guard check)", async () => {
+    setupCdpAutoResponder(1280, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com" });
+
+    // Collect all CDP commands sent
+    const sentCommands = mockWsInstance.send.mock.calls.map(
+      (call: [string]) => JSON.parse(call[0]) as { method: string; params?: Record<string, unknown> }
+    );
+
+    // Find the lazy loading Runtime.evaluate call
+    const lazyLoadCall = sentCommands.find(
+      (cmd: { method: string; params?: Record<string, unknown> }) =>
+        cmd.method === "Runtime.evaluate" &&
+        cmd.params?.awaitPromise === true &&
+        typeof cmd.params?.expression === "string" &&
+        (cmd.params.expression as string).includes('img[loading="lazy"]')
+    );
+    expect(lazyLoadCall).toBeDefined();
+
+    // The script checks lazyImages.length === 0 and returns early
+    // So scrollTo should be inside the guard (after the length check)
+    const expr = lazyLoadCall!.params!.expression as string;
+    const guardIndex = expr.indexOf("if (lazyImages.length === 0) return");
+    const scrollIndex = expr.indexOf("scrollTo");
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(scrollIndex).toBeGreaterThan(guardIndex);
+  });
+
   // ─── Abort Signal Tests ───────────────────────────────────────────
 
   it("rejects CDP commands when overall timeout fires", async () => {
