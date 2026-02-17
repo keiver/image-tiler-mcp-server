@@ -104,9 +104,17 @@ export function formatModelComparisonTable(
   width: number,
   height: number,
   allModels: ModelEstimate[],
+  effectiveWidth?: number,
+  effectiveHeight?: number,
 ): string {
   const lines: string[] = [];
-  lines.push(`Image: ${width} x ${height}`);
+  const resized = effectiveWidth != null && effectiveHeight != null &&
+    (effectiveWidth !== width || effectiveHeight !== height);
+  if (resized) {
+    lines.push(`Image: ${width} \u00d7 ${height} \u2192 ${effectiveWidth} \u00d7 ${effectiveHeight}`);
+  } else {
+    lines.push(`Image: ${width} x ${height}`);
+  }
   lines.push("");
   lines.push("  Preset  | Tile Size | Grid   | Tiles | Est. Tokens");
   lines.push("  --------|-----------|--------|-------|------------");
@@ -136,11 +144,12 @@ export function simulateDownscale(
 }
 
 export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Sharp operation timed out after ${ms}ms (${label})`)), ms)
-    ),
+    promise.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Sharp operation timed out after ${ms}ms (${label})`)), ms);
+    }),
   ]);
 }
 

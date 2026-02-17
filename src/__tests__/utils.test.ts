@@ -18,7 +18,7 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
 }));
 
-import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath, stripVersionSuffix, buildTileHints, formatModelComparisonTable, simulateDownscale } from "../utils.js";
+import { escapeHtml, getDefaultOutputBase, getVersionedOutputDir, sanitizeHostname, getVersionedFilePath, stripVersionSuffix, buildTileHints, formatModelComparisonTable, simulateDownscale, withTimeout } from "../utils.js";
 import type { TileMetadata, ModelEstimate } from "../types.js";
 
 describe("escapeHtml", () => {
@@ -283,6 +283,24 @@ describe("formatModelComparisonTable", () => {
     expect(result).toContain("Image: 100 x 100");
     expect(result).toContain("Preset");
   });
+
+  it("shows resize arrow when effectiveWidth/Height differ from original", () => {
+    const result = formatModelComparisonTable(3600, 22810, allModels, 1579, 10000);
+    expect(result).toContain("3600 \u00d7 22810 \u2192 1579 \u00d7 10000");
+    expect(result).not.toContain("Image: 3600 x 22810\n");
+  });
+
+  it("does not show resize arrow when effective matches original", () => {
+    const result = formatModelComparisonTable(2144, 2144, allModels, 2144, 2144);
+    expect(result).toContain("Image: 2144 x 2144");
+    expect(result).not.toContain("\u2192");
+  });
+
+  it("does not show resize arrow when effective params are omitted", () => {
+    const result = formatModelComparisonTable(2144, 2144, allModels);
+    expect(result).toContain("Image: 2144 x 2144");
+    expect(result).not.toContain("\u2192");
+  });
 });
 
 describe("buildTileHints", () => {
@@ -361,5 +379,32 @@ describe("simulateDownscale", () => {
     expect(result.height).toBe(Math.round(1999 * (1000 / 3000)));
     expect(Number.isInteger(result.width)).toBe(true);
     expect(Number.isInteger(result.height)).toBe(true);
+  });
+});
+
+describe("withTimeout", () => {
+  it("resolves when promise resolves before timeout", async () => {
+    const result = await withTimeout(Promise.resolve(42), 1000, "test");
+    expect(result).toBe(42);
+  });
+
+  it("rejects when promise rejects before timeout", async () => {
+    await expect(
+      withTimeout(Promise.reject(new Error("boom")), 1000, "test")
+    ).rejects.toThrow("boom");
+  });
+
+  it("rejects with timeout error when promise takes too long", async () => {
+    const slow = new Promise(() => {}); // never resolves
+    await expect(
+      withTimeout(slow, 50, "test-op")
+    ).rejects.toThrow("Sharp operation timed out after 50ms (test-op)");
+  });
+
+  it("clears timer when promise resolves first (no leaked timers)", async () => {
+    const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+    await withTimeout(Promise.resolve("ok"), 30000, "test");
+    expect(clearSpy).toHaveBeenCalled();
+    clearSpy.mockRestore();
   });
 });

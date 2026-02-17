@@ -24,7 +24,13 @@ vi.mock("../utils.js", () => ({
   formatModelComparisonTable: vi.fn().mockReturnValue("Image: 2000 x 1000\n\n  Preset  | ..."),
   buildTileHints: vi.fn().mockReturnValue({}),
   escapeHtml: vi.fn((s: string) => s),
-  simulateDownscale: vi.fn((w: number, h: number) => ({ width: w, height: h })),
+  simulateDownscale: vi.fn((w: number, h: number, maxDim: number) => {
+    if (maxDim <= 0) return { width: w, height: h };
+    const longest = Math.max(w, h);
+    if (longest <= maxDim) return { width: w, height: h };
+    const scale = maxDim / longest;
+    return { width: Math.round(w * scale), height: Math.round(h * scale) };
+  }),
   sanitizeHostname: vi.fn().mockReturnValue("example-com"),
 }));
 
@@ -38,6 +44,7 @@ import * as fsPromises from "node:fs/promises";
 import { getImageMetadata, computeEstimateForModel, tileImage, listTilesInDirectory, readTileAsBase64 } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
+import { formatModelComparisonTable } from "../utils.js";
 
 import {
   resolveOutputDir,
@@ -62,6 +69,7 @@ const mockedReadBase64 = vi.mocked(readTileAsBase64);
 const mockedGeneratePreview = vi.mocked(generateInteractivePreview);
 const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
 const mockedReaddir = vi.mocked(fsPromises.readdir);
+const mockedFormatTable = vi.mocked(formatModelComparisonTable);
 
 const sampleAllModels: ModelEstimate[] = [
   { model: "claude", label: "Claude", tileSize: 1092, cols: 2, rows: 2, tiles: 4, tokens: 6360 },
@@ -269,6 +277,42 @@ describe("analyzeAndPreview", () => {
     expect(result.previewPath).toBe("/output/preview.html");
     expect(result.warnings).toBeUndefined();
   });
+
+  it("returns effectiveImage when image will be downscaled", async () => {
+    mockedGetMetadata.mockResolvedValue({ width: 3600, height: 22810, format: "png", fileSize: 50000, channels: 4 });
+    const result = await analyzeAndPreview("/img.png", "/output", {
+      model: "claude",
+      maxDimension: 10000,
+    });
+    expect(result.sourceImage).toEqual({ width: 3600, height: 22810 });
+    expect(result.effectiveImage).toEqual({ width: 1578, height: 10000 });
+  });
+
+  it("does not return effectiveImage when image fits within maxDimension", async () => {
+    const result = await analyzeAndPreview("/img.png", "/output", {
+      model: "claude",
+      maxDimension: 10000,
+    });
+    expect(result.sourceImage).toEqual({ width: 2000, height: 1000 });
+    expect(result.effectiveImage).toBeUndefined();
+  });
+
+  it("passes post-downscale dimensions to generateInteractivePreview", async () => {
+    mockedGetMetadata.mockResolvedValue({ width: 3600, height: 22810, format: "png", fileSize: 50000, channels: 4 });
+    await analyzeAndPreview("/img.png", "/output", {
+      model: "claude",
+      maxDimension: 10000,
+    });
+    expect(mockedGeneratePreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        effectiveWidth: 1578,
+        effectiveHeight: 10000,
+        originalWidth: 3600,
+        originalHeight: 22810,
+      }),
+      "/output"
+    );
+  });
 });
 
 // ─── buildPhase1Response ─────────────────────────────────────────────────
@@ -328,6 +372,27 @@ describe("buildPhase1Response", () => {
     expect(response.content[0].text).not.toContain("⚠");
     const json = JSON.parse(response.content[1].text);
     expect(json.warnings).toBeUndefined();
+  });
+
+  it("passes effective dimensions to formatModelComparisonTable when effectiveImage is present", () => {
+    const analysis = {
+      outputDir: "/output",
+      sourceImage: { width: 3600, height: 22810 },
+      effectiveImage: { width: 1579, height: 10000 },
+      allModels: sampleAllModels,
+    };
+    buildPhase1Response(analysis);
+    expect(mockedFormatTable).toHaveBeenCalledWith(3600, 22810, sampleAllModels, 1579, 10000);
+  });
+
+  it("passes original dimensions as effective when effectiveImage is absent", () => {
+    const analysis = {
+      outputDir: "/output",
+      sourceImage: { width: 2000, height: 1000 },
+      allModels: sampleAllModels,
+    };
+    buildPhase1Response(analysis);
+    expect(mockedFormatTable).toHaveBeenCalledWith(2000, 1000, sampleAllModels, 2000, 1000);
   });
 });
 

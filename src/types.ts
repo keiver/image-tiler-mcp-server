@@ -84,6 +84,7 @@ export interface AnalysisResult {
   outputDir: string;
   previewPath?: string;
   sourceImage: { width: number; height: number };
+  effectiveImage?: { width: number; height: number };
   allModels: ModelEstimate[];
   warnings?: string[];
 }

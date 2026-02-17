@@ -100,7 +100,9 @@ async function resolveUrl(url: string): Promise<ResolvedImageSource> {
     }
   }
 
-  const ext = guessExtensionFromContentType(response.headers.get("content-type")) || ".png";
+  const ext = guessExtensionFromContentType(response.headers.get("content-type"))
+    || guessExtensionFromMagicBytes(buffer)
+    || ".png";
   const tempPath = makeTempPath(ext);
   await fs.writeFile(tempPath, buffer);
 

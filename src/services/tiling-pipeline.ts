@@ -16,6 +16,7 @@ import {
   getVersionedOutputDir,
   stripVersionSuffix,
   formatModelComparisonTable,
+  simulateDownscale,
   buildTileHints,
 } from "../utils.js";
 import type { ModelEstimate, TileImageResult, AnalysisResult, ImageSourceType } from "../types.js";
@@ -133,6 +134,12 @@ export async function analyzeAndPreview(
     computeEstimateForModel(m, imgMeta.width, imgMeta.height, undefined, effectiveMaxDim)
   );
 
+  // Compute post-downscale dimensions for preview and table
+  const { width: effW, height: effH } = simulateDownscale(
+    imgMeta.width, imgMeta.height, effectiveMaxDim ?? 0
+  );
+  const wasResized = effW !== imgMeta.width || effH !== imgMeta.height;
+
   // Ensure output dir exists for preview
   await fs.mkdir(outputDir, { recursive: true });
 
@@ -157,8 +164,8 @@ export async function analyzeAndPreview(
     previewPath = await generateInteractivePreview(
       {
         sourceImagePath: previewSourcePath,
-        effectiveWidth: imgMeta.width,
-        effectiveHeight: imgMeta.height,
+        effectiveWidth: effW,
+        effectiveHeight: effH,
         originalWidth: imgMeta.width,
         originalHeight: imgMeta.height,
         maxDimension: opts.maxDimension || DEFAULT_MAX_DIMENSION,
@@ -176,6 +183,7 @@ export async function analyzeAndPreview(
     outputDir,
     previewPath,
     sourceImage: { width: imgMeta.width, height: imgMeta.height },
+    ...(wasResized ? { effectiveImage: { width: effW, height: effH } } : {}),
     allModels,
     ...(warnings.length > 0 ? { warnings } : {}),
   };
@@ -187,9 +195,11 @@ export function buildPhase1Response(
   analysis: AnalysisResult,
   extraFields?: Record<string, unknown>,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { sourceImage, allModels, previewPath, outputDir, warnings } = analysis;
+  const { sourceImage, effectiveImage, allModels, previewPath, outputDir, warnings } = analysis;
 
-  const table = formatModelComparisonTable(sourceImage.width, sourceImage.height, allModels);
+  const tableW = effectiveImage?.width ?? sourceImage.width;
+  const tableH = effectiveImage?.height ?? sourceImage.height;
+  const table = formatModelComparisonTable(sourceImage.width, sourceImage.height, allModels, tableW, tableH);
 
   const phase2Hint = extraFields?.screenshotPath
     ? `When the user chooses, call this tool again with: model + outputDir + screenshotPath from below.`
