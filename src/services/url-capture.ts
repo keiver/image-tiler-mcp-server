@@ -73,6 +73,13 @@ export function findChromePath(): string {
     if (!path.isAbsolute(chromePath)) {
       throw new Error("CHROME_PATH must be an absolute path");
     }
+    try {
+      fs.accessSync(chromePath, fs.constants.X_OK);
+    } catch {
+      throw new Error(
+        `CHROME_PATH points to non-existent or non-executable file: ${chromePath}`
+      );
+    }
     return chromePath;
   }
 
@@ -441,14 +448,23 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       }, 10_000);
 
       let stderrBuf = "";
+      let found = false;
       chrome!.stderr!.on("data", (chunk: Buffer) => {
+        if (found) return;
         if (stderrBuf.length < MAX_CHROME_STDERR_BYTES) {
           stderrBuf += chunk.toString();
         }
-        const match = stderrBuf.match(/DevTools listening on (ws:\/\/[^\s]+)/);
-        if (match) {
-          clearTimeout(stderrTimer);
-          resolve(match[1]);
+        // Process only recent lines to avoid re-scanning the full buffer
+        const lines = stderrBuf.split("\n");
+        for (const line of lines) {
+          if (line.length > 1024) continue;
+          const match = line.match(/DevTools listening on (ws:\/\/\S{10,200})/);
+          if (match) {
+            found = true;
+            clearTimeout(stderrTimer);
+            resolve(match[1]);
+            return;
+          }
         }
       });
 

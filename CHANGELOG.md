@@ -1,21 +1,56 @@
 # Changelog
 
-## [Unreleased]
+## [2.0.0]
 
-### Fixed
-- Temp file cleanup warnings now surfaced as structured warnings in MCP responses instead of logging to stderr
-- Low-severity `qs` dependency vulnerability resolved via audit fix
+### Breaking
+- **Consolidated 3 MCP tools into 1 unified `tiler` tool** — `tiler_tile_image`, `tiler_get_tiles`, and `tiler_capture_and_tile` are removed. Mode is auto-detected from parameters: `tilesDir` for pagination, `url`/`screenshotPath` for capture, image source fields for tiling
+- Unified `TilerInputSchema` replaces 3 separate schemas
 
 ### Added
+- **URL capture via Chrome DevTools Protocol** — full-page screenshots from `http:`/`https:` URLs with headless Chrome. `CHROME_PATH` env var overrides auto-detection. Pages taller than 16,384px are scroll-stitched automatically
+- **WebP default output** — tiles now output as WebP (quality 80) instead of PNG. `format` param (`"webp"` | `"png"`) to override
+- **Tile metadata analysis** — `includeMetadata: true` runs per-tile content classification (text-heavy, image-rich, low-detail, mixed) via Sharp stats
+- **MCP elicitation support** — elicitation-capable clients get an interactive model picker; others fall through to the comparison table flow
+- **Two-phase confirmation workflow** — Phase 1 returns model comparison table with STOP instruction; Phase 2 performs tiling with user's chosen model
+- **Versioned output directories** — file-source tiling creates versioned output dirs to avoid overwriting previous runs
+- **`prebuild` script** — `rm -rf dist` before each build to prevent stale artifacts
+- **`pretest` script** — runs build before tests so CLI tests find `dist/index.js`
 - `test:coverage` script for vitest coverage reporting
 - `types` field in package.json for explicit TypeScript declaration entry point
+- `screenshotPath` param to reuse an existing screenshot without re-capturing
+- `waitUntil` param for capture (`load`, `networkidle`, `domcontentloaded`)
+- `viewportWidth` param for capture (auto-detects screen width, falls back to 1280)
+- `delay` param for capture (additional wait after page load)
+- Resize info now shown in model comparison table when downscaling occurs
+- `withTimeout` utility for Sharp operations to prevent hangs
 
 ### Changed
-- Consolidated 3 MCP tools (`tiler_tile_image`, `tiler_get_tiles`, `tiler_capture_and_tile`) into 1 unified `tiler` tool
-- Mode auto-detected from parameters: `tilesDir` for pagination, `url`/`screenshotPath` for capture, image source fields for tiling
 - `model` parameter description now explicitly discourages use on Phase 1 (first call)
 - Phase 1 response now starts with "STOP" instruction before the comparison table
-- Unified `TilerInputSchema` replaces 3 separate schemas
+- Auto-selects cheapest model preset when `model` omitted on Phase 2
+- Shared tiling pipeline (`tiling-pipeline.ts`) replaces duplicated logic across tools
+
+### Fixed
+- `withTimeout` timer now properly cleared on successful completion (prevented timer leak)
+- Magic-bytes extension detection preferred over Content-Type header for URL downloads
+- Temp file cleanup warnings now surfaced as structured warnings in MCP responses instead of logging to stderr
+- Low-severity `qs` dependency vulnerability resolved via audit fix
+- `CHROME_PATH` env var now validates file existence and executable permission
+- Chrome stderr parsing optimized to process per-line instead of re-scanning full buffer
+
+### Security
+- Input validation hardening across all image source types
+- Chrome CDP communication uses bounded buffers (`MAX_CHROME_STDERR_BYTES`, `MAX_CHROME_JSON_BYTES`)
+- URL protocol allowlisting (`https:` for image downloads, `http:`/`https:` for capture)
+- Hostname sanitization for output directory naming
+
+### Removed
+- `tiler_tile_image` tool (replaced by `tiler` tile-image mode)
+- `tiler_get_tiles` tool (replaced by `tiler` get-tiles mode)
+- `tiler_capture_and_tile` tool (replaced by `tiler` capture-and-tile mode)
+- `tiler_recommend_settings` tool (replaced by Phase 1 comparison table)
+- `tiler_prepare_image` tool (replaced by `tiler` with `page` param)
+- Redundant `.npmignore` (superseded by `files` whitelist in package.json)
 
 ## [1.5.0] - 2026-02-13
 

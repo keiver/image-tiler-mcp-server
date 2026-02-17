@@ -94,6 +94,12 @@ describe("findChromePath", () => {
     expect(() => findChromePath()).toThrow("CHROME_PATH must be an absolute path");
   });
 
+  it("rejects CHROME_PATH pointing to non-existent file", () => {
+    process.env.CHROME_PATH = "/nonexistent/chrome";
+    mockAccessSync.mockImplementation(() => { throw new Error("ENOENT"); });
+    expect(() => findChromePath()).toThrow("non-existent or non-executable");
+  });
+
   it("throws when Chrome not found", () => {
     delete process.env.CHROME_PATH;
     mockAccessSync.mockImplementation(() => {
@@ -115,8 +121,9 @@ describe("captureUrl", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Set CHROME_PATH to avoid detection logic
+    // Set CHROME_PATH to avoid detection logic + satisfy accessSync check
     process.env.CHROME_PATH = "/usr/bin/chrome";
+    mockAccessSync.mockImplementation(() => {});
 
     // Create mock Chrome process
     const stderr = new EventEmitter();

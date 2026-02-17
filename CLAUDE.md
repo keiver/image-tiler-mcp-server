@@ -12,7 +12,7 @@ Published as `image-tiler-mcp-server` on npm. Requires **Node >= 20**. This is a
 
 **Default tile output format:** WebP (quality 80). The `tiler` tool accepts a `format` param (`"webp"` | `"png"`) to override.
 
-**URL capture:** Requires Chrome/Chromium installed. Set `CHROME_PATH` env var to override auto-detection. Supports `http:` and `https:` URLs. Pages taller than 16,384px are automatically scroll-stitched.
+**URL capture:** Requires Chrome/Chromium installed. Set `CHROME_PATH` env var to override auto-detection. URL capture supports `http:` and `https:` URLs; `sourceUrl` image downloads require `https:` only. Pages taller than 16,384px are automatically scroll-stitched.
 
 **Supported vision models:**
 
@@ -68,8 +68,7 @@ No linter is configured.
 - `src/services/image-source-resolver.ts` — Resolves image sources (file path, URL, data URL, base64) to a local file path with cleanup. Includes Content-Type validation for URL downloads, buffer size checks, base64 input validation, and exported helper functions (`isImageContentType`, `getImageMagicBytes`, `isImageSubtype`). Used by tile-image mode.
 - `src/services/url-capture.ts` — Chrome DevTools Protocol capture: Chrome detection (`findChromePath`), headless Chrome spawning, CDP WebSocket communication, wait conditions (load/networkidle/domcontentloaded), scroll-stitching for pages >16,384px, cleanup. Used by capture-and-tile mode.
 - `src/services/tile-analyzer.ts` — Per-tile content analysis using Sharp `.stats()`. Classifies tiles by stdDev: low-detail/blank (<5), text-heavy (5-25), mixed (25-60), image-rich (>60). Used when `includeMetadata: true`.
-- `src/services/preview-generator.ts` — Generates a static HTML preview (`preview.html`) visualizing the tile grid layout with overlay annotations.
-- `src/services/interactive-preview-generator.ts` — Generates an interactive HTML preview with per-model tabs showing grid overlays, token estimates, and model comparison.
+- `src/services/interactive-preview-generator.ts` — Generates the interactive HTML preview (`{basename}-preview.html`) with per-model tabs showing grid overlays, token estimates, and model comparison. Used as the Phase 1 preview gate artifact.
 - `src/services/elicitation.ts` — Elicitation fast path: elicitation-capable clients get a `oneOf` model picker via `server.elicitInput()` with per-model token estimates; non-elicitation clients fall through to the preview gate flow. Used by the tiler tool.
 - `src/services/tiling-pipeline.ts` — Shared tiling pipeline used by the tiler tool. Exports: `resolveOutputDir()`, `resolveOutputDirForCapture()`, `validateFormat()`, `clampTileSize()`, `findCheapestModel()` (picks model with lowest token estimate), `computeElicitationData()` (lightweight metadata + all-model estimates without preview generation), `checkPreviewGate()`, `analyzeAndPreview()` (Phase 1), `executeTiling()` (Phase 2), `buildPhase1Response()` (starts with STOP instruction), `buildPhase2Response()` (accepts `Phase2ResponseOptions` with `autoSelected` flag — when true, appends comparison table + override instructions to the response), `appendTilesPage()`.
 - `src/utils.ts` — Shared utilities: `escapeHtml()`, `getDefaultOutputBase()`, `sanitizeHostname()`, `getVersionedFilePath()`, `getVersionedOutputDir()`, `stripVersionSuffix()`, `formatModelComparisonTable()`, `simulateDownscale()`, `buildTileHints()`.
@@ -101,9 +100,8 @@ No linter is configured.
 - `image-source-resolver.test.ts` — Source resolution: file passthrough, data URL parsing, base64 decoding, cleanup idempotency, URL resolution (success, HTTP errors, timeout, size limits, Content-Type validation), helper function tests (`isImageContentType`, `getImageMagicBytes`, `isImageSubtype`)
 - `tiler-tool.test.ts` — Unified tool handler: all three modes (tile-image, get-tiles, capture-and-tile), format validation, response formatting, error wrapping, source resolution, pagination, Phase 1 stop instruction
 - `tiling-pipeline.test.ts` — Shared pipeline: resolveOutputDir, validateFormat, clampTileSize, findCheapestModel, computeElicitationData, analyzeAndPreview, checkPreviewGate, executeTiling, buildPhase1Response, buildPhase2Response (including autoSelected flag), appendTilesPage
-- `preview-generator.test.ts` — Preview HTML generation: template rendering, file writing, error handling
 - `utils.test.ts` — `escapeHtml` unit tests covering HTML entities, mixed content, empty strings
-- `interactive-preview-generator.test.ts` — Interactive preview HTML generation: model tabs, grid rendering, token estimates
+- `interactive-preview-generator.test.ts` — Interactive preview HTML generation: template rendering, file writing, error handling, model tabs, grid rendering, token estimates
 - `tile-analyzer.test.ts` — Tile content analysis: stdDev thresholds, isBlank detection, boundary values, batch analysis
 - `url-capture.test.ts` — Chrome detection (CHROME_PATH env, not found), CDP flow, URL validation, cleanup on error
 - `elicitation.test.ts` — Elicitation confirmation: accept/decline/cancel, capability detection, error propagation, message content, schema structure
