@@ -227,7 +227,7 @@ async function handleGetTiles(
       const hintSuffix = hint ? ` (${hint})` : "";
       content.push({
         type: "text" as const,
-        text: `Tile ${i + 1}/${totalTiles} [row ${row}, col ${col}]${hintSuffix}`,
+        text: `Tile ${i + 1}/${totalTiles} [index ${i}, row ${row}, col ${col}]${hintSuffix}`,
       });
 
       const base64Data = await readTileAsBase64(tilePath);

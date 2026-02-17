@@ -156,7 +156,7 @@ const appendedResponse = {
   content: [
     { type: "text" as const, text: "Tiled 2144x2144 image for Claude" },
     { type: "text" as const, text: '{"model":"claude","page":{"current":0,"tilesReturned":4,"totalTiles":4,"hasMore":false}}' },
-    { type: "text" as const, text: "Tile 1/4 [row 0, col 0]" },
+    { type: "text" as const, text: "Tile 1/4 [index 0, row 0, col 0]" },
     { type: "image" as const, data: "AAAA", mimeType: "image/webp" },
   ],
 };
@@ -656,7 +656,7 @@ describe("registerTilerTool", () => {
         (c: any) => c.type === "text" && c.text.includes("Tile 1/")
       );
       expect(labels).toHaveLength(1);
-      expect(labels[0].text).toContain("[row 0, col 0]");
+      expect(labels[0].text).toContain("[index 0, row 0, col 0]");
     });
 
     it("returns image blocks with correct mime type", async () => {
@@ -762,7 +762,7 @@ describe("registerTilerTool", () => {
         (c: any) => c.type === "text" && c.text.includes("Tile 2/")
       );
       expect(labels).toHaveLength(1);
-      expect(labels[0].text).toContain("[row -1, col -1]");
+      expect(labels[0].text).toContain("[index 1, row -1, col -1]");
     });
 
     it("annotates tile labels with content hints from analyzeTiles", async () => {
@@ -865,9 +865,9 @@ describe("registerTilerTool", () => {
         content: [
           { type: "text", text: "Captured 1280x800 screenshot of https://example.com\nTiled 1280x800 image for Claude" },
           { type: "text", text: JSON.stringify({ model: "claude", outputDir: "/output/tiles", page: { current: 0, tilesReturned: 2, totalTiles: 2, hasMore: false } }) },
-          { type: "text", text: "Tile 1/2 [row 0, col 0]" },
+          { type: "text", text: "Tile 1/2 [index 0, row 0, col 0]" },
           { type: "image", data: "AAAA", mimeType: "image/webp" },
-          { type: "text", text: "Tile 2/2 [row 0, col 1]" },
+          { type: "text", text: "Tile 2/2 [index 1, row 0, col 1]" },
           { type: "image", data: "AAAA", mimeType: "image/webp" },
         ],
       });
