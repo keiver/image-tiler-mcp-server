@@ -54,7 +54,7 @@ export const TilerInputSchema = {
     .min(320, "Viewport width must be >= 320px")
     .max(3840, "Viewport width must be <= 3840px")
     .optional()
-    .describe("Browser viewport width in pixels. Auto-detects screen width if omitted, falls back to 1280."),
+    .describe("Browser viewport width in pixels. Defaults to 1280 if omitted."),
   waitUntil: z
     .enum(WAIT_UNTIL_OPTIONS)
     .default("load")

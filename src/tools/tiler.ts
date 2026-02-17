@@ -4,7 +4,7 @@ import sharp from "sharp";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { TilerInputSchema } from "../schemas/index.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
-import { captureUrl, detectDisplayWidth } from "../services/url-capture.js";
+import { captureUrl } from "../services/url-capture.js";
 import {
   listTilesInDirectory,
   readTileAsBase64,
@@ -468,7 +468,7 @@ async function handleCaptureAndTile(
             );
           }
           // Recapture from URL
-          const resolvedViewport = viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
+          const resolvedViewport = viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
           const captureResult = await captureUrl({ url, viewportWidth: resolvedViewport, waitUntil, delay });
           captureWidth = captureResult.pageWidth;
           captureHeight = captureResult.pageHeight;
@@ -484,7 +484,7 @@ async function handleCaptureAndTile(
         if (!url) {
           throw new Error(`Screenshot not found at ${existingScreenshotPath} and no url provided for recapture.`);
         }
-        const resolvedViewport = viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
+        const resolvedViewport = viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
         const captureResult = await captureUrl({ url, viewportWidth: resolvedViewport, waitUntil, delay });
         captureWidth = captureResult.pageWidth;
         captureHeight = captureResult.pageHeight;
@@ -497,7 +497,7 @@ async function handleCaptureAndTile(
       }
     } else {
       // No existingScreenshotPath — mode detection guarantees url is defined
-      const resolvedViewport = viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
+      const resolvedViewport = viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
       const captureResult = await captureUrl({ url: url!, viewportWidth: resolvedViewport, waitUntil, delay });
       captureWidth = captureResult.pageWidth;
       captureHeight = captureResult.pageHeight;
@@ -517,7 +517,7 @@ async function handleCaptureAndTile(
         pageWidth: captureWidth,
         pageHeight: captureHeight,
         segmentsStitched: segmentsStitched ?? null,
-        viewportWidth: viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH,
+        viewportWidth: viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH,
         waitUntil,
       };
 
@@ -562,7 +562,7 @@ async function handleCaptureAndTile(
         pageWidth: captureWidth,
         pageHeight: captureHeight,
         segmentsStitched: segmentsStitched ?? null,
-        viewportWidth: viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH,
+        viewportWidth: viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH,
         waitUntil,
       };
       const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
@@ -611,7 +611,7 @@ async function handleCaptureAndTile(
       pageWidth: captureWidth,
       pageHeight: captureHeight,
       segmentsStitched: segmentsStitched ?? null,
-      viewportWidth: viewportWidth ?? detectDisplayWidth() ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH,
+      viewportWidth: viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH,
       waitUntil,
     };
 

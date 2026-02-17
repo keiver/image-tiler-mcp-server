@@ -1,4 +1,4 @@
-import { spawn, execSync, execFileSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { setMaxListeners } from "node:events";
 import * as fs from "node:fs";
@@ -25,48 +25,6 @@ import {
 } from "../constants.js";
 import { withTimeout } from "../utils.js";
 import type { CaptureUrlOptions, CaptureResult } from "../types.js";
-
-// ─── Display Detection ──────────────────────────────────────────────
-
-/**
- * Detects the primary display's CSS-pixel width.
- * macOS only — returns undefined on other platforms or on failure.
- */
-export function detectDisplayWidth(): number | undefined {
-  if (os.platform() !== "darwin") return undefined;
-
-  try {
-    const raw = execSync("system_profiler SPDisplaysDataType -json", {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    const data = JSON.parse(raw) as {
-      SPDisplaysDataType?: Array<{
-        spdisplays_ndrvs?: Array<{
-          _spdisplays_resolution?: string;
-          spdisplays_main?: string;
-        }>;
-      }>;
-    };
-
-    const gpus = data.SPDisplaysDataType ?? [];
-    for (const gpu of gpus) {
-      for (const display of gpu.spdisplays_ndrvs ?? []) {
-        if (display.spdisplays_main !== "spdisplays_yes") continue;
-        // Resolution string looks like "1512 x 982 @ 120.00Hz" (CSS pixels on Retina)
-        // or "3024 x 1964 @ 120.00Hz" (native pixels)
-        const match = display._spdisplays_resolution?.match(/(\d+)\s*x\s*(\d+)/);
-        if (match) {
-          return parseInt(match[1], 10);
-        }
-      }
-    }
-  } catch {
-    // Never throw — just return undefined
-  }
-
-  return undefined;
-}
 
 // ─── Chrome Detection ───────────────────────────────────────────────
 

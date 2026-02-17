@@ -7,7 +7,6 @@ vi.mock("../services/image-source-resolver.js", () => ({
 
 vi.mock("../services/url-capture.js", () => ({
   captureUrl: vi.fn(),
-  detectDisplayWidth: vi.fn(),
 }));
 
 vi.mock("../services/image-processor.js", () => ({

@@ -4,13 +4,12 @@ import type { ChildProcess } from "node:child_process";
 
 // ─── Mocks ─────────────────────────────────────────────────────────
 
-const { mockSpawn, mockExecFileSync, mockExecSync, mockAccessSync, mockWsInstance, mockWsConstructor, mockSharp, mockHttpGet } = vi.hoisted(() => {
+const { mockSpawn, mockExecFileSync, mockAccessSync, mockWsInstance, mockWsConstructor, mockSharp, mockHttpGet } = vi.hoisted(() => {
   // Must require EventEmitter inside vi.hoisted since imports aren't available yet
   const { EventEmitter: EE } = require("node:events");
 
   const mockSpawn = vi.fn();
   const mockExecFileSync = vi.fn();
-  const mockExecSync = vi.fn();
   const mockAccessSync = vi.fn();
 
   // WebSocket mock
@@ -40,13 +39,12 @@ const { mockSpawn, mockExecFileSync, mockExecSync, mockAccessSync, mockWsInstanc
   // HTTP mock for page target discovery (/json endpoint)
   const mockHttpGet = vi.fn();
 
-  return { mockSpawn, mockExecFileSync, mockExecSync, mockAccessSync, mockWsInstance, mockWsConstructor, mockSharp, mockHttpGet };
+  return { mockSpawn, mockExecFileSync, mockAccessSync, mockWsInstance, mockWsConstructor, mockSharp, mockHttpGet };
 });
 
 vi.mock("node:child_process", () => ({
   spawn: mockSpawn,
   execFileSync: mockExecFileSync,
-  execSync: mockExecSync,
 }));
 
 vi.mock("node:fs", () => ({
@@ -62,7 +60,7 @@ vi.mock("node:http", () => ({
   },
 }));
 
-import { findChromePath, captureUrl, detectDisplayWidth } from "../services/url-capture.js";
+import { findChromePath, captureUrl } from "../services/url-capture.js";
 import { MAX_CAPTURE_HEIGHT, CHROME_MAX_CAPTURE_HEIGHT, MAX_CHROME_STDERR_BYTES } from "../constants.js";
 
 // ─── Chrome Detection ──────────────────────────────────────────────
@@ -538,52 +536,3 @@ describe("captureUrl", () => {
   }, 20_000);
 });
 
-// ─── detectDisplayWidth ─────────────────────────────────────────────
-
-describe("detectDisplayWidth", () => {
-  const originalPlatform = process.platform;
-
-  afterEach(() => {
-    Object.defineProperty(process, "platform", { value: originalPlatform });
-    vi.clearAllMocks();
-  });
-
-  it("returns undefined on non-darwin platforms", () => {
-    Object.defineProperty(process, "platform", { value: "linux" });
-    expect(detectDisplayWidth()).toBeUndefined();
-  });
-
-  it("parses main display width from system_profiler JSON", () => {
-    Object.defineProperty(process, "platform", { value: "darwin" });
-    const spOutput = JSON.stringify({
-      SPDisplaysDataType: [{
-        spdisplays_ndrvs: [{
-          spdisplays_main: "spdisplays_yes",
-          _spdisplays_resolution: "1512 x 982 @ 120.00Hz",
-        }],
-      }],
-    });
-    mockExecSync.mockReturnValue(spOutput);
-    expect(detectDisplayWidth()).toBe(1512);
-  });
-
-  it("returns undefined when system_profiler throws", () => {
-    Object.defineProperty(process, "platform", { value: "darwin" });
-    mockExecSync.mockImplementation(() => { throw new Error("command failed"); });
-    expect(detectDisplayWidth()).toBeUndefined();
-  });
-
-  it("returns undefined when no main display found", () => {
-    Object.defineProperty(process, "platform", { value: "darwin" });
-    const spOutput = JSON.stringify({
-      SPDisplaysDataType: [{
-        spdisplays_ndrvs: [{
-          spdisplays_main: "spdisplays_no",
-          _spdisplays_resolution: "1512 x 982 @ 120.00Hz",
-        }],
-      }],
-    });
-    mockExecSync.mockReturnValue(spOutput);
-    expect(detectDisplayWidth()).toBeUndefined();
-  });
-});
