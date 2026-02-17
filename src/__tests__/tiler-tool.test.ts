@@ -41,6 +41,7 @@ vi.mock("../utils.js", () => ({
   sanitizeHostname: vi.fn().mockReturnValue("example-com"),
   escapeHtml: vi.fn((s: string) => s),
   buildTileHints: vi.fn().mockReturnValue({}),
+  withTimeout: vi.fn((promise: Promise<unknown>) => promise),
 }));
 
 vi.mock("sharp", () => {

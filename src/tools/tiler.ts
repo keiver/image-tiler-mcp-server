@@ -23,7 +23,7 @@ import {
   computeElicitationData,
 } from "../services/tiling-pipeline.js";
 import { tryElicitation } from "../services/elicitation.js";
-import { sanitizeHostname, buildTileHints } from "../utils.js";
+import { sanitizeHostname, buildTileHints, withTimeout } from "../utils.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import type { ResolvedImageSource } from "../types.js";
 import {
@@ -32,6 +32,7 @@ import {
   MODEL_CONFIGS,
   MAX_TILES_PER_BATCH,
   CAPTURE_DEFAULT_VIEWPORT_WIDTH,
+  SHARP_OPERATION_TIMEOUT_MS,
 } from "../constants.js";
 
 const modelLines = VISION_MODELS.map((m) => {
@@ -453,7 +454,7 @@ async function handleCaptureAndTile(
 
       if (fileExists) {
         try {
-          const meta = await sharp(existingScreenshotPath).metadata();
+          const meta = await withTimeout(sharp(existingScreenshotPath).metadata(), SHARP_OPERATION_TIMEOUT_MS, "screenshot-metadata");
           if (!meta.width || !meta.height) {
             throw new Error(`invalid dimensions (${meta.width ?? 0}x${meta.height ?? 0})`);
           }
