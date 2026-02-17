@@ -54,7 +54,6 @@ export async function tryElicitation(
           default: options.model,
         },
       },
-      required: ["model"],
     },
   });
 
