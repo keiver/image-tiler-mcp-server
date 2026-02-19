@@ -276,6 +276,10 @@ Local stdio server - runs with the same filesystem permissions as the MCP client
 - Node.js 20+
 - Compatible MCP client (Claude Code, Codex CLI, VS Code, Cursor, Claude Desktop)
 
+## Acknowledgments
+
+Built with the help of [Claude Code](https://claude.ai/claude-code) as an AI assistant for code drafting, testing, and documentation.
+
 ## License
 
 MIT
