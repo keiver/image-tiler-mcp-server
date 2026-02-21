@@ -26,7 +26,7 @@ function createMockMcpServer(opts: {
   elicitResult?: { action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> };
   capsUndefined?: boolean;
 }) {
-  const elicitInput = vi.fn().mockResolvedValue(opts.elicitResult ?? { action: "accept", content: { model: "claude" } });
+  const elicitInput = vi.fn().mockResolvedValue(opts.elicitResult ?? { action: "accept", content: { preset: "claude" } });
   return {
     server: {
       getClientCapabilities: vi.fn().mockReturnValue(
@@ -61,7 +61,7 @@ describe("tryElicitation", () => {
     it("returns selected model when user accepts", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
-        elicitResult: { action: "accept", content: { model: "claude" } },
+        elicitResult: { action: "accept", content: { preset: "claude" } },
       });
       const result = await tryElicitation(server as any, makeOptions());
       expect(result).toEqual({ status: "selected", model: "claude" });
@@ -71,7 +71,7 @@ describe("tryElicitation", () => {
     it("returns different model when user picks a different one", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
-        elicitResult: { action: "accept", content: { model: "openai" } },
+        elicitResult: { action: "accept", content: { preset: "openai" } },
       });
       const result = await tryElicitation(server as any, makeOptions({ model: "claude" }));
       expect(result).toEqual({ status: "selected", model: "openai" });
@@ -98,26 +98,26 @@ describe("tryElicitation", () => {
     it("sends oneOf enum schema with all models", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
-        elicitResult: { action: "accept", content: { model: "claude" } },
+        elicitResult: { action: "accept", content: { preset: "claude" } },
       });
       await tryElicitation(server as any, makeOptions());
       const call = server.server.elicitInput.mock.calls[0][0];
       const schema = call.requestedSchema;
-      expect(schema.properties.model.type).toBe("string");
-      expect(schema.properties.model.oneOf).toHaveLength(4);
-      expect(schema.properties.model.oneOf[0].const).toBe("claude");
-      expect(schema.properties.model.oneOf[0].title).toContain("Claude");
-      expect(schema.properties.model.oneOf[0].title).toContain("32 tiles");
-      expect(schema.properties.model.oneOf[1].const).toBe("openai");
-      expect(schema.properties.model.oneOf[2].const).toBe("gemini3");
-      expect(schema.properties.model.oneOf[3].const).toBe("gemini");
-      expect(schema.properties.model.default).toBe("claude");
+      expect(schema.properties.preset.type).toBe("string");
+      expect(schema.properties.preset.oneOf).toHaveLength(4);
+      expect(schema.properties.preset.oneOf[0].const).toBe("claude");
+      expect(schema.properties.preset.oneOf[0].title).toContain("Claude");
+      expect(schema.properties.preset.oneOf[0].title).toContain("32 tiles");
+      expect(schema.properties.preset.oneOf[1].const).toBe("openai");
+      expect(schema.properties.preset.oneOf[2].const).toBe("gemini3");
+      expect(schema.properties.preset.oneOf[3].const).toBe("gemini");
+      expect(schema.properties.preset.default).toBe("claude");
     });
 
     it("includes image dimensions in elicitation message", async () => {
       const server = createMockMcpServer({
         supportsElicitation: true,
-        elicitResult: { action: "accept", content: { model: "claude" } },
+        elicitResult: { action: "accept", content: { preset: "claude" } },
       });
       await tryElicitation(server as any, makeOptions());
       const call = server.server.elicitInput.mock.calls[0][0];

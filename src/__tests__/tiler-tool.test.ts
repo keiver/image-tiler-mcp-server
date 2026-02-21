@@ -224,8 +224,8 @@ describe("registerTilerTool", () => {
     const description = registerCall[1].description as string;
     expect(description).toContain("MANDATORY two-phase workflow");
     expect(description).toContain("DO NOT skip Phase 1");
-    expect(description).toContain("DO NOT include model, tileSize, or outputDir");
-    expect(description).toContain("DO NOT select a model yourself");
+    expect(description).toContain("DO NOT include preset, tileSize, or outputDir");
+    expect(description).toContain("DO NOT select a preset yourself");
     expect(description).toContain("cheapest option");
   });
 
@@ -242,15 +242,16 @@ describe("registerTilerTool", () => {
   // ─── Tile Image Mode ─────────────────────────────────────────────────────
 
   describe("tile-image mode", () => {
-    it("returns Phase 2 error when model provided but no image source", async () => {
+    it("returns Phase 2 error when preset provided but no image source", async () => {
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { model: "claude", tileSize: 1092 },
+        { preset: "claude", tileSize: 1092 },
         {} as any
       );
       const res = result as any;
       expect(res.isError).toBe(true);
       expect(res.content[0].text).toContain("Phase 2 requires an image source");
+      expect(res.content[0].text).toContain("preset and outputDir");
     });
 
     it("returns Phase 2 error when outputDir provided but no image source", async () => {
@@ -268,7 +269,7 @@ describe("registerTilerTool", () => {
       mockedValidateFormat.mockReturnValue("Error: Unsupported image format '.bmp'.");
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { filePath: "test.bmp", model: "claude" },
+        { filePath: "test.bmp", preset: "claude" },
         {} as any
       );
       const res = result as any;
@@ -294,7 +295,7 @@ describe("registerTilerTool", () => {
       mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { filePath: "image.png", model: "openai", outputDir: "/out" },
+        { filePath: "image.png", preset: "openai", outputDir: "/out" },
         {} as any
       );
       const res = result as any;
@@ -355,7 +356,7 @@ describe("registerTilerTool", () => {
     it("passes source params to resolveImageSource", async () => {
       const tool = mock.getTool("tiler")!;
       await tool.handler(
-        { filePath: "image.png", sourceUrl: "https://example.com/img.png", model: "claude" },
+        { filePath: "image.png", sourceUrl: "https://example.com/img.png", preset: "claude" },
         {} as any
       );
       expect(mockedResolveSource).toHaveBeenCalledWith({
@@ -376,7 +377,7 @@ describe("registerTilerTool", () => {
       });
       const tool = mock.getTool("tiler")!;
       await tool.handler(
-        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        { sourceUrl: "https://example.com/img.png", preset: "claude" },
         {} as any
       );
       expect(cleanup).toHaveBeenCalledTimes(1);
@@ -393,7 +394,7 @@ describe("registerTilerTool", () => {
       mockedExecuteTiling.mockRejectedValue(new Error("fail"));
       const tool = mock.getTool("tiler")!;
       await tool.handler(
-        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        { sourceUrl: "https://example.com/img.png", preset: "claude" },
         {} as any
       );
       expect(cleanup).toHaveBeenCalledTimes(1);
@@ -410,7 +411,7 @@ describe("registerTilerTool", () => {
       mockedTryElicitation.mockResolvedValue({ status: "unsupported" });
       const tool = mock.getTool("tiler")!;
       await tool.handler(
-        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        { sourceUrl: "https://example.com/img.png", preset: "claude" },
         {} as any
       );
       expect(cleanup).toHaveBeenCalledTimes(1);
@@ -426,7 +427,7 @@ describe("registerTilerTool", () => {
       });
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        { sourceUrl: "https://example.com/img.png", preset: "claude" },
         {} as any
       );
       const res = result as any;
@@ -446,7 +447,7 @@ describe("registerTilerTool", () => {
       mockedExecuteTiling.mockRejectedValue(new Error("fail"));
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { sourceUrl: "https://example.com/img.png", model: "claude" },
+        { sourceUrl: "https://example.com/img.png", preset: "claude" },
         {} as any
       );
       const res = result as any;
@@ -459,7 +460,7 @@ describe("registerTilerTool", () => {
       mockedAnalyzeAndPreview.mockRejectedValue(new Error("Sharp failed"));
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { filePath: "bad.png", model: "claude" },
+        { filePath: "bad.png", preset: "claude" },
         {} as any
       );
       const res = result as any;
@@ -472,7 +473,7 @@ describe("registerTilerTool", () => {
       mockedAnalyzeAndPreview.mockRejectedValue("string error");
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { filePath: "bad.png", model: "claude" },
+        { filePath: "bad.png", preset: "claude" },
         {} as any
       );
       const res = result as any;
@@ -493,10 +494,46 @@ describe("registerTilerTool", () => {
       expect(res.content[0].text).toContain("Transport closed");
     });
 
+    it("deprecated model param resolves correctly and emits deprecation warning", async () => {
+      mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png", model: "openai", outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedExecuteTiling).toHaveBeenCalledWith(
+        "/images/photo.png",
+        "/output/tiles",
+        expect.objectContaining({ model: "openai" })
+      );
+      // Deprecation warning should be in the warnings passed to buildPhase2Response
+      const phase2Call = mockedBuildPhase2Response.mock.calls[0];
+      const opts = phase2Call[1];
+      expect(opts.warnings).toContain('The "model" parameter is deprecated. Use "preset" instead.');
+    });
+
+    it("preset takes precedence over deprecated model", async () => {
+      mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png", preset: "claude", model: "openai", outputDir: "/out" },
+        {} as any
+      );
+      expect(mockedExecuteTiling).toHaveBeenCalledWith(
+        "/images/photo.png",
+        "/output/tiles",
+        expect.objectContaining({ model: "claude" })
+      );
+      // No deprecation warning when preset is provided
+      const phase2Call = mockedBuildPhase2Response.mock.calls[0];
+      const opts = phase2Call[1];
+      expect(opts.warnings).not.toContain('The "model" parameter is deprecated. Use "preset" instead.');
+    });
+
     it("passes outputDir and model through to pipeline", async () => {
       const tool = mock.getTool("tiler")!;
       await tool.handler(
-        { filePath: "image.png", model: "openai", outputDir: "/custom" },
+        { filePath: "image.png", preset: "openai", outputDir: "/custom" },
         {} as any
       );
       expect(mockedResolveOutputDir).toHaveBeenCalledWith("file", "/images/photo.png", "/custom");
@@ -520,7 +557,7 @@ describe("registerTilerTool", () => {
       mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
       const tool = mock.getTool("tiler")!;
       await tool.handler(
-        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        { filePath: "image.png", preset: "claude", outputDir: "/out" },
         {} as any
       );
       expect(mockedAppendTilesPage).toHaveBeenCalledWith(
@@ -534,7 +571,7 @@ describe("registerTilerTool", () => {
       mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
       const tool = mock.getTool("tiler")!;
       await tool.handler(
-        { filePath: "image.png", model: "claude", outputDir: "/out", page: 3 },
+        { filePath: "image.png", preset: "claude", outputDir: "/out", page: 3 },
         {} as any
       );
       expect(mockedAppendTilesPage).toHaveBeenCalledWith(
@@ -548,7 +585,7 @@ describe("registerTilerTool", () => {
       mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { filePath: "image.png", model: "claude", outputDir: "/out" },
+        { filePath: "image.png", preset: "claude", outputDir: "/out" },
         {} as any
       );
       expect(result).toBe(appendedResponse);
@@ -1256,7 +1293,7 @@ describe("registerTilerTool", () => {
     it("generates preview and tiles when model + outputDir provided upfront", async () => {
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { url: "https://example.com", model: "claude", outputDir: "/custom/output", page: 0, format: "webp" },
+        { url: "https://example.com", preset: "claude", outputDir: "/custom/output", page: 0, format: "webp" },
         {} as any
       );
       const res = result as any;
@@ -1276,7 +1313,7 @@ describe("registerTilerTool", () => {
     it("capture one-shot prepends capture info to response", async () => {
       const tool = mock.getTool("tiler")!;
       await tool.handler(
-        { url: "https://example.com", model: "openai", outputDir: "/custom", page: 0, format: "webp" },
+        { url: "https://example.com", preset: "openai", outputDir: "/custom", page: 0, format: "webp" },
         {} as any
       );
       const passedResponse = mockedAppendTilesPage.mock.calls[0][0];

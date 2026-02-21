@@ -612,7 +612,7 @@ describe("buildPhase2Response", () => {
     });
     expect(response.content[0].text).toContain("Auto-selected Gemini preset");
     expect(response.content[0].text).toContain("lowest token cost");
-    expect(response.content[0].text).toContain('specify model=');
+    expect(response.content[0].text).toContain('specify preset=');
 
     const json = JSON.parse(response.content[1].text);
     expect(json.autoSelected).toBe(true);
@@ -628,7 +628,7 @@ describe("buildPhase2Response", () => {
       maxDimension: 10000,
     });
     expect(response.content[0].text).not.toContain("Auto-selected");
-    expect(response.content[0].text).not.toContain("specify model=");
+    expect(response.content[0].text).not.toContain("specify preset=");
 
     const json = JSON.parse(response.content[1].text);
     expect(json.autoSelected).toBeUndefined();

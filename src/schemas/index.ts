@@ -97,12 +97,19 @@ export const TilerInputSchema = {
     ),
 
   // ── Tiling config fields (shared by tile-image and capture modes) ──
-  model: z
+  preset: z
     .enum(VISION_MODELS)
     .optional()
     .describe(
       `DO NOT provide on Phase 1 (first call). Only specify on Phase 2 after the user has chosen from the comparison table. ` +
       `Available: ${modelDescriptions}. Auto-selects cheapest when omitted on Phase 2.`
+    ),
+  model: z
+    .enum(VISION_MODELS)
+    .optional()
+    .describe(
+      `Deprecated: use "preset" instead. Accepted for backward compatibility. ` +
+      `Available: ${modelDescriptions}.`
     ),
   tileSize: z
     .number()

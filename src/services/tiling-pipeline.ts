@@ -215,7 +215,7 @@ export function buildPhase1Response(
 
   const parts: string[] = [
     `ACTION REQUIRED: Present the tiling options below to the user and wait for their choice.\n` +
-    `Do NOT pick a model yourself — always default to the cheapest if you must choose.\n` +
+    `Do NOT pick a preset yourself — always default to the cheapest if you must choose.\n` +
     `\n---\n\n`,
     table,
   ];
@@ -392,7 +392,7 @@ export async function buildPhase2Response(
     const effH = result.resize ? result.sourceImage.height : undefined;
     const table = formatModelComparisonTable(origW, origH, allModels, effW, effH);
     summaryLines.push("", table);
-    summaryLines.push(`\nTo use a different vision preset, specify model="claude" | "openai" | "gemini3" | "gemini"`);
+    summaryLines.push(`\nTo use a different vision preset, specify preset="claude" | "openai" | "gemini3" | "gemini"`);
   }
 
   if (warnings.length > 0) {

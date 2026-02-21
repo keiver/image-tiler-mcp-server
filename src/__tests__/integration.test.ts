@@ -31,7 +31,7 @@ afterAll(async () => {
   }
 });
 
-describe("integration: landscape image (3584×1866)", () => {
+describe("integration: landscape image (8192×4320)", () => {
   let outputDir: string;
   let result: Awaited<ReturnType<typeof tileImage>>;
 
@@ -39,51 +39,51 @@ describe("integration: landscape image (3584×1866)", () => {
     outputDir = await makeTempDir("landscape");
     result = await tileImage(LANDSCAPE, 1092, outputDir);
 
-    expect(result.sourceImage.width).toBe(3584);
-    expect(result.sourceImage.height).toBe(1866);
+    expect(result.sourceImage.width).toBe(8192);
+    expect(result.sourceImage.height).toBe(4320);
     expect(result.sourceImage.format).toBe("png");
   }, 30000);
 
-  it("produces 4×2 grid = 8 tiles", () => {
-    // ceil(3584/1092) = 4, ceil(1866/1092) = 2
-    expect(result.grid.cols).toBe(4);
-    expect(result.grid.rows).toBe(2);
-    expect(result.grid.totalTiles).toBe(8);
-    expect(result.tiles).toHaveLength(8);
+  it("produces 8×4 grid = 32 tiles", () => {
+    // ceil(8192/1092) = 8, ceil(4320/1092) = 4
+    expect(result.grid.cols).toBe(8);
+    expect(result.grid.rows).toBe(4);
+    expect(result.grid.totalTiles).toBe(32);
+    expect(result.tiles).toHaveLength(32);
   });
 
   it("edge tiles have correct dimensions", async () => {
-    // Right column: 3584 - (3 * 1092) = 3584 - 3276 = 308px
-    // Bottom row: 1866 - (1 * 1092) = 774px
-    const rightEdgeTile = result.tiles.find((t) => t.row === 0 && t.col === 3)!;
-    expect(rightEdgeTile.width).toBe(308);
+    // Right column: 8192 - (7 * 1092) = 8192 - 7644 = 548px
+    // Bottom row: 4320 - (3 * 1092) = 4320 - 3276 = 1044px
+    const rightEdgeTile = result.tiles.find((t) => t.row === 0 && t.col === 7)!;
+    expect(rightEdgeTile.width).toBe(548);
     expect(rightEdgeTile.height).toBe(1092);
 
-    const bottomEdgeTile = result.tiles.find((t) => t.row === 1 && t.col === 0)!;
+    const bottomEdgeTile = result.tiles.find((t) => t.row === 3 && t.col === 0)!;
     expect(bottomEdgeTile.width).toBe(1092);
-    expect(bottomEdgeTile.height).toBe(774);
+    expect(bottomEdgeTile.height).toBe(1044);
 
     // Verify actual file dimensions via Sharp
     const rightTileMeta = await sharp(rightEdgeTile.filePath).metadata();
-    expect(rightTileMeta.width).toBe(308);
+    expect(rightTileMeta.width).toBe(548);
     expect(rightTileMeta.height).toBe(1092);
 
     const bottomTileMeta = await sharp(bottomEdgeTile.filePath).metadata();
     expect(bottomTileMeta.width).toBe(1092);
-    expect(bottomTileMeta.height).toBe(774);
+    expect(bottomTileMeta.height).toBe(1044);
   });
 
   it("tile files exist with correct naming", async () => {
     const files = await fs.readdir(outputDir);
     const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".webp"));
-    expect(tileFiles).toHaveLength(8);
+    expect(tileFiles).toHaveLength(32);
     expect(tileFiles).toContain("tile_000_000.webp");
-    expect(tileFiles).toContain("tile_001_003.webp"); // last tile
+    expect(tileFiles).toContain("tile_003_007.webp"); // last tile
   });
 
   it("lists tiles and reads them as base64", async () => {
     const tilePaths = await listTilesInDirectory(outputDir);
-    expect(tilePaths).toHaveLength(8);
+    expect(tilePaths).toHaveLength(32);
 
     const base64 = await readTileAsBase64(tilePaths[0]);
     expect(base64.length).toBeGreaterThan(0);
@@ -95,11 +95,11 @@ describe("integration: landscape image (3584×1866)", () => {
   });
 
   it("estimated tokens match formula", () => {
-    expect(result.grid.estimatedTokens).toBe(8 * 1590);
+    expect(result.grid.estimatedTokens).toBe(32 * 1590);
   });
 });
 
-describe("integration: portrait image (3600×8412)", () => {
+describe("integration: portrait image (3600×20220)", () => {
   let outputDir: string;
   let result: Awaited<ReturnType<typeof tileImage>>;
 
@@ -108,43 +108,43 @@ describe("integration: portrait image (3600×8412)", () => {
     result = await tileImage(PORTRAIT, 1092, outputDir);
 
     expect(result.sourceImage.width).toBe(3600);
-    expect(result.sourceImage.height).toBe(8412);
+    expect(result.sourceImage.height).toBe(20220);
   }, 60000);
 
-  it("produces 4×8 grid = 32 tiles", () => {
-    // ceil(3600/1092) = 4, ceil(8412/1092) = 8
+  it("produces 4×19 grid = 76 tiles", () => {
+    // ceil(3600/1092) = 4, ceil(20220/1092) = 19
     expect(result.grid.cols).toBe(4);
-    expect(result.grid.rows).toBe(8);
-    expect(result.grid.totalTiles).toBe(32);
-    expect(result.tiles).toHaveLength(32);
+    expect(result.grid.rows).toBe(19);
+    expect(result.grid.totalTiles).toBe(76);
+    expect(result.tiles).toHaveLength(76);
   });
 
   it("edge tiles have correct dimensions", async () => {
     // Right column: 3600 - (3 * 1092) = 3600 - 3276 = 324px
-    // Bottom row: 8412 - (7 * 1092) = 8412 - 7644 = 768px
+    // Bottom row: 20220 - (18 * 1092) = 20220 - 19656 = 564px
     const rightEdgeTile = result.tiles.find((t) => t.row === 0 && t.col === 3)!;
     expect(rightEdgeTile.width).toBe(324);
 
-    const bottomEdgeTile = result.tiles.find((t) => t.row === 7 && t.col === 0)!;
-    expect(bottomEdgeTile.height).toBe(768);
+    const bottomEdgeTile = result.tiles.find((t) => t.row === 18 && t.col === 0)!;
+    expect(bottomEdgeTile.height).toBe(564);
 
     // Verify actual file dimensions
     const rightMeta = await sharp(rightEdgeTile.filePath).metadata();
     expect(rightMeta.width).toBe(324);
 
     const bottomMeta = await sharp(bottomEdgeTile.filePath).metadata();
-    expect(bottomMeta.height).toBe(768);
+    expect(bottomMeta.height).toBe(564);
   });
 
   it("tile files exist with correct count", async () => {
     const files = await fs.readdir(outputDir);
     const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".webp"));
-    expect(tileFiles).toHaveLength(32);
+    expect(tileFiles).toHaveLength(76);
   });
 
   it("end-to-end: tile → list → base64 → verify WebP", async () => {
     const tilePaths = await listTilesInDirectory(outputDir);
-    expect(tilePaths).toHaveLength(32);
+    expect(tilePaths).toHaveLength(76);
 
     // Read last tile
     const lastTile = tilePaths[tilePaths.length - 1];
@@ -156,7 +156,7 @@ describe("integration: portrait image (3600×8412)", () => {
   });
 
   it("estimated tokens match formula", () => {
-    expect(result.grid.estimatedTokens).toBe(32 * 1590);
+    expect(result.grid.estimatedTokens).toBe(76 * 1590);
   });
 });
 
@@ -168,27 +168,27 @@ describe("integration: landscape with remainder absorption (Claude)", () => {
     outputDir = await makeTempDir("landscape-absorb");
     result = await tileImage(LANDSCAPE, 1092, outputDir, 1590, undefined, 1568);
 
-    expect(result.sourceImage.width).toBe(3584);
-    expect(result.sourceImage.height).toBe(1866);
+    expect(result.sourceImage.width).toBe(8192);
+    expect(result.sourceImage.height).toBe(4320);
   }, 30000);
 
-  it("produces 4×2 grid = 8 tiles (no absorption — remainders too large)", () => {
-    // Right remainder: 3584 - 3*1092 = 308px, 308/1092 = 0.28 > 0.15 threshold → not absorbed
-    // Bottom remainder: 1866 - 1*1092 = 774px, 774/1092 = 0.71 > 0.15 threshold → not absorbed
-    expect(result.grid.cols).toBe(4);
-    expect(result.grid.rows).toBe(2);
-    expect(result.grid.totalTiles).toBe(8);
-    expect(result.tiles).toHaveLength(8);
+  it("produces 8×4 grid = 32 tiles (no absorption — remainders too large)", () => {
+    // Right remainder: 8192 - 7*1092 = 548px, 548/1092 = 0.50 > 0.15 threshold → not absorbed
+    // Bottom remainder: 4320 - 3*1092 = 1044px, 1044/1092 = 0.96 > 0.15 threshold → not absorbed
+    expect(result.grid.cols).toBe(8);
+    expect(result.grid.rows).toBe(4);
+    expect(result.grid.totalTiles).toBe(32);
+    expect(result.tiles).toHaveLength(32);
   });
 
-  it("last column tiles are 308px wide (remainder not absorbed)", async () => {
-    const lastColTile = result.tiles.find((t) => t.row === 0 && t.col === 3)!;
-    expect(lastColTile.width).toBe(308);
+  it("last column tiles are 548px wide (remainder not absorbed)", async () => {
+    const lastColTile = result.tiles.find((t) => t.row === 0 && t.col === 7)!;
+    expect(lastColTile.width).toBe(548);
     expect(lastColTile.height).toBe(1092);
 
     // Verify actual file dimensions via Sharp
     const meta = await sharp(lastColTile.filePath).metadata();
-    expect(meta.width).toBe(308);
+    expect(meta.width).toBe(548);
     expect(meta.height).toBe(1092);
   });
 
@@ -202,15 +202,15 @@ describe("integration: landscape with remainder absorption (Claude)", () => {
   });
 
   it("token count matches grid", () => {
-    expect(result.grid.totalTiles).toBe(8);
-    expect(result.grid.estimatedTokens).toBe(8 * 1590);
+    expect(result.grid.totalTiles).toBe(32);
+    expect(result.grid.estimatedTokens).toBe(32 * 1590);
   });
 
   it("tile files exist with correct count", async () => {
     const files = await fs.readdir(outputDir);
     const tileFiles = files.filter((f) => f.startsWith("tile_") && f.endsWith(".webp"));
-    expect(tileFiles).toHaveLength(8);
-    expect(tileFiles).toContain("tile_001_003.webp");
+    expect(tileFiles).toHaveLength(32);
+    expect(tileFiles).toContain("tile_003_007.webp");
   });
 });
 
@@ -222,30 +222,30 @@ describe("integration: landscape with OpenAI settings (768px tiles)", () => {
     outputDir = await makeTempDir("landscape-openai");
     result = await tileImage(LANDSCAPE, 768, outputDir, 765);
 
-    expect(result.sourceImage.width).toBe(3584);
-    expect(result.sourceImage.height).toBe(1866);
+    expect(result.sourceImage.width).toBe(8192);
+    expect(result.sourceImage.height).toBe(4320);
   }, 30000);
 
-  it("produces 5×3 grid = 15 tiles", () => {
-    // ceil(3584/768) = 5, ceil(1866/768) = 3
-    expect(result.grid.cols).toBe(5);
-    expect(result.grid.rows).toBe(3);
-    expect(result.grid.totalTiles).toBe(15);
-    expect(result.tiles).toHaveLength(15);
+  it("produces 11×6 grid = 66 tiles", () => {
+    // ceil(8192/768) = 11, ceil(4320/768) = 6
+    expect(result.grid.cols).toBe(11);
+    expect(result.grid.rows).toBe(6);
+    expect(result.grid.totalTiles).toBe(66);
+    expect(result.tiles).toHaveLength(66);
   });
 
   it("estimated tokens use OpenAI rate (765/tile)", () => {
-    expect(result.grid.estimatedTokens).toBe(15 * 765);
+    expect(result.grid.estimatedTokens).toBe(66 * 765);
   });
 
   it("edge tiles have correct dimensions", () => {
-    // Right column: 3584 - (4 * 768) = 3584 - 3072 = 512px
-    // Bottom row: 1866 - (2 * 768) = 1866 - 1536 = 330px
-    const rightEdgeTile = result.tiles.find((t) => t.row === 0 && t.col === 4)!;
+    // Right column: 8192 - (10 * 768) = 8192 - 7680 = 512px
+    // Bottom row: 4320 - (5 * 768) = 4320 - 3840 = 480px
+    const rightEdgeTile = result.tiles.find((t) => t.row === 0 && t.col === 10)!;
     expect(rightEdgeTile.width).toBe(512);
 
-    const bottomEdgeTile = result.tiles.find((t) => t.row === 2 && t.col === 0)!;
-    expect(bottomEdgeTile.height).toBe(330);
+    const bottomEdgeTile = result.tiles.find((t) => t.row === 5 && t.col === 0)!;
+    expect(bottomEdgeTile.height).toBe(480);
   });
 });
 
@@ -257,18 +257,18 @@ describe("integration: landscape with Gemini settings (768px tiles)", () => {
     outputDir = await makeTempDir("landscape-gemini");
     result = await tileImage(LANDSCAPE, 768, outputDir, 258);
 
-    expect(result.sourceImage.width).toBe(3584);
-    expect(result.sourceImage.height).toBe(1866);
+    expect(result.sourceImage.width).toBe(8192);
+    expect(result.sourceImage.height).toBe(4320);
   }, 30000);
 
-  it("produces 5×3 grid = 15 tiles (same grid as OpenAI)", () => {
-    expect(result.grid.cols).toBe(5);
-    expect(result.grid.rows).toBe(3);
-    expect(result.grid.totalTiles).toBe(15);
+  it("produces 11×6 grid = 66 tiles (same grid as OpenAI)", () => {
+    expect(result.grid.cols).toBe(11);
+    expect(result.grid.rows).toBe(6);
+    expect(result.grid.totalTiles).toBe(66);
   });
 
   it("estimated tokens use Gemini rate (258/tile)", () => {
-    expect(result.grid.estimatedTokens).toBe(15 * 258);
+    expect(result.grid.estimatedTokens).toBe(66 * 258);
   });
 });
 
@@ -280,30 +280,30 @@ describe("integration: landscape with Gemini 3 settings (1536px tiles)", () => {
     outputDir = await makeTempDir("landscape-gemini3");
     result = await tileImage(LANDSCAPE, 1536, outputDir, 1120);
 
-    expect(result.sourceImage.width).toBe(3584);
-    expect(result.sourceImage.height).toBe(1866);
+    expect(result.sourceImage.width).toBe(8192);
+    expect(result.sourceImage.height).toBe(4320);
   }, 30000);
 
-  it("produces 3×2 grid = 6 tiles", () => {
-    // ceil(3584/1536) = 3, ceil(1866/1536) = 2
-    expect(result.grid.cols).toBe(3);
-    expect(result.grid.rows).toBe(2);
-    expect(result.grid.totalTiles).toBe(6);
-    expect(result.tiles).toHaveLength(6);
+  it("produces 6×3 grid = 18 tiles", () => {
+    // ceil(8192/1536) = 6, ceil(4320/1536) = 3
+    expect(result.grid.cols).toBe(6);
+    expect(result.grid.rows).toBe(3);
+    expect(result.grid.totalTiles).toBe(18);
+    expect(result.tiles).toHaveLength(18);
   });
 
   it("estimated tokens use Gemini 3 rate (1120/tile)", () => {
-    expect(result.grid.estimatedTokens).toBe(6 * 1120);
+    expect(result.grid.estimatedTokens).toBe(18 * 1120);
   });
 
   it("edge tiles have correct dimensions", () => {
-    // Right column: 3584 - (2 * 1536) = 3584 - 3072 = 512px
-    // Bottom row: 1866 - (1 * 1536) = 330px
-    const rightEdgeTile = result.tiles.find((t) => t.row === 0 && t.col === 2)!;
+    // Right column: 8192 - (5 * 1536) = 8192 - 7680 = 512px
+    // Bottom row: 4320 - (2 * 1536) = 4320 - 3072 = 1248px
+    const rightEdgeTile = result.tiles.find((t) => t.row === 0 && t.col === 5)!;
     expect(rightEdgeTile.width).toBe(512);
 
-    const bottomEdgeTile = result.tiles.find((t) => t.row === 1 && t.col === 0)!;
-    expect(bottomEdgeTile.height).toBe(330);
+    const bottomEdgeTile = result.tiles.find((t) => t.row === 2 && t.col === 0)!;
+    expect(bottomEdgeTile.height).toBe(1248);
   });
 });
 
@@ -315,11 +315,11 @@ describe("integration: landscape with maxDimension=2000", () => {
     outputDir = await makeTempDir("landscape-maxdim");
     result = await tileImage(LANDSCAPE, 1092, outputDir, 1590, 2000);
 
-    // Original is 3584×1866, longest side is 3584
-    // scaleFactor = 2000/3584 ≈ 0.558
+    // Original is 8192×4320, longest side is 8192
+    // scaleFactor = 2000/8192 ≈ 0.244
     expect(result.resize).toBeDefined();
-    expect(result.resize!.originalWidth).toBe(3584);
-    expect(result.resize!.originalHeight).toBe(1866);
+    expect(result.resize!.originalWidth).toBe(8192);
+    expect(result.resize!.originalHeight).toBe(4320);
     expect(result.resize!.resizedWidth).toBeLessThanOrEqual(2000);
     expect(result.resize!.resizedHeight).toBeLessThanOrEqual(2000);
     expect(result.resize!.scaleFactor).toBeGreaterThan(0);
@@ -333,9 +333,9 @@ describe("integration: landscape with maxDimension=2000", () => {
   });
 
   it("produces fewer tiles than without maxDimension", () => {
-    // Without maxDimension, 3584×1866 at 1092 → 4×2 = 8 tiles
-    // With maxDimension=2000, ~2000×1041 at 1092 → 2×1 = 2 tiles
-    expect(result.grid.totalTiles).toBeLessThan(8);
+    // Without maxDimension, 8192×4320 at 1092 → 8×4 = 32 tiles
+    // With maxDimension=2000, ~2000×1055 at 1092 → 2×1 = 2 tiles
+    expect(result.grid.totalTiles).toBeLessThan(32);
   });
 
   it("tile files exist on disk", async () => {
@@ -362,30 +362,30 @@ describe("integration: landscape with maxDimension=2000", () => {
 describe("integration: small image with maxDimension (no-op)", () => {
   it("does not resize when image is already within maxDimension", async () => {
     const outputDir = await makeTempDir("small-maxdim");
-    // landscape.png is 3584×1866, use maxDimension=10000 which exceeds longest side
+    // landscape.png is 8192×4320, use maxDimension=10000 which exceeds longest side
     const result = await tileImage(LANDSCAPE, 1092, outputDir, 1590, 10000);
 
     expect(result.resize).toBeUndefined();
-    expect(result.sourceImage.width).toBe(3584);
-    expect(result.sourceImage.height).toBe(1866);
+    expect(result.sourceImage.width).toBe(8192);
+    expect(result.sourceImage.height).toBe(4320);
   }, 30000);
 });
 
 describe("integration: portrait with maxDimension=1092", () => {
   it("dramatically reduces tiles for long-scroll image", async () => {
     const outputDir = await makeTempDir("portrait-maxdim");
-    // portrait.png is 3600×8412
-    // Without maxDimension: 4×8 = 32 tiles
+    // portrait.png is 3600×20220
+    // Without maxDimension: 4×19 = 76 tiles
     const result = await tileImage(PORTRAIT, 1092, outputDir, 1590, 1092);
 
     expect(result.resize).toBeDefined();
     expect(result.resize!.originalWidth).toBe(3600);
-    expect(result.resize!.originalHeight).toBe(8412);
-    // Longest side is 8412, scaleFactor = 1092/8412 ≈ 0.130
+    expect(result.resize!.originalHeight).toBe(20220);
+    // Longest side is 20220, scaleFactor = 1092/20220 ≈ 0.054
     expect(result.resize!.resizedHeight).toBeLessThanOrEqual(1092);
     // With such aggressive resize, should be 1×1 grid
     expect(result.grid.totalTiles).toBeLessThanOrEqual(4);
-    expect(result.grid.totalTiles).toBeLessThan(32);
+    expect(result.grid.totalTiles).toBeLessThan(76);
 
     // Verify temp file cleanup
     const files = await fs.readdir(outputDir);
@@ -460,8 +460,8 @@ describe("integration: interactive preview generation", () => {
 
     const html = await fs.readFile(previewPath, "utf-8");
     expect(html).toContain("<!DOCTYPE html>");
-    expect(html).toContain("3584");
-    expect(html).toContain("1866");
+    expect(html).toContain("8192");
+    expect(html).toContain("4320");
   }, 30000);
 
   it("listTilesInDirectory does NOT include preview HTML", async () => {

@@ -41,7 +41,14 @@
     "screenshot",
     "sharp",
     "image-processing",
-    "tiling"
+    "tiling",
+    "chrome",
+    "cdp",
+    "capture",
+    "gpt-4o",
+    "frontend",
+    "web-screenshot",
+    "ai-vision"
   ],
   "author": "Keiver Hernandez",
   "license": "MIT",
