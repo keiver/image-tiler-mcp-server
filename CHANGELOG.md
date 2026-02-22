@@ -22,6 +22,7 @@
 
 ### Fixed
 - Chrome zero-dimension fallback catches negative values (not just zero)
+- Thin edge tiles (remainder column/row narrower than 50% of tile size) now classify as `mixed` instead of `low-detail`; geometry is persisted in `tiles-manifest.json` for accurate classification in get-tiles mode
 
 ## [2.0.1]
 
