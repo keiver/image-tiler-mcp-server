@@ -515,6 +515,20 @@ describe("registerTilerTool", () => {
       expect(opts.warnings).not.toContain('The "model" parameter is deprecated. Use "preset" instead.');
     });
 
+    it("emits conflict warning when preset and model are both provided with different values", async () => {
+      mockedCheckPreviewGate.mockResolvedValue("/output/tiles/preview.html");
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { filePath: "image.png", preset: "claude", model: "openai", outputDir: "/out" },
+        {} as any
+      );
+      const phase2Call = mockedBuildPhase2Response.mock.calls[0];
+      const opts = phase2Call[1];
+      expect(opts.warnings).toContain(
+        '"model" param ignored in favour of "preset" (values differ: model="openai", preset="claude").'
+      );
+    });
+
     it("passes outputDir and model through to pipeline", async () => {
       const tool = mock.getTool("tiler")!;
       await tool.handler(
@@ -821,7 +835,7 @@ describe("registerTilerTool", () => {
 
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { tilesDir: "/tiles", start: 0, end: 3 },
+        { tilesDir: "/tiles", start: 0, end: 3, skipBlankTiles: true },
         {} as any
       );
       const res = result as any;
@@ -846,7 +860,7 @@ describe("registerTilerTool", () => {
 
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
-        { tilesDir: "/tiles", start: 0, end: 3 },
+        { tilesDir: "/tiles", start: 0, end: 3, skipBlankTiles: true },
         {} as any
       );
       const res = result as any;

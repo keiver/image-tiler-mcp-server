@@ -96,6 +96,8 @@ export function registerTilerTool(server: McpServer): void {
       const deprecationWarnings: string[] = [];
       if (deprecatedModel && !explicitPreset) {
         deprecationWarnings.push('The "model" parameter is deprecated. Use "preset" instead.');
+      } else if (deprecatedModel && explicitPreset && deprecatedModel !== explicitPreset) {
+        deprecationWarnings.push(`"model" param ignored in favour of "preset" (values differ: model="${deprecatedModel}", preset="${explicitPreset}").`);
       }
       // ── Mode: get-tiles (read-only pagination) ──
       if (tilesDir) {
@@ -107,7 +109,7 @@ export function registerTilerTool(server: McpServer): void {
           effectiveStart = page * MAX_TILES_PER_BATCH;
           effectiveEnd = effectiveStart + MAX_TILES_PER_BATCH - 1;
         }
-        return handleGetTiles(tilesDir, effectiveStart, effectiveEnd, skipBlankTiles ?? true);
+        return handleGetTiles(tilesDir, effectiveStart, effectiveEnd, skipBlankTiles);
       }
 
       // ── Mode: capture-and-tile ──
@@ -209,9 +211,8 @@ async function handleGetTiles(
       };
     }
 
-    const content: ContentBlock[] = [];
+    const tiles: ContentBlock[] = [];
     const summary = `Tiles ${start + 1}-${effectiveEnd + 1} of ${totalTiles}`;
-    content.push({ type: "text" as const, text: summary });
 
     // Read manifest for geometry-aware classification (best-effort)
     type TilesManifest = {
@@ -256,7 +257,7 @@ async function handleGetTiles(
 
       // Skip blank tiles — text annotation only, no image data
       if (skipBlankTiles && meta?.isBlank) {
-        content.push({
+        tiles.push({
           type: "text" as const,
           text: `Tile ${i + 1}/${totalTiles} [index ${i}, row ${row}, col ${col}] (blank — skipped)`,
         });
@@ -268,24 +269,21 @@ async function handleGetTiles(
       const hintSuffix = meta
         ? ` (${meta.contentHint}, entropy=${meta.entropy}, sharpness=${meta.sharpness})`
         : "";
-      content.push({
+      tiles.push({
         type: "text" as const,
         text: `Tile ${i + 1}/${totalTiles} [index ${i}, row ${row}, col ${col}]${hintSuffix}`,
       });
 
       const base64Data = await readTileAsBase64(tilePath);
-      content.push({
+      tiles.push({
         type: "image" as const,
         data: base64Data,
         mimeType,
       });
     }
 
-    if (skippedCount > 0) {
-      content[0] = { type: "text" as const, text: `${summary} (${skippedCount} blank tile(s) skipped)` };
-    }
-
-    return { content };
+    const summaryText = skippedCount > 0 ? `${summary} (${skippedCount} blank tile(s) skipped)` : summary;
+    return { content: [{ type: "text" as const, text: summaryText }, ...tiles] };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {

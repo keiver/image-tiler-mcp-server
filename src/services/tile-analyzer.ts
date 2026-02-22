@@ -35,6 +35,7 @@ export async function analyzeTile(
     stats.channels.reduce((sum, ch) => sum + ch.mean, 0) / channelCount;
   const stdDev =
     stats.channels.reduce((sum, ch) => sum + ch.stdev, 0) / channelCount;
+  const entropyAvailable = typeof stats.entropy === "number";
   const entropy = stats.entropy ?? 0;
   const sharpness = stats.sharpness ?? 0;
 
@@ -50,6 +51,8 @@ export async function analyzeTile(
     contentHint = "blank";
     isBlank = true;
   } else if (isThin) {
+    contentHint = "mixed";
+  } else if (!entropyAvailable) {
     contentHint = "mixed";
   } else if (entropy < LOW_DETAIL_ENTROPY_THRESHOLD) {
     contentHint = "low-detail";

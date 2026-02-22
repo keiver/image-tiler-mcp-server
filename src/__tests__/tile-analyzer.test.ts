@@ -154,8 +154,8 @@ describe("analyzeTile", () => {
     const result = await analyzeTile("/tiles/tile.webp", 0);
     expect(result.entropy).toBe(0);
     expect(result.sharpness).toBe(0);
-    // With entropy=0 and stdDev>=5, classification should be "low-detail"
-    expect(result.contentHint).toBe("low-detail");
+    // When Sharp doesn't provide entropy, fall back to "mixed" (conservative)
+    expect(result.contentHint).toBe("mixed");
   });
 
   it("high stdDev with low entropy classifies as low-detail (gradient pattern)", async () => {
