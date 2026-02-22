@@ -233,13 +233,13 @@ This MCP server:
 1. Reads the image dimensions and the target model's vision config
 2. Calculates an optimal grid that keeps every tile within the model's sweet spot
 3. Extracts tiles as individual images (WebP default, PNG optional) and saves them to disk
-4. Returns metadata (grid layout, file paths, estimated token cost)
-5. Serves tiles back as base64 in paginated batches for the LLM to analyze
+4. Returns a metadata summary (grid layout, file paths, token cost, per-tile content hints)
+5. Serves tiles on demand — call with `tilesDir` + `start`/`end` to retrieve batches of up to 5 tiles
 
 **Auto-downscaling:** Images over 10,000px on their longest side are automatically downscaled before tiling (configurable via `maxDimension`). This keeps tile counts reasonable and improves LLM comprehension by increasing content density per tile. Set `maxDimension=0` to disable, or pass a custom value (e.g., `maxDimension=5000`) for more aggressive downscaling.
 
 <details>
-<summary><h2>Tool Reference</h2></summary>
+<summary>Tool Reference</summary>
 
 ### `tiler`
 
@@ -296,6 +296,7 @@ Supports scroll-stitching for pages taller than 16,384px. Automatically triggers
 | `tilesDir` | string | no | - | Path to tiles directory (returned by a previous tiling call as `outputDir`) |
 | `start` | number | no | `0` | Start tile index (0-based, inclusive) |
 | `end` | number | no | start + 4 | End tile index (0-based, inclusive). Max 5 tiles per batch. |
+| `skipBlankTiles` | boolean | no | `true` | Skip blank tiles and return a text annotation instead of an image. Set to `false` to include all tiles. |
 
 #### Parameters - Tiling Config (shared across modes)
 
@@ -307,7 +308,8 @@ Supports scroll-stitching for pages taller than 16,384px. Automatically triggers
 | `outputDir` | string | no | See below | Directory to save tiles. Defaults: for `filePath` sources, `tiles/{name}_vN/` next to source (auto-incrementing: `_v1`, `_v2`, ..., `_vN`); for `sourceUrl`/`dataUrl`/`imageBase64`, `{base}/tiles/tiled_{timestamp}_{hex}/`; for captures, `{base}/tiles/capture_{timestamp}_{hex}/`. `{base}` is `~/Desktop`, `~/Downloads`, or `~` (first available). |
 | `page` | number | no | `0` | Tile page to return (0 = first 5, 1 = next 5, etc.) |
 | `format` | string | no | `"webp"` | Output format: `"webp"` (smaller, default) or `"png"` (lossless) |
-| `includeMetadata` | boolean | no | `true` | Analyze each tile and return content hints (blank, low-detail, mixed, high-detail) and brightness stats |
+| `includeMetadata` | boolean | no | `true` | Analyze each tile using Shannon entropy and return content classification (blank, low-detail, mixed, high-detail) plus `entropy` and `sharpness` values per tile |
+| `model` | string | no | - | **Deprecated.** Use `preset` instead. Still accepted; emits a deprecation warning in the response. |
 
 </details>
 

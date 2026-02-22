@@ -4,18 +4,21 @@
 
 ### Added
 - **`preset` parameter** — replaces `model` as the external-facing param for selecting a vision model; deprecated `model` still accepted with warning
-- **Entropy-based tile classification** — content analysis uses Shannon entropy (0-8 range) instead of stdDev for low-detail/mixed/high-detail classification; stdDev < 5 blank detection unchanged
-- **Entropy + sharpness in TileMetadata** — `entropy` and `sharpness` fields exposed in metadata, get-tiles annotations, and Phase 2 structured JSON
-- **Blank-tile skipping** — get-tiles mode skips blank tiles by default (`skipBlankTiles` param to opt out)
-- **Summary-first Phase 2** — Phase 2 returns metadata-only; clients fetch tiles via tilesDir + get-tiles
+- **Entropy-based tile classification** — content analysis uses Shannon entropy (0-8 range) instead of stdDev for low-detail/mixed/high-detail classification; blank detection (stdDev < 5) unchanged
+- **Entropy + sharpness in tile metadata** — `entropy` and `sharpness` fields exposed in tile metadata, get-tiles annotations, and structured JSON output
+- **Blank-tile skipping** — get-tiles mode skips blank tiles by default (`skipBlankTiles: false` to opt out)
 - npm keywords for discoverability
 
 ### Changed
+- Tiling now returns a metadata summary; tile images are retrieved separately via `tilesDir` + `start`/`end`
 - Elicitation schema property renamed from `model` to `preset`
-- Phase 1/Phase 2 instruction text references `preset` instead of `model`
+- Tool description updated to reference `preset` instead of `model`
 - README rewritten with badges, collapsible install sections, and improved structure
 - Test assets upgraded to higher-resolution images (landscape 8192×4320, portrait 3600×20220)
 - Get-tiles annotations now show `(mixed, entropy=5.8, sharpness=12.3)` format
+
+### Migration
+- **Tiles are now fetched on demand** — Processing an image returns a metadata summary; tile images are retrieved separately using `tilesDir` + `start`/`end`. This reduces token usage by letting you skip blank or low-detail tiles. Update any workflows that previously expected images in the processing response.
 
 ### Fixed
 - Chrome zero-dimension fallback catches negative values (not just zero)
