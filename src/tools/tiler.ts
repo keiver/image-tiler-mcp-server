@@ -18,14 +18,13 @@ import {
   buildPhase1Response,
   executeTiling,
   buildPhase2Response,
-  appendTilesPage,
   findCheapestModel,
   computeElicitationData,
 } from "../services/tiling-pipeline.js";
 import { tryElicitation } from "../services/elicitation.js";
-import { sanitizeHostname, buildTileHints, withTimeout } from "../utils.js";
+import { sanitizeHostname, withTimeout } from "../utils.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
-import type { ResolvedImageSource } from "../types.js";
+import type { ResolvedImageSource, TileMetadata } from "../types.js";
 import {
   PNG_COMPRESSION_LEVEL,
   VISION_MODELS,
@@ -45,17 +44,16 @@ const TILER_DESCRIPTION = `Split images into optimally-sized tiles for LLM visio
 MANDATORY two-phase workflow — DO NOT skip Phase 1:
 
   Phase 1 (REQUIRED first): Provide ONLY the image source (filePath, sourceUrl, url, etc).
-           DO NOT include model, tileSize, or outputDir.
+           DO NOT include preset, tileSize, or outputDir.
            Returns a model comparison table with token estimates and an outputDir.
            You MUST present this table to the user and ask which preset they prefer.
-           DO NOT select a model yourself — the user decides. If you must auto-select, always use the cheapest option.
+           DO NOT select a preset yourself — the user decides. If you must auto-select, always use the cheapest option.
 
-  Phase 2: Call again with the user's chosen model + the outputDir from Phase 1.
+  Phase 2: Call again with the user's chosen preset + the outputDir from Phase 1.
            Re-include your original image source (filePath, sourceUrl, etc.).
            For captures, use screenshotPath from Phase 1 instead of url.
-           Returns tiled images inline (${MAX_TILES_PER_BATCH} per page).
-
-To retrieve more tiles after Phase 2, call with tilesDir + start/end for pagination.
+           Returns tile summary with metadata and content hints (no tile images).
+           Use tilesDir + start/end to fetch only the tiles you need.
 
 Stop after Phase 1 if you only need the screenshot (capture mode) or comparison data.
 
@@ -63,7 +61,11 @@ ${VISION_MODELS.length} tiling presets available:
 ${modelLines}
 
 Supports: local files (filePath), remote images (sourceUrl), data URLs, base64, and web page capture (url — Chrome required).
-Tiles saved as WebP (default) or PNG. Auto-downscales images over 10000px by default.`;
+Tiles saved as WebP (default) or PNG. Auto-downscales images over 10000px by default.
+
+TOKEN COST NOTE: The get-tiles mode returns image tiles as inline base64, consuming significantly
+more tokens than typical text-only MCP tools. Each tile costs ~258-1590 tokens depending
+on preset. Use the Phase 2 summary and tile hints to fetch only non-blank, relevant tiles.`;
 
 export function registerTilerTool(server: McpServer): void {
   server.registerTool(
@@ -85,10 +87,18 @@ export function registerTilerTool(server: McpServer): void {
       // Capture
       url, viewportWidth, waitUntil, delay, screenshotPath: existingScreenshotPath,
       // Tile retrieval
-      tilesDir, start, end,
+      tilesDir, start, end, skipBlankTiles,
       // Tiling config
-      model: explicitModel, tileSize, maxDimension, outputDir, page, format, includeMetadata,
+      preset: explicitPreset, model: deprecatedModel, tileSize, maxDimension, outputDir, page, format, includeMetadata,
     }) => {
+      // Resolve preset vs deprecated model param
+      const explicitModel = explicitPreset ?? deprecatedModel;
+      const deprecationWarnings: string[] = [];
+      if (deprecatedModel && !explicitPreset) {
+        deprecationWarnings.push('The "model" parameter is deprecated. Use "preset" instead.');
+      } else if (deprecatedModel && explicitPreset && deprecatedModel !== explicitPreset) {
+        deprecationWarnings.push(`"model" param ignored in favour of "preset" (values differ: model="${deprecatedModel}", preset="${explicitPreset}").`);
+      }
       // ── Mode: get-tiles (read-only pagination) ──
       if (tilesDir) {
         // Support `page` param for get-tiles mode: convert page to start/end
@@ -99,7 +109,7 @@ export function registerTilerTool(server: McpServer): void {
           effectiveStart = page * MAX_TILES_PER_BATCH;
           effectiveEnd = effectiveStart + MAX_TILES_PER_BATCH - 1;
         }
-        return handleGetTiles(tilesDir, effectiveStart, effectiveEnd);
+        return handleGetTiles(tilesDir, effectiveStart, effectiveEnd, skipBlankTiles);
       }
 
       // ── Mode: capture-and-tile ──
@@ -107,7 +117,8 @@ export function registerTilerTool(server: McpServer): void {
         return handleCaptureAndTile(server, {
           url, viewportWidth, waitUntil, delay,
           existingScreenshotPath,
-          explicitModel, tileSize, maxDimension, outputDir, page, format, includeMetadata,
+          explicitModel, tileSize, maxDimension, outputDir, format, includeMetadata,
+          deprecationWarnings,
         });
       }
 
@@ -121,8 +132,8 @@ export function registerTilerTool(server: McpServer): void {
 
         return handleTileImage(server, {
           filePath, sourceUrl, dataUrl, imageBase64,
-          explicitModel, tileSize, maxDimension, outputDir, page, format, includeMetadata,
-          sourceWarning,
+          explicitModel, tileSize, maxDimension, outputDir, format, includeMetadata,
+          sourceWarning, deprecationWarnings,
         });
       }
 
@@ -132,7 +143,7 @@ export function registerTilerTool(server: McpServer): void {
           isError: true,
           content: [{
             type: "text" as const,
-            text: "Error: Phase 2 requires an image source. Re-include your original image source (filePath, sourceUrl, etc.) along with model and outputDir. For captures, use screenshotPath from Phase 1.",
+            text: "Error: Phase 2 requires an image source. Re-include your original image source (filePath, sourceUrl, etc.) along with preset and outputDir. For captures, use screenshotPath from Phase 1.",
           }],
         };
       }
@@ -159,6 +170,7 @@ async function handleGetTiles(
   tilesDir: string,
   start: number,
   end: number | undefined,
+  skipBlankTiles: boolean,
 ): Promise<{ content: ContentBlock[]; isError?: boolean }> {
   try {
     if (end !== undefined && end < start) {
@@ -199,47 +211,79 @@ async function handleGetTiles(
       };
     }
 
-    const content: ContentBlock[] = [];
+    const tiles: ContentBlock[] = [];
     const summary = `Tiles ${start + 1}-${effectiveEnd + 1} of ${totalTiles}`;
-    content.push({ type: "text" as const, text: summary });
 
-    // Analyze current batch for content hints
-    const hintMap = new Map<number, string>();
+    // Read manifest for geometry-aware classification (best-effort)
+    type TilesManifest = {
+      tileSize: number;
+      tiles: Array<{ index: number; width: number; height: number }>;
+    };
+    let tilesManifest: TilesManifest | null = null;
+    try {
+      const raw = await fs.readFile(path.join(tilesDir, "tiles-manifest.json"), "utf8");
+      tilesManifest = JSON.parse(raw) as TilesManifest;
+    } catch { /* no manifest — geometry-agnostic classification */ }
+    const manifestMap = tilesManifest
+      ? new Map(tilesManifest.tiles.map((t) => [t.index, t]))
+      : null;
+
+    // Analyze current batch for content metadata
+    const metaMap = new Map<number, TileMetadata>();
     try {
       const batchPaths = tilePaths.slice(start, effectiveEnd + 1);
-      const metadata = await analyzeTiles(batchPaths);
-      const hints = buildTileHints(metadata);
-      for (const [hint, indices] of Object.entries(hints)) {
-        for (const localIdx of indices) {
-          hintMap.set(start + localIdx, hint);
-        }
+      const metadata = await analyzeTiles(
+        batchPaths.map((filePath, i) => {
+          const tileIndex = start + i;
+          const dims = manifestMap?.get(tileIndex);
+          return { filePath, index: i, extractedWidth: dims?.width, extractedHeight: dims?.height };
+        }),
+        tilesManifest?.tileSize
+      );
+      for (const m of metadata) {
+        metaMap.set(start + m.index, m);
       }
     } catch { /* analysis failed — skip annotations */ }
 
+    let skippedCount = 0;
     for (let i = start; i <= effectiveEnd; i++) {
       const tilePath = tilePaths[i];
       const filename = path.basename(tilePath);
       const match = filename.match(/tile_(\d+)_(\d+)\.(png|webp)/);
       const row = match ? parseInt(match[1], 10) : -1;
       const col = match ? parseInt(match[2], 10) : -1;
-      const mimeType = path.extname(tilePath) === ".webp" ? "image/webp" : "image/png";
 
-      const hint = hintMap.get(i);
-      const hintSuffix = hint ? ` (${hint})` : "";
-      content.push({
+      const meta = metaMap.get(i);
+
+      // Skip blank tiles — text annotation only, no image data
+      if (skipBlankTiles && meta?.isBlank) {
+        tiles.push({
+          type: "text" as const,
+          text: `Tile ${i + 1}/${totalTiles} [index ${i}, row ${row}, col ${col}] (blank — skipped)`,
+        });
+        skippedCount++;
+        continue;
+      }
+
+      const mimeType = path.extname(tilePath) === ".webp" ? "image/webp" : "image/png";
+      const hintSuffix = meta
+        ? ` (${meta.contentHint}, entropy=${meta.entropy}, sharpness=${meta.sharpness})`
+        : "";
+      tiles.push({
         type: "text" as const,
         text: `Tile ${i + 1}/${totalTiles} [index ${i}, row ${row}, col ${col}]${hintSuffix}`,
       });
 
       const base64Data = await readTileAsBase64(tilePath);
-      content.push({
+      tiles.push({
         type: "image" as const,
         data: base64Data,
         mimeType,
       });
     }
 
-    return { content };
+    const summaryText = skippedCount > 0 ? `${summary} (${skippedCount} blank tile(s) skipped)` : summary;
+    return { content: [{ type: "text" as const, text: summaryText }, ...tiles] };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -263,17 +307,17 @@ interface TileImageParams {
   tileSize?: number;
   maxDimension: number;
   outputDir?: string;
-  page: number;
   format: "webp" | "png";
   includeMetadata: boolean;
   sourceWarning?: string;
+  deprecationWarnings: string[];
 }
 
 async function handleTileImage(
   server: McpServer,
   params: TileImageParams,
 ): Promise<{ content: ContentBlock[]; isError?: boolean }> {
-  const { filePath, sourceUrl, dataUrl, imageBase64, explicitModel, tileSize, maxDimension, outputDir, page, format, includeMetadata, sourceWarning } = params;
+  const { filePath, sourceUrl, dataUrl, imageBase64, explicitModel, tileSize, maxDimension, outputDir, format, includeMetadata, sourceWarning, deprecationWarnings } = params;
 
   let source: ResolvedImageSource | undefined;
   let response: { content: ContentBlock[]; isError?: boolean } | undefined;
@@ -302,9 +346,10 @@ async function handleTileImage(
         const { result, warnings } = await executeTiling(source.localPath, resolvedOutputDir, {
           model: explicitModel, tileSize, maxDimension, format, includeMetadata,
         });
+        warnings.push(...deprecationWarnings);
         if (sourceWarning) warnings.push(sourceWarning);
         const phase2 = await buildPhase2Response(result, { model: explicitModel, includeMetadata, warnings, maxDimension, sourcePath: previewLookupPath });
-        response = await appendTilesPage(phase2, result.outputDir, page);
+        response = phase2;
         return response;
       }
 
@@ -327,11 +372,12 @@ async function handleTileImage(
       const { result, warnings } = await executeTiling(source.localPath, resolvedOutputDir, {
         model: finalModel, tileSize, maxDimension, format, includeMetadata,
       });
+      warnings.push(...deprecationWarnings);
       if (sourceWarning) warnings.push(sourceWarning);
       const phase2 = await buildPhase2Response(result, {
         model: finalModel, includeMetadata, warnings, maxDimension, autoSelected, sourcePath: previewLookupPath,
       });
-      response = await appendTilesPage(phase2, result.outputDir, page);
+      response = phase2;
       return response;
     }
 
@@ -343,11 +389,12 @@ async function handleTileImage(
       const { result, warnings } = await executeTiling(source.localPath, resolvedOutputDir, {
         model: explicitModel, tileSize, maxDimension, format, includeMetadata,
       });
+      warnings.push(...deprecationWarnings);
       if (sourceWarning) warnings.push(sourceWarning);
       const phase2 = await buildPhase2Response(result, {
         model: explicitModel, includeMetadata, warnings, maxDimension, sourcePath: previewLookupPath,
       });
-      response = await appendTilesPage(phase2, result.outputDir, page);
+      response = phase2;
       return response;
     }
 
@@ -375,8 +422,9 @@ async function handleTileImage(
 
     if (elicitResult.status !== "selected") {
       const phase1 = buildPhase1Response(analysis);
-      if (sourceWarning) {
-        phase1.content[0].text = `⚠ ${sourceWarning}\n\n` + phase1.content[0].text;
+      const prependWarnings = [...deprecationWarnings, ...(sourceWarning ? [sourceWarning] : [])];
+      if (prependWarnings.length > 0) {
+        phase1.content[0].text = prependWarnings.map(w => `⚠ ${w}`).join("\n") + "\n\n" + phase1.content[0].text;
       }
       response = phase1;
       return response;
@@ -386,10 +434,11 @@ async function handleTileImage(
     const { result, warnings } = await executeTiling(source.localPath, resolvedOutputDir, {
       model: elicitResult.model, tileSize, maxDimension, format, includeMetadata,
     });
+    warnings.push(...deprecationWarnings);
     if (sourceWarning) warnings.push(sourceWarning);
 
     const phase2 = await buildPhase2Response(result, { model: elicitResult.model, includeMetadata, warnings, maxDimension, sourcePath: previewLookupPath });
-    response = await appendTilesPage(phase2, result.outputDir, page);
+    response = phase2;
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -415,9 +464,9 @@ interface CaptureAndTileParams {
   tileSize?: number;
   maxDimension: number;
   outputDir?: string;
-  page: number;
   format: "webp" | "png";
   includeMetadata: boolean;
+  deprecationWarnings: string[];
 }
 
 async function handleCaptureAndTile(
@@ -427,7 +476,8 @@ async function handleCaptureAndTile(
   const {
     url, viewportWidth, waitUntil, delay,
     existingScreenshotPath,
-    explicitModel, tileSize, maxDimension, outputDir, page, format, includeMetadata,
+    explicitModel, tileSize, maxDimension, outputDir, format, includeMetadata,
+    deprecationWarnings,
   } = params;
 
   const resolvedOutputDir = resolveOutputDirForCapture(outputDir);
@@ -544,13 +594,14 @@ async function handleCaptureAndTile(
       const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
         model: tilingModel, tileSize, maxDimension, format, includeMetadata,
       });
+      warnings.push(...deprecationWarnings);
 
       const phase2 = await buildPhase2Response(result, { model: tilingModel, includeMetadata, warnings, maxDimension, captureInfo, autoSelected, sourcePath: screenshotPath });
       const urlSuffix = capturedUrl ? ` of ${capturedUrl}` : "";
       const captureLine = `Captured ${captureWidth}x${captureHeight} screenshot${urlSuffix}${segmentsStitched ? `\n  Scroll-stitched ${segmentsStitched} segments` : ""}\n`;
       phase2.content[0].text = captureLine + phase2.content[0].text;
 
-      return appendTilesPage(phase2, result.outputDir, page);
+      return phase2;
     }
 
     // One-shot: user provided model + outputDir upfront — generate preview then tile immediately
@@ -569,13 +620,14 @@ async function handleCaptureAndTile(
       const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
         model: explicitModel, tileSize, maxDimension, format, includeMetadata,
       });
+      warnings.push(...deprecationWarnings);
       const phase2 = await buildPhase2Response(result, {
         model: explicitModel, includeMetadata, warnings, maxDimension, captureInfo, sourcePath: screenshotPath,
       });
       const urlSuffix = capturedUrl ? ` of ${capturedUrl}` : "";
       const captureLine = `Captured ${captureWidth}x${captureHeight} screenshot${urlSuffix}${segmentsStitched ? `\n  Scroll-stitched ${segmentsStitched} segments` : ""}\n`;
       phase2.content[0].text = captureLine + phase2.content[0].text;
-      return appendTilesPage(phase2, result.outputDir, page);
+      return phase2;
     }
 
     // 3. Phase 1: analyze and generate preview
@@ -602,6 +654,9 @@ async function handleCaptureAndTile(
     if (elicitResult.status !== "selected") {
       // Phase 1: return comparison + screenshot path
       const phase1 = buildPhase1Response(analysis, { screenshotPath });
+      if (deprecationWarnings.length > 0) {
+        phase1.content[0].text = deprecationWarnings.map(w => `⚠ ${w}`).join("\n") + "\n\n" + phase1.content[0].text;
+      }
       phase1.content[0].text += `\n\n(Screenshot: ${captureWidth}x${captureHeight}${url ? ` of ${url}` : ""}, saved to ${screenshotPath})`;
       return phase1;
     }
@@ -619,13 +674,14 @@ async function handleCaptureAndTile(
     const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
       model: elicitResult.model, tileSize, maxDimension, format, includeMetadata,
     });
+    warnings.push(...deprecationWarnings);
 
     const phase2 = await buildPhase2Response(result, { model: elicitResult.model, includeMetadata, warnings, maxDimension, captureInfo, sourcePath: screenshotPath });
 
     const captureLine = `Captured ${captureWidth}x${captureHeight} screenshot${url ? ` of ${url}` : ""}${segmentsStitched ? `\n  Scroll-stitched ${segmentsStitched} segments` : ""}\n`;
     phase2.content[0].text = captureLine + phase2.content[0].text;
 
-    return appendTilesPage(phase2, result.outputDir, page);
+    return phase2;
   } catch (error) {
     // Clean up empty output directory created before capture
     try { await fs.rmdir(resolvedOutputDir); } catch { /* not empty or already gone */ }

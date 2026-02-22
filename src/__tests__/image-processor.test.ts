@@ -5,8 +5,11 @@ const {
   mockMetadata,
   mockResize,
   mockSharp,
+  mockWebp,
+  mockToBuffer,
 } = vi.hoisted(() => {
   const mockToFile = vi.fn().mockResolvedValue({});
+  const mockToBuffer = vi.fn().mockResolvedValue(Buffer.from("recompressed-data"));
 
   // Extract pipeline: extract() returns a fluent object where webp/png return itself
   // This mirrors Sharp's real behavior where pipeline methods mutate in-place
@@ -20,12 +23,13 @@ const {
   const mockResize = vi.fn().mockReturnValue({ png: mockPng });
 
   const mockMetadata = vi.fn();
+  const mockWebp = vi.fn().mockReturnValue({ toFile: mockToFile, toBuffer: mockToBuffer });
   const mockSharpInstance = {
     metadata: mockMetadata,
     extract: mockExtract,
     resize: mockResize,
     png: mockPng,
-    webp: vi.fn().mockReturnValue({ toFile: mockToFile }),
+    webp: mockWebp,
     toFile: mockToFile,
   };
   const mockSharp = Object.assign(
@@ -35,7 +39,7 @@ const {
       concurrency: vi.fn(),
     }
   );
-  return { mockToFile, mockPng, mockExtract, mockResize, mockMetadata, mockSharp };
+  return { mockToFile, mockPng, mockExtract, mockResize, mockMetadata, mockSharp, mockWebp, mockToBuffer };
 });
 
 vi.mock("sharp", () => ({ default: mockSharp }));

@@ -23,6 +23,9 @@ import {
   SHARP_OPERATION_TIMEOUT_MS,
   MAX_CHROME_STDERR_BYTES,
   MAX_CHROME_JSON_BYTES,
+  BLANK_STDDEV_THRESHOLD,
+  LOW_DETAIL_ENTROPY_THRESHOLD,
+  HIGH_DETAIL_ENTROPY_THRESHOLD,
 } from "../constants.js";
 
 
@@ -209,6 +212,20 @@ describe("constants", () => {
 
     it("TOKENS_PER_TILE matches claude config", () => {
       expect(TOKENS_PER_TILE).toBe(MODEL_CONFIGS.claude.tokensPerTile);
+    });
+  });
+
+  describe("tile classification thresholds", () => {
+    it("BLANK_STDDEV_THRESHOLD is 5", () => {
+      expect(BLANK_STDDEV_THRESHOLD).toBe(5);
+    });
+
+    it("LOW_DETAIL_ENTROPY_THRESHOLD is 4.0", () => {
+      expect(LOW_DETAIL_ENTROPY_THRESHOLD).toBe(4.0);
+    });
+
+    it("HIGH_DETAIL_ENTROPY_THRESHOLD is 6.5", () => {
+      expect(HIGH_DETAIL_ENTROPY_THRESHOLD).toBe(6.5);
     });
   });
 

@@ -315,10 +315,10 @@ describe("formatModelComparisonTable", () => {
 describe("buildTileHints", () => {
   it("groups tiles by content hint", () => {
     const metadata: TileMetadata[] = [
-      { index: 0, contentHint: "low-detail", meanBrightness: 200, stdDev: 15, isBlank: false },
-      { index: 1, contentHint: "high-detail", meanBrightness: 128, stdDev: 65, isBlank: false },
-      { index: 2, contentHint: "mixed", meanBrightness: 150, stdDev: 40, isBlank: false },
-      { index: 3, contentHint: "low-detail", meanBrightness: 210, stdDev: 12, isBlank: false },
+      { index: 0, contentHint: "low-detail", meanBrightness: 200, stdDev: 15, entropy: 2.5, sharpness: 1.2, isBlank: false },
+      { index: 1, contentHint: "high-detail", meanBrightness: 128, stdDev: 65, entropy: 7.2, sharpness: 4.5, isBlank: false },
+      { index: 2, contentHint: "mixed", meanBrightness: 150, stdDev: 40, entropy: 5.5, sharpness: 3.1, isBlank: false },
+      { index: 3, contentHint: "low-detail", meanBrightness: 210, stdDev: 12, entropy: 3.0, sharpness: 0.8, isBlank: false },
     ];
     const hints = buildTileHints(metadata);
     expect(hints["low-detail"]).toEqual([0, 3]);
@@ -328,9 +328,9 @@ describe("buildTileHints", () => {
 
   it("groups blank tiles under 'blank' key via contentHint", () => {
     const metadata: TileMetadata[] = [
-      { index: 0, contentHint: "blank", meanBrightness: 250, stdDev: 2, isBlank: true },
-      { index: 1, contentHint: "blank", meanBrightness: 248, stdDev: 3, isBlank: true },
-      { index: 2, contentHint: "low-detail", meanBrightness: 200, stdDev: 15, isBlank: false },
+      { index: 0, contentHint: "blank", meanBrightness: 250, stdDev: 2, entropy: 0.1, sharpness: 0.05, isBlank: true },
+      { index: 1, contentHint: "blank", meanBrightness: 248, stdDev: 3, entropy: 0.15, sharpness: 0.03, isBlank: true },
+      { index: 2, contentHint: "low-detail", meanBrightness: 200, stdDev: 15, entropy: 2.5, sharpness: 1.2, isBlank: false },
     ];
     const hints = buildTileHints(metadata);
     expect(hints["blank"]).toEqual([0, 1]);
@@ -343,7 +343,7 @@ describe("buildTileHints", () => {
 
   it("handles single tile", () => {
     const metadata: TileMetadata[] = [
-      { index: 0, contentHint: "mixed", meanBrightness: 150, stdDev: 40, isBlank: false },
+      { index: 0, contentHint: "mixed", meanBrightness: 150, stdDev: 40, entropy: 5.5, sharpness: 3.1, isBlank: false },
     ];
     expect(buildTileHints(metadata)).toEqual({ mixed: [0] });
   });

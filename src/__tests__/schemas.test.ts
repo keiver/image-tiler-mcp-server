@@ -173,42 +173,71 @@ describe("TilerInputSchema", () => {
     });
   });
 
-  describe("model", () => {
+  describe("skipBlankTiles", () => {
+    it("defaults to true when omitted", () => {
+      const result = tilerSchema.parse({});
+      expect(result.skipBlankTiles).toBe(true);
+    });
+
+    it("accepts false", () => {
+      const result = tilerSchema.parse({ tilesDir: "/tiles", skipBlankTiles: false });
+      expect(result.skipBlankTiles).toBe(false);
+    });
+
+    it("accepts true", () => {
+      const result = tilerSchema.parse({ tilesDir: "/tiles", skipBlankTiles: true });
+      expect(result.skipBlankTiles).toBe(true);
+    });
+  });
+
+  describe("preset", () => {
     it("is undefined when omitted", () => {
       const result = tilerSchema.parse({ filePath: "test.png" });
-      expect(result.model).toBeUndefined();
+      expect(result.preset).toBeUndefined();
     });
 
     it("accepts claude", () => {
+      const result = tilerSchema.parse({ filePath: "test.png", preset: "claude" });
+      expect(result.preset).toBe("claude");
+    });
+
+    it("accepts openai", () => {
+      const result = tilerSchema.parse({ filePath: "test.png", preset: "openai" });
+      expect(result.preset).toBe("openai");
+    });
+
+    it("accepts gemini", () => {
+      const result = tilerSchema.parse({ filePath: "test.png", preset: "gemini" });
+      expect(result.preset).toBe("gemini");
+    });
+
+    it("accepts gemini3", () => {
+      const result = tilerSchema.parse({ filePath: "test.png", preset: "gemini3" });
+      expect(result.preset).toBe("gemini3");
+    });
+
+    it("rejects invalid preset name", () => {
+      expect(() =>
+        tilerSchema.parse({ filePath: "test.png", preset: "gpt4" })
+      ).toThrow();
+    });
+
+    it("rejects non-string preset", () => {
+      expect(() =>
+        tilerSchema.parse({ filePath: "test.png", preset: 42 })
+      ).toThrow();
+    });
+  });
+
+  describe("model (deprecated)", () => {
+    it("still accepts model for backward compatibility", () => {
       const result = tilerSchema.parse({ filePath: "test.png", model: "claude" });
       expect(result.model).toBe("claude");
     });
 
-    it("accepts openai", () => {
-      const result = tilerSchema.parse({ filePath: "test.png", model: "openai" });
-      expect(result.model).toBe("openai");
-    });
-
-    it("accepts gemini", () => {
-      const result = tilerSchema.parse({ filePath: "test.png", model: "gemini" });
-      expect(result.model).toBe("gemini");
-    });
-
-    it("accepts gemini3", () => {
-      const result = tilerSchema.parse({ filePath: "test.png", model: "gemini3" });
-      expect(result.model).toBe("gemini3");
-    });
-
-    it("rejects invalid model name", () => {
-      expect(() =>
-        tilerSchema.parse({ filePath: "test.png", model: "gpt4" })
-      ).toThrow();
-    });
-
-    it("rejects non-string model", () => {
-      expect(() =>
-        tilerSchema.parse({ filePath: "test.png", model: 42 })
-      ).toThrow();
+    it("is undefined when omitted", () => {
+      const result = tilerSchema.parse({ filePath: "test.png" });
+      expect(result.model).toBeUndefined();
     });
   });
 

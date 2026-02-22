@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.1.0]
+
+### Added
+- **`preset` parameter** — replaces `model` as the external-facing param for selecting a vision model; deprecated `model` still accepted with warning
+- **Entropy-based tile classification** — content analysis uses Shannon entropy (0-8 range) instead of stdDev for low-detail/mixed/high-detail classification; blank detection (stdDev < 5) unchanged
+- **Entropy + sharpness in tile metadata** — `entropy` and `sharpness` fields exposed in tile metadata, get-tiles annotations, and structured JSON output
+- **Blank-tile skipping** — get-tiles mode skips blank tiles by default (`skipBlankTiles: false` to opt out)
+- npm keywords for discoverability
+
+### Changed
+- Tiling now returns a metadata summary; tile images are retrieved separately via `tilesDir` + `start`/`end`
+- Elicitation schema property renamed from `model` to `preset`
+- Tool description updated to reference `preset` instead of `model`
+- README rewritten with badges, collapsible install sections, and improved structure
+- Test assets upgraded to higher-resolution images (landscape 8192×4320, portrait 3600×20220)
+- Get-tiles annotations now show `(mixed, entropy=5.8, sharpness=12.3)` format
+
+### Migration
+- **Tiles are now fetched on demand** — Processing an image returns a metadata summary; tile images are retrieved separately using `tilesDir` + `start`/`end`. This reduces token usage by letting you skip blank or low-detail tiles. Update any workflows that previously expected images in the processing response.
+
+### Fixed
+- Chrome zero-dimension fallback catches negative values (not just zero)
+- Thin edge tiles (remainder column/row narrower than 50% of tile size) now classify as `mixed` instead of `low-detail`; geometry is persisted in `tiles-manifest.json` for accurate classification in get-tiles mode
+
+## [2.0.1]
+
+### Fixed
+- Remove `required` constraint from elicitation schema to prevent SDK validation crash
+- AI acknowledgment added to README
+
 ## [2.0.0]
 
 ### Breaking

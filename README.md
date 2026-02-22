@@ -1,10 +1,140 @@
 # image-tiler-mcp-server
 
-Capture, tile, analyze, and estimate vision tokens for LLM models - so nothing gets downscaled away.
+[![npm version](https://img.shields.io/npm/v/image-tiler-mcp-server)](https://www.npmjs.com/package/image-tiler-mcp-server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/keiver/image-tiler-mcp-server/blob/main/LICENSE)
+[![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/)
 
-<p align="center">
+MCP server that tiles large images for LLM vision analysis.
+
+<figure align="center">
   <img src="assets/preview.gif" alt="Preview of image tiling grid with advised vision models size and token estimates" width="100%" />
-</p>
+  <figcaption><i>The server generates an interactive HTML preview for every image, showing per-model tile grids and token estimates</i></figcaption>
+</figure>
+
+## Quick Start
+
+### Claude Code
+
+```bash
+claude mcp add image-tiler -- npx -y image-tiler-mcp-server
+```
+
+> `image-tiler` is a local alias. You can name it anything you like. `image-tiler-mcp-server` is the npm package that gets downloaded and run.
+
+See [Claude Code MCP docs](https://docs.anthropic.com/en/docs/claude-code/mcp) for more info.
+
+<details>
+<summary>Codex CLI</summary>
+
+```bash
+codex mcp add image-tiler -- npx -y image-tiler-mcp-server
+```
+
+Or add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.image-tiler]
+command = "npx"
+args = ["-y", "image-tiler-mcp-server"]
+```
+
+</details>
+
+<details>
+<summary>VS Code (Cline / Continue)</summary>
+
+Add to your VS Code MCP settings:
+
+```json
+{
+  "image-tiler": {
+    "command": "npx",
+    "args": ["-y", "image-tiler-mcp-server"]
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Cursor</summary>
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "image-tiler": {
+      "command": "npx",
+      "args": ["-y", "image-tiler-mcp-server"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Claude Desktop</summary>
+
+Add to your Claude Desktop config file:
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "image-tiler": {
+      "command": "npx",
+      "args": ["-y", "image-tiler-mcp-server"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop after editing.
+
+</details>
+
+<details>
+<summary>Global Install (faster startup)</summary>
+
+```bash
+npm install -g image-tiler-mcp-server
+```
+
+Then use the simpler config in any client:
+
+```json
+{
+  "command": "image-tiler-mcp-server"
+}
+```
+
+</details>
+
+<details>
+<summary>From Source</summary>
+
+```bash
+git clone https://github.com/keiver/image-tiler-mcp-server.git
+cd image-tiler-mcp-server
+npm install
+npm run build
+```
+
+Then point your MCP config to the built file:
+
+```json
+{
+  "command": "node",
+  "args": ["/absolute/path/to/image-tiler-mcp-server/dist/index.js"]
+}
+```
+
+</details>
 
 ## Usage
 
@@ -33,130 +163,7 @@ To get only the screenshot without tiling, just ask for a screenshot and stop af
 | Tile from URL | "Download and tile https://example.com/chart.png" |
 | Tile from base64 | "Tile this base64 image: iVBORw0KGgo..." |
 
-## Installation
-
-### Claude Code
-
-```bash
-claude mcp add image-tiler -- npx -y image-tiler-mcp-server
-```
-
-> `image-tiler` is a local alias - you can name it anything you like. `image-tiler-mcp-server` is the npm package that gets downloaded and run.
-
-See [Claude Code MCP docs](https://docs.anthropic.com/en/docs/claude-code/mcp) for more info.
-
-### Codex CLI
-
-```bash
-codex mcp add image-tiler -- npx -y image-tiler-mcp-server
-```
-
-Or add to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.image-tiler]
-command = "npx"
-args = ["-y", "image-tiler-mcp-server"]
-```
-
-### VS Code (Cline / Continue)
-
-Add to your VS Code MCP settings:
-
-```json
-{
-  "image-tiler": {
-    "command": "npx",
-    "args": ["-y", "image-tiler-mcp-server"]
-  }
-}
-```
-
-### Cursor
-
-Add to `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "image-tiler": {
-      "command": "npx",
-      "args": ["-y", "image-tiler-mcp-server"]
-    }
-  }
-}
-```
-
-### Claude Desktop
-
-Add to your Claude Desktop config file:
-
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux:** `~/.config/Claude/claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "image-tiler": {
-      "command": "npx",
-      "args": ["-y", "image-tiler-mcp-server"]
-    }
-  }
-}
-```
-
-Restart Claude Desktop after editing.
-
-### Global Install (faster startup)
-
-```bash
-npm install -g image-tiler-mcp-server
-```
-
-Then use the simpler config in any client:
-
-```json
-{
-  "command": "image-tiler-mcp-server"
-}
-```
-
-### From Source
-
-```bash
-git clone https://github.com/keiver/image-tiler-mcp-server.git
-cd image-tiler-mcp-server
-npm install
-npm run build
-```
-
-Then point your MCP config to the built file:
-
-```json
-{
-  "command": "node",
-  "args": ["/absolute/path/to/image-tiler-mcp-server/dist/index.js"]
-}
-```
-
-## Tiling for LLM Vision
-
-LLM vision systems have a **maximum input resolution**. When you send an image larger than that limit, the model downscales it before processing. A 3600×22810 full-page screenshot gets shrunk to ~247×1568 by Claude - text becomes unreadable, UI details disappear, and the model can't analyze what it can't see.
-
-**Tiling solves this.** This MCP server:
-
-1. Reads the image dimensions and the target model's vision config
-2. Calculates an optimal grid that keeps every tile within the model's sweet spot
-3. Extracts tiles as individual images (WebP default, PNG optional) and saves them to disk
-4. Returns metadata (grid layout, file paths, estimated token cost)
-5. Serves tiles back as base64 in paginated batches for the LLM to analyze
-
-Each tile stays within the model's sweet spot - the LLM processes it at full resolution instead of downscaling, preserving text, UI elements, and fine detail.
-
-**Auto-downscaling:** Images over 10,000px on their longest side are automatically downscaled before tiling (configurable via `maxDimension`). This keeps tile counts reasonable and improves LLM comprehension by increasing content density per tile. Set `maxDimension=0` to disable, or pass a custom value (e.g., `maxDimension=5000`) for more aggressive downscaling.
-
-### Supported Models
+## Supported Models
 
 | Model | Default tile | Tokens/tile | Max tile | ID |
 |-------|-------------|-------------|----------|-----|
@@ -165,11 +172,74 @@ Each tile stays within the model's sweet spot - the LLM processes it at full res
 | Gemini | 768px | 258 | 768px | `gemini` |
 | Gemini 3 | 1536px | 1120 | 3072px | `gemini3` |
 
-> **OpenAI note:** The `openai` config targets the GPT-4o / o-series vision pipeline (512px tile patches). GPT-4.1 uses a fundamentally different pipeline (32x32 pixel patches) and is not currently supported - it would require a separate model config with a different calculation approach.
+> **OpenAI note:** The `openai` config targets the GPT-4o / o-series vision pipeline (512px tile patches). GPT-4.1 uses a fundamentally different pipeline (32x32 pixel patches) and is not currently supported. It would require a separate model config with a different calculation approach.
 
-> **Gemini 3 note:** Gemini 3 uses a fixed token budget per image (1120 tokens regardless of dimensions). Tiling increases total token cost but preserves fine detail. For cases where detail isn't critical, consider sending a single image instead.
+> **Gemini 3 note:** Gemini 3 uses a fixed token budget per image (1,120 tokens at default resolution, regardless of dimensions). Tiling increases total token cost but preserves fine detail. For cases where detail isn't critical, consider sending a single image instead.
 
-## Tools
+<details>
+<summary>Why tile? What LLMs do to large images</summary>
+
+### The Problem
+
+You screenshot a full page, paste it into Claude, and Claude **rejects it**. Your 20,000px full-page screenshot? Claude won't even look at it. Anything over 8,000px on either dimension gets refused outright.
+
+GPT-4o is more forgiving but still destructive: it first scales your image to fit within 2,048px, then scales the shortest side down to 768px, *then* tiles internally. An 8,192px-wide NASA panorama becomes ~1,456 x 768 before GPT-4o's own tiling even begins.
+
+Gemini 1.5/2.0 handles large images natively at 768px tiles without downscaling. Gemini 3, however, caps each image at a fixed token budget (1,120 tokens at default resolution) regardless of size. Tiling gives each piece its own budget.
+
+Each tile stays within the model's sweet spot, so the LLM processes it at full resolution.
+
+### What Happens Without Tiling
+
+Using `assets/portrait.png` (3,600 x 20,220, a full-page National Geographic capture) as an example:
+
+| Model | What happens | Impact |
+|-------|-------------|--------|
+| Claude | **Rejected**, exceeds 8,000px dimension limit | Cannot analyze the image at all |
+| GPT-4o | Downscaled to ~365 x 2,048, then internally tiled | ~1% of original pixels survive the downscale |
+| Gemini 3 | Capped at 1,120 tokens per image (default) | Fixed token budget regardless of image size |
+
+> Gemini 1.5/2.0 tiles large images natively at 768px without downscaling.
+> For Gemini 3, tiling multiplies the total token budget by sending each tile as a separate image.
+
+### With Tiling
+
+| Model | Tiles | Result |
+|-------|-------|--------|
+| Claude | 76 tiles at 1,092px | Every tile under 8,000px and 1,568px limits, full analysis |
+| GPT-4o | 135 tiles at 768px | Every tile under 2,048px, no pre-downscale needed |
+| Gemini 3 | 135 tiles at 768px | Each tile gets its own token budget |
+
+Using `assets/landscape.png` (8,192 x 4,320, NASA image gallery):
+
+| Model | Without tiling | With tiling |
+|-------|----------------|-------------|
+| Claude | **Rejected** (8,192 > 8,000px limit) | 32 tiles at 1,092px, full analysis |
+| GPT-4o | Downscaled to ~1,456 x 768 (~3% of pixels survive) | 66 tiles at 768px, full resolution |
+| Gemini 3 | Capped at 1,120 tokens | 18 tiles at 1,536px, 18x token budget |
+
+*Based on published model vision documentation as of Feb 2026:
+[Claude vision limits](https://docs.anthropic.com/en/docs/build-with-claude/vision) ·
+[OpenAI vision guide](https://platform.openai.com/docs/guides/vision) ·
+[Gemini image understanding](https://ai.google.dev/gemini-api/docs/image-understanding) ·
+[Gemini media resolution](https://ai.google.dev/gemini-api/docs/media-resolution)*
+
+</details>
+
+## How It Works
+
+This MCP server:
+
+1. Reads the image dimensions and the target model's vision config
+2. Calculates an optimal grid that keeps every tile within the model's sweet spot
+3. Extracts tiles as individual images (WebP default, PNG optional) and saves them to disk
+4. Returns a metadata summary (grid layout, file paths, token cost, per-tile content hints)
+5. Serves tiles on demand — call with `tilesDir` + `start`/`end` to retrieve batches of up to 5 tiles
+
+**Auto-downscaling:** Images over 10,000px on their longest side are automatically downscaled before tiling (configurable via `maxDimension`). This keeps tile counts reasonable and improves LLM comprehension by increasing content density per tile. Set `maxDimension=0` to disable, or pass a custom value (e.g., `maxDimension=5000`) for more aggressive downscaling.
+
+<details>
+<summary>Tool Reference</summary>
 
 ### `tiler`
 
@@ -188,11 +258,11 @@ One unified tool that handles all image tiling operations. The mode is auto-dete
 The tool uses a two-step process to let you choose the right model before tiling:
 
 1. **Compare** - Call with only the image source. Returns a comparison table showing tile counts and token estimates for each supported model, plus an interactive HTML preview.
-2. **Tile** - Call again with the chosen `model` + `outputDir` from step 1, plus:
+2. **Tile** - Call again with the chosen `preset` + `outputDir` from step 1, plus:
    - **Image sources:** re-include your original source param (`filePath`, `sourceUrl`, etc.)
    - **Captures:** use `screenshotPath` from step 1 (not the original `url`)
 
-> **Skip the comparison step:** Provide `model` and `outputDir` on the first call to tile immediately.
+> **Skip the comparison step:** Provide `preset` and `outputDir` on the first call to tile immediately.
 
 > **Interactive model picker:** Clients that support MCP elicitation get a dropdown picker instead of the comparison table.
 
@@ -213,7 +283,7 @@ The tool uses a two-step process to let you choose the right model before tiling
 |---|---|---|---|---|
 | `url` | string | no | - | URL of the web page to capture. Requires Chrome/Chromium installed (or `CHROME_PATH` env var). |
 | `screenshotPath` | string | no | - | Path to a previously captured screenshot. Skips URL capture when provided. |
-| `viewportWidth` | number | no | Auto-detect (fallback 1280) | Browser viewport width in pixels (320-3840) |
+| `viewportWidth` | number | no | `1280` | Browser viewport width in pixels (320-3840) |
 | `waitUntil` | string | no | `"load"` | When to consider the page loaded: `"load"`, `"networkidle"`, or `"domcontentloaded"` |
 | `delay` | number | no | `0` | Additional delay in ms after page load (max 30000) |
 
@@ -226,18 +296,22 @@ Supports scroll-stitching for pages taller than 16,384px. Automatically triggers
 | `tilesDir` | string | no | - | Path to tiles directory (returned by a previous tiling call as `outputDir`) |
 | `start` | number | no | `0` | Start tile index (0-based, inclusive) |
 | `end` | number | no | start + 4 | End tile index (0-based, inclusive). Max 5 tiles per batch. |
+| `skipBlankTiles` | boolean | no | `true` | Skip blank tiles and return a text annotation instead of an image. Set to `false` to include all tiles. |
 
 #### Parameters - Tiling Config (shared across modes)
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `model` | string | no | Auto (cheapest) | Target vision model: `"claude"`, `"openai"`, `"gemini"`, `"gemini3"`. Auto-selects the most token-efficient preset when omitted. |
+| `preset` | string | no | Auto (cheapest) | Target vision preset: `"claude"`, `"openai"`, `"gemini"`, `"gemini3"`. Auto-selects the most token-efficient preset when omitted. |
 | `tileSize` | number | no | Model default | Tile size in pixels. Clamped to model's supported range with a warning if out of bounds. |
 | `maxDimension` | number | no | `10000` | Max dimension in px (0 to disable, or 256-65536). Values 1-255 are silently clamped to 256. Pre-downscales the image so its longest side fits within this value before tiling. |
 | `outputDir` | string | no | See below | Directory to save tiles. Defaults: for `filePath` sources, `tiles/{name}_vN/` next to source (auto-incrementing: `_v1`, `_v2`, ..., `_vN`); for `sourceUrl`/`dataUrl`/`imageBase64`, `{base}/tiles/tiled_{timestamp}_{hex}/`; for captures, `{base}/tiles/capture_{timestamp}_{hex}/`. `{base}` is `~/Desktop`, `~/Downloads`, or `~` (first available). |
 | `page` | number | no | `0` | Tile page to return (0 = first 5, 1 = next 5, etc.) |
 | `format` | string | no | `"webp"` | Output format: `"webp"` (smaller, default) or `"png"` (lossless) |
-| `includeMetadata` | boolean | no | `true` | Analyze each tile and return content hints (blank, low-detail, mixed, high-detail) and brightness stats |
+| `includeMetadata` | boolean | no | `true` | Analyze each tile using Shannon entropy and return content classification (blank, low-detail, mixed, high-detail) plus `entropy` and `sharpness` values per tile |
+| `model` | string | no | - | **Deprecated.** Use `preset` instead. Still accepted; emits a deprecation warning in the response. |
+
+</details>
 
 ## Behaviors
 
@@ -262,8 +336,6 @@ PNG, JPEG, WebP, TIFF, GIF
 **"Chrome not found"** - Install Google Chrome or set the `CHROME_PATH` environment variable to the Chrome executable (must be an absolute path).
 
 **Running as root / in Docker** - Set `CHROME_NO_SANDBOX=1` to launch Chrome without sandbox (also enabled automatically when running as root).
-
-**`viewportWidth` auto-detection** - Auto-detection of screen width works on macOS only. On other platforms, falls back to 1280px.
 
 ## Security
 

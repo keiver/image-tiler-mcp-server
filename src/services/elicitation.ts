@@ -46,7 +46,7 @@ export async function tryElicitation(
     requestedSchema: {
       type: "object" as const,
       properties: {
-        model: {
+        preset: {
           type: "string" as const,
           title: "Select tiling preset",
           description: `Image: ${options.width}x${options.height}`,
@@ -58,7 +58,7 @@ export async function tryElicitation(
   });
 
   if (result.action === "accept") {
-    const selectedModel = (result.content as Record<string, unknown>)?.model as string | undefined;
+    const selectedModel = (result.content as Record<string, unknown>)?.preset as string | undefined;
     if (selectedModel && VISION_MODELS.includes(selectedModel as VisionModel)) {
       return { status: "selected", model: selectedModel as VisionModel };
     }

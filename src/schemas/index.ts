@@ -95,14 +95,25 @@ export const TilerInputSchema = {
     .describe(
       `End tile index (0-based, inclusive). Defaults to start + ${MAX_TILES_PER_BATCH - 1}. Max ${MAX_TILES_PER_BATCH} tiles per batch to stay within MCP response limits.`
     ),
+  skipBlankTiles: z
+    .boolean()
+    .default(true)
+    .describe("Skip blank tiles in get-tiles mode, returning text annotations instead of images. Set to false to include all tiles. Default: true."),
 
   // ── Tiling config fields (shared by tile-image and capture modes) ──
-  model: z
+  preset: z
     .enum(VISION_MODELS)
     .optional()
     .describe(
       `DO NOT provide on Phase 1 (first call). Only specify on Phase 2 after the user has chosen from the comparison table. ` +
       `Available: ${modelDescriptions}. Auto-selects cheapest when omitted on Phase 2.`
+    ),
+  model: z
+    .enum(VISION_MODELS)
+    .optional()
+    .describe(
+      `Deprecated: use "preset" instead. Accepted for backward compatibility. ` +
+      `Available: ${modelDescriptions}.`
     ),
   tileSize: z
     .number()

@@ -684,8 +684,18 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       );
     }
 
-    const pageWidth = Math.ceil(contentSize.width);
-    const pageHeight = Math.ceil(contentSize.height);
+    const rawWidth = Math.ceil(contentSize.width);
+    const rawHeight = Math.ceil(contentSize.height);
+
+    if (rawWidth <= 0) {
+      console.warn(`[url-capture] Chrome reported content width=${contentSize.width}; falling back to viewportWidth=${viewportWidth}`);
+    }
+    if (rawHeight <= 0) {
+      console.warn(`[url-capture] Chrome reported content height=${contentSize.height}; falling back to default height=${CAPTURE_DEFAULT_VIEWPORT_HEIGHT}`);
+    }
+
+    const pageWidth = rawWidth > 0 ? rawWidth : viewportWidth;
+    const pageHeight = rawHeight > 0 ? rawHeight : CAPTURE_DEFAULT_VIEWPORT_HEIGHT;
 
     let buffer: Buffer;
     let segmentsStitched: number | undefined;

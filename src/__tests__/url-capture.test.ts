@@ -61,7 +61,7 @@ vi.mock("node:http", () => ({
 }));
 
 import { findChromePath, captureUrl } from "../services/url-capture.js";
-import { MAX_CAPTURE_HEIGHT, CHROME_MAX_CAPTURE_HEIGHT, MAX_CHROME_STDERR_BYTES } from "../constants.js";
+import { MAX_CAPTURE_HEIGHT, CHROME_MAX_CAPTURE_HEIGHT, MAX_CHROME_STDERR_BYTES, CAPTURE_DEFAULT_VIEWPORT_WIDTH, CAPTURE_DEFAULT_VIEWPORT_HEIGHT } from "../constants.js";
 
 // ─── Chrome Detection ──────────────────────────────────────────────
 
@@ -505,6 +505,57 @@ describe("captureUrl", () => {
     const scrollIndex = expr.indexOf("scrollTo");
     expect(guardIndex).toBeGreaterThan(-1);
     expect(scrollIndex).toBeGreaterThan(guardIndex);
+  });
+
+  // ─── Zero-Dimension Fallback Tests ──────────────────────────────
+
+  it("falls back to viewportWidth when contentSize.width is 0", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    setupCdpAutoResponder(0, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    const result = await captureUrl({ url: "https://example.com" });
+    expect(result.pageWidth).toBe(CAPTURE_DEFAULT_VIEWPORT_WIDTH);
+    expect(result.pageHeight).toBe(800);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content width=0"));
+    warnSpy.mockRestore();
+  });
+
+  it("falls back to default height when contentSize.height is 0", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    setupCdpAutoResponder(1280, 0);
+    setTimeout(emitDevToolsUrl, 0);
+
+    const result = await captureUrl({ url: "https://example.com" });
+    expect(result.pageWidth).toBe(1280);
+    expect(result.pageHeight).toBe(CAPTURE_DEFAULT_VIEWPORT_HEIGHT);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content height=0"));
+    warnSpy.mockRestore();
+  });
+
+  it("falls back to both defaults when both dimensions are 0", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    setupCdpAutoResponder(0, 0);
+    setTimeout(emitDevToolsUrl, 0);
+
+    const result = await captureUrl({ url: "https://example.com" });
+    expect(result.pageWidth).toBe(CAPTURE_DEFAULT_VIEWPORT_WIDTH);
+    expect(result.pageHeight).toBe(CAPTURE_DEFAULT_VIEWPORT_HEIGHT);
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    warnSpy.mockRestore();
+  });
+
+  it("falls back to defaults when dimensions are negative", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    setupCdpAutoResponder(-5, -10);
+    setTimeout(emitDevToolsUrl, 0);
+
+    const result = await captureUrl({ url: "https://example.com" });
+    expect(result.pageWidth).toBe(CAPTURE_DEFAULT_VIEWPORT_WIDTH);
+    expect(result.pageHeight).toBe(CAPTURE_DEFAULT_VIEWPORT_HEIGHT);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content width=-5"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content height=-10"));
+    warnSpy.mockRestore();
   });
 
   // ─── Abort Signal Tests ───────────────────────────────────────────
