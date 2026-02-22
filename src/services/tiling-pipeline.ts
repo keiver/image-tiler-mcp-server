@@ -281,6 +281,22 @@ export async function executeTiling(
   );
 
   const allWarnings = [...warnings, ...(result.warnings ?? [])];
+
+  // Persist geometry for get-tiles mode (best-effort, non-fatal)
+  const manifest = {
+    tileSize: result.grid.tileSize,
+    cols: result.grid.cols,
+    rows: result.grid.rows,
+    tiles: result.tiles.map((t) => ({ index: t.index, width: t.width, height: t.height })),
+  };
+  try {
+    await fs.writeFile(
+      path.join(outputDir, "tiles-manifest.json"),
+      JSON.stringify(manifest),
+      "utf8"
+    );
+  } catch { /* non-fatal */ }
+
   return { result, warnings: allWarnings };
 }
 
@@ -369,7 +385,10 @@ export async function buildPhase2Response(
   let tileHints: Record<string, number[]> | undefined;
   let tileMetadataArray: TileMetadata[] | undefined;
   if (opts.includeMetadata) {
-    tileMetadataArray = await analyzeTiles(result.tiles.map((t) => t.filePath));
+    tileMetadataArray = await analyzeTiles(
+      result.tiles.map((t) => ({ filePath: t.filePath, index: t.index, extractedWidth: t.width, extractedHeight: t.height })),
+      result.grid.tileSize
+    );
     tileHints = buildTileHints(tileMetadataArray);
   }
 

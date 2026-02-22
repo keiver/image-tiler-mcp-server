@@ -183,6 +183,85 @@ describe("analyzeTile", () => {
       "Unable to analyze tile at index 5: image has no color channels"
     );
   });
+
+  it("thin tile (width < 0.5 × tileSize) with non-blank stdDev classifies as mixed", async () => {
+    mockStats.mockResolvedValue({
+      channels: [{ mean: 200, stdev: 20 }],
+      entropy: 2.0,  // would be low-detail without geometry
+      sharpness: 1.0,
+    });
+
+    const result = await analyzeTile("/tiles/tile_000_011.webp", 11, {
+      tileSize: 768,
+      extractedWidth: 147,  // 147 / 768 = 0.19 — below 0.5 threshold
+      extractedHeight: 768,
+    });
+    expect(result.contentHint).toBe("mixed");
+    expect(result.isBlank).toBe(false);
+  });
+
+  it("thin tile that is blank (stdDev < 5) still classifies as blank", async () => {
+    mockStats.mockResolvedValue({
+      channels: [{ mean: 255, stdev: 1 }],
+      entropy: 0.1,
+      sharpness: 0.0,
+    });
+
+    const result = await analyzeTile("/tiles/tile_000_011.webp", 11, {
+      tileSize: 768,
+      extractedWidth: 147,
+      extractedHeight: 768,
+    });
+    expect(result.contentHint).toBe("blank");
+    expect(result.isBlank).toBe(true);
+  });
+
+  it("full-width tile with low entropy still classifies as low-detail (unchanged)", async () => {
+    mockStats.mockResolvedValue({
+      channels: [{ mean: 200, stdev: 20 }],
+      entropy: 2.0,
+      sharpness: 1.0,
+    });
+
+    const result = await analyzeTile("/tiles/tile_000_000.webp", 0, {
+      tileSize: 768,
+      extractedWidth: 768,  // full width — not thin
+      extractedHeight: 768,
+    });
+    expect(result.contentHint).toBe("low-detail");
+    expect(result.isBlank).toBe(false);
+  });
+
+  it("thin tile by height (height < 0.5 × tileSize) with non-blank stdDev classifies as mixed", async () => {
+    mockStats.mockResolvedValue({
+      channels: [{ mean: 200, stdev: 20 }],
+      entropy: 2.0,
+      sharpness: 1.0,
+    });
+
+    const result = await analyzeTile("/tiles/tile_011_000.webp", 11, {
+      tileSize: 768,
+      extractedWidth: 768,
+      extractedHeight: 200,  // 200 / 768 = 0.26 — below 0.5 threshold
+    });
+    expect(result.contentHint).toBe("mixed");
+    expect(result.isBlank).toBe(false);
+  });
+
+  it("tile at exactly 0.5 × tileSize is NOT thin (boundary)", async () => {
+    mockStats.mockResolvedValue({
+      channels: [{ mean: 200, stdev: 20 }],
+      entropy: 2.0,
+      sharpness: 1.0,
+    });
+
+    const result = await analyzeTile("/tiles/tile.webp", 0, {
+      tileSize: 768,
+      extractedWidth: 384,  // exactly 0.5 × 768 — not thin
+      extractedHeight: 768,
+    });
+    expect(result.contentHint).toBe("low-detail");
+  });
 });
 
 describe("analyzeTiles", () => {
@@ -198,9 +277,9 @@ describe("analyzeTiles", () => {
     });
 
     const result = await analyzeTiles([
-      "/tiles/tile_000_000.webp",
-      "/tiles/tile_000_001.webp",
-      "/tiles/tile_001_000.webp",
+      { filePath: "/tiles/tile_000_000.webp", index: 0 },
+      { filePath: "/tiles/tile_000_001.webp", index: 1 },
+      { filePath: "/tiles/tile_001_000.webp", index: 2 },
     ]);
     expect(result).toHaveLength(3);
     expect(result[0].index).toBe(0);

@@ -37,6 +37,7 @@ vi.mock("node:fs/promises", () => ({
   readdir: vi.fn(),
   mkdir: vi.fn().mockResolvedValue(undefined),
   copyFile: vi.fn().mockResolvedValue(undefined),
+  writeFile: vi.fn().mockResolvedValue(undefined),
 }));
 
 import * as fsPromises from "node:fs/promises";
@@ -65,6 +66,7 @@ const mockedTileImage = vi.mocked(tileImage);
 const mockedGeneratePreview = vi.mocked(generateInteractivePreview);
 const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
 const mockedReaddir = vi.mocked(fsPromises.readdir);
+const mockedWriteFile = vi.mocked(fsPromises.writeFile);
 const mockedFormatTable = vi.mocked(formatModelComparisonTable);
 const mockedBuildTileHints = vi.mocked(buildTileHints);
 const mockedFormatTileHintsSummary = vi.mocked(formatTileHintsSummary);
@@ -493,6 +495,41 @@ describe("executeTiling", () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("Failed to clean up temp file");
   });
+
+  it("writes tiles-manifest.json with tileSize and per-tile dimensions", async () => {
+    mockedTileImage.mockResolvedValue(makeTileResult());
+    await executeTiling("/img.png", "/output", {
+      model: "claude",
+      maxDimension: 10000,
+      format: "webp",
+      includeMetadata: false,
+    });
+    expect(mockedWriteFile).toHaveBeenCalledWith(
+      "/output/tiles-manifest.json",
+      expect.any(String),
+      "utf8"
+    );
+    const written = JSON.parse((mockedWriteFile.mock.calls[0] as any)[1]);
+    expect(written.tileSize).toBe(1092);
+    expect(written.cols).toBe(2);
+    expect(written.rows).toBe(2);
+    expect(written.tiles).toHaveLength(4);
+    expect(written.tiles[0]).toEqual({ index: 0, width: 1092, height: 1092 });
+    expect(written.tiles[3]).toEqual({ index: 3, width: 1092, height: 1092 });
+  });
+
+  it("does not throw when tiles-manifest.json write fails", async () => {
+    mockedTileImage.mockResolvedValue(makeTileResult());
+    mockedWriteFile.mockRejectedValueOnce(new Error("disk full"));
+    await expect(
+      executeTiling("/img.png", "/output", {
+        model: "claude",
+        maxDimension: 10000,
+        format: "webp",
+        includeMetadata: false,
+      })
+    ).resolves.not.toThrow();
+  });
 });
 
 // ─── buildPhase2Response ─────────────────────────────────────────────────
@@ -568,12 +605,15 @@ describe("buildPhase2Response", () => {
       warnings: [],
       maxDimension: 10000,
     });
-    expect(mockedAnalyzeTiles).toHaveBeenCalledWith([
-      "/output/tiles/tile_000_000.webp",
-      "/output/tiles/tile_000_001.webp",
-      "/output/tiles/tile_001_000.webp",
-      "/output/tiles/tile_001_001.webp",
-    ]);
+    expect(mockedAnalyzeTiles).toHaveBeenCalledWith(
+      [
+        { filePath: "/output/tiles/tile_000_000.webp", index: 0, extractedWidth: 1092, extractedHeight: 1092 },
+        { filePath: "/output/tiles/tile_000_001.webp", index: 1, extractedWidth: 1092, extractedHeight: 1092 },
+        { filePath: "/output/tiles/tile_001_000.webp", index: 2, extractedWidth: 1092, extractedHeight: 1092 },
+        { filePath: "/output/tiles/tile_001_001.webp", index: 3, extractedWidth: 1092, extractedHeight: 1092 },
+      ],
+      1092
+    );
   });
 
   it("does not call analyzeTiles when includeMetadata is false", async () => {

@@ -213,11 +213,32 @@ async function handleGetTiles(
     const summary = `Tiles ${start + 1}-${effectiveEnd + 1} of ${totalTiles}`;
     content.push({ type: "text" as const, text: summary });
 
+    // Read manifest for geometry-aware classification (best-effort)
+    type TilesManifest = {
+      tileSize: number;
+      tiles: Array<{ index: number; width: number; height: number }>;
+    };
+    let tilesManifest: TilesManifest | null = null;
+    try {
+      const raw = await fs.readFile(path.join(tilesDir, "tiles-manifest.json"), "utf8");
+      tilesManifest = JSON.parse(raw) as TilesManifest;
+    } catch { /* no manifest — geometry-agnostic classification */ }
+    const manifestMap = tilesManifest
+      ? new Map(tilesManifest.tiles.map((t) => [t.index, t]))
+      : null;
+
     // Analyze current batch for content metadata
     const metaMap = new Map<number, TileMetadata>();
     try {
       const batchPaths = tilePaths.slice(start, effectiveEnd + 1);
-      const metadata = await analyzeTiles(batchPaths);
+      const metadata = await analyzeTiles(
+        batchPaths.map((filePath, i) => {
+          const tileIndex = start + i;
+          const dims = manifestMap?.get(tileIndex);
+          return { filePath, index: i, extractedWidth: dims?.width, extractedHeight: dims?.height };
+        }),
+        tilesManifest?.tileSize
+      );
       for (const m of metadata) {
         metaMap.set(start + m.index, m);
       }

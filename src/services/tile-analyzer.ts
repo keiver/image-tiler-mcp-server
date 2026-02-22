@@ -8,9 +8,18 @@ import {
   HIGH_DETAIL_ENTROPY_THRESHOLD,
 } from "../constants.js";
 
+interface TileGeometry {
+  tileSize?: number;
+  extractedWidth?: number;
+  extractedHeight?: number;
+}
+
+const THIN_TILE_RATIO = 0.5;
+
 export async function analyzeTile(
   tilePath: string,
-  index: number
+  index: number,
+  geometry?: TileGeometry
 ): Promise<TileMetadata> {
   const stats = await withTimeout(
     sharp(tilePath).stats(),
@@ -29,12 +38,19 @@ export async function analyzeTile(
   const entropy = stats.entropy ?? 0;
   const sharpness = stats.sharpness ?? 0;
 
+  const isThin =
+    geometry?.tileSize != null &&
+    ((geometry.extractedWidth != null && geometry.extractedWidth < THIN_TILE_RATIO * geometry.tileSize) ||
+     (geometry.extractedHeight != null && geometry.extractedHeight < THIN_TILE_RATIO * geometry.tileSize));
+
   let contentHint: TileMetadata["contentHint"];
   let isBlank = false;
 
   if (stdDev < BLANK_STDDEV_THRESHOLD) {
     contentHint = "blank";
     isBlank = true;
+  } else if (isThin) {
+    contentHint = "mixed";
   } else if (entropy < LOW_DETAIL_ENTROPY_THRESHOLD) {
     contentHint = "low-detail";
   } else if (entropy > HIGH_DETAIL_ENTROPY_THRESHOLD) {
@@ -55,9 +71,10 @@ export async function analyzeTile(
 }
 
 export async function analyzeTiles(
-  tilePaths: string[]
+  tiles: Array<{ filePath: string; index: number; extractedWidth?: number; extractedHeight?: number }>,
+  tileSize?: number
 ): Promise<TileMetadata[]> {
   return Promise.all(
-    tilePaths.map((tilePath, index) => analyzeTile(tilePath, index))
+    tiles.map((t) => analyzeTile(t.filePath, t.index, { tileSize, extractedWidth: t.extractedWidth, extractedHeight: t.extractedHeight }))
   );
 }

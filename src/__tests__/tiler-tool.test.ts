@@ -60,6 +60,7 @@ vi.mock("node:fs/promises", () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   access: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
+  readFile: vi.fn().mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" })),
 }));
 
 import { resolveImageSource } from "../services/image-source-resolver.js";
@@ -93,6 +94,7 @@ const mockedResolveSource = vi.mocked(resolveImageSource);
 const mockedCaptureUrl = vi.mocked(captureUrl);
 const mockedListTiles = vi.mocked(listTilesInDirectory);
 const mockedReadBase64 = vi.mocked(readTileAsBase64);
+const mockedReadFile = vi.mocked(fsPromises.readFile);
 const mockedResolveOutputDir = vi.mocked(resolveOutputDir);
 const mockedResolveOutputDirForCapture = vi.mocked(resolveOutputDirForCapture);
 const mockedValidateFormat = vi.mocked(validateFormat);
@@ -887,6 +889,51 @@ describe("registerTilerTool", () => {
       expect(mockedReadBase64).toHaveBeenCalledWith("/tiles/tile_000_000.webp");
       expect(mockedReadBase64).toHaveBeenCalledWith("/tiles/tile_000_001.webp");
       expect(mockedReadBase64).toHaveBeenCalledTimes(2);
+    });
+
+    it("reads tiles-manifest.json and passes geometry to analyzeTiles", async () => {
+      const manifest = {
+        tileSize: 768,
+        cols: 2,
+        rows: 2,
+        tiles: [
+          { index: 0, width: 768, height: 768 },
+          { index: 1, width: 147, height: 768 },
+          { index: 2, width: 768, height: 768 },
+          { index: 3, width: 147, height: 768 },
+        ],
+      };
+      mockedListTiles.mockResolvedValue(makeTilePaths(4));
+      mockedReadFile.mockResolvedValueOnce(JSON.stringify(manifest) as any);
+
+      const tool = mock.getTool("tiler")!;
+      await tool.handler({ tilesDir: "/tiles", start: 0, end: 3 }, {} as any);
+
+      expect(mockedAnalyzeTiles).toHaveBeenCalledWith(
+        [
+          { filePath: "/tiles/tile_000_000.png", index: 0, extractedWidth: 768, extractedHeight: 768 },
+          { filePath: "/tiles/tile_000_001.png", index: 1, extractedWidth: 147, extractedHeight: 768 },
+          { filePath: "/tiles/tile_000_002.png", index: 2, extractedWidth: 768, extractedHeight: 768 },
+          { filePath: "/tiles/tile_000_003.png", index: 3, extractedWidth: 147, extractedHeight: 768 },
+        ],
+        768
+      );
+    });
+
+    it("falls back to no-geometry analyzeTiles when manifest is missing", async () => {
+      // readFile default mock already rejects with ENOENT
+      mockedListTiles.mockResolvedValue(makeTilePaths(2));
+
+      const tool = mock.getTool("tiler")!;
+      await tool.handler({ tilesDir: "/tiles", start: 0, end: 1 }, {} as any);
+
+      expect(mockedAnalyzeTiles).toHaveBeenCalledWith(
+        [
+          { filePath: "/tiles/tile_000_000.png", index: 0, extractedWidth: undefined, extractedHeight: undefined },
+          { filePath: "/tiles/tile_000_001.png", index: 1, extractedWidth: undefined, extractedHeight: undefined },
+        ],
+        undefined
+      );
     });
 
     it("skipBlankTiles=false returns image blocks for blank tiles", async () => {
