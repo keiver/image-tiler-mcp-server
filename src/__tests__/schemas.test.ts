@@ -173,6 +173,23 @@ describe("TilerInputSchema", () => {
     });
   });
 
+  describe("skipBlankTiles", () => {
+    it("defaults to true when omitted", () => {
+      const result = tilerSchema.parse({});
+      expect(result.skipBlankTiles).toBe(true);
+    });
+
+    it("accepts false", () => {
+      const result = tilerSchema.parse({ tilesDir: "/tiles", skipBlankTiles: false });
+      expect(result.skipBlankTiles).toBe(false);
+    });
+
+    it("accepts true", () => {
+      const result = tilerSchema.parse({ tilesDir: "/tiles", skipBlankTiles: true });
+      expect(result.skipBlankTiles).toBe(true);
+    });
+  });
+
   describe("preset", () => {
     it("is undefined when omitted", () => {
       const result = tilerSchema.parse({ filePath: "test.png" });

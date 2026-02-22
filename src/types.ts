@@ -75,6 +75,8 @@ export interface TileMetadata {
   index: number;
   meanBrightness: number;
   stdDev: number;
+  entropy: number;      // 0.0-8.0 (Shannon entropy of greyscale histogram)
+  sharpness: number;    // 0+ (Laplacian stdDev, higher = more edges)
   contentHint: "blank" | "low-detail" | "mixed" | "high-detail";
   isBlank: boolean;
 }

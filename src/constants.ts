@@ -62,6 +62,11 @@ export const ALLOWED_URL_PROTOCOLS = ["https:"] as const;
 export const MAX_BASE64_LENGTH = 67_108_864; // ~50MB decoded (base64 is ~4/3x)
 export const MAX_DATA_URL_LENGTH = MAX_BASE64_LENGTH + 256; // base64 payload + data URL prefix overhead
 
+// Tile content classification thresholds
+export const BLANK_STDDEV_THRESHOLD = 5;
+export const LOW_DETAIL_ENTROPY_THRESHOLD = 4.0;
+export const HIGH_DETAIL_ENTROPY_THRESHOLD = 6.5;
+
 // Remainder absorption: if a remainder strip is < 15% of tileSize, absorb it into the last tile
 export const MIN_REMAINDER_RATIO = 0.15;
 

@@ -5,8 +5,6 @@ vi.mock("../services/image-processor.js", () => ({
   getImageMetadata: vi.fn(),
   computeEstimateForModel: vi.fn(),
   tileImage: vi.fn(),
-  listTilesInDirectory: vi.fn(),
-  readTileAsBase64: vi.fn(),
 }));
 
 vi.mock("../services/interactive-preview-generator.js", () => ({
@@ -42,7 +40,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import * as fsPromises from "node:fs/promises";
-import { getImageMetadata, computeEstimateForModel, tileImage, listTilesInDirectory, readTileAsBase64 } from "../services/image-processor.js";
+import { getImageMetadata, computeEstimateForModel, tileImage } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import { formatModelComparisonTable, buildTileHints, formatTileHintsSummary } from "../utils.js";
@@ -57,7 +55,6 @@ import {
   buildPhase1Response,
   executeTiling,
   buildPhase2Response,
-  appendTilesPage,
   findCheapestModel,
   computeElicitationData,
 } from "../services/tiling-pipeline.js";
@@ -65,8 +62,6 @@ import {
 const mockedGetMetadata = vi.mocked(getImageMetadata);
 const mockedComputeEstimate = vi.mocked(computeEstimateForModel);
 const mockedTileImage = vi.mocked(tileImage);
-const mockedListTiles = vi.mocked(listTilesInDirectory);
-const mockedReadBase64 = vi.mocked(readTileAsBase64);
 const mockedGeneratePreview = vi.mocked(generateInteractivePreview);
 const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
 const mockedReaddir = vi.mocked(fsPromises.readdir);
@@ -340,6 +335,17 @@ describe("buildPhase1Response", () => {
     expect(json.allModels).toBeDefined();
   });
 
+  it("includes token cost note", () => {
+    const analysis = {
+      outputDir: "/output",
+      sourceImage: { width: 2000, height: 1000 },
+      allModels: sampleAllModels,
+    };
+    const response = buildPhase1Response(analysis);
+    expect(response.content[0].text).toContain("Token note");
+    expect(response.content[0].text).toContain("~258-1590 tokens each");
+  });
+
   it("includes extra fields in structured JSON", () => {
     const analysis = {
       outputDir: "/output",
@@ -514,6 +520,18 @@ describe("buildPhase2Response", () => {
     expect(json.grid.totalTiles).toBe(4);
   });
 
+  it("includes fetch-tiles instruction with outputDir", async () => {
+    const result = makeTileResult();
+    const response = await buildPhase2Response(result, {
+      model: "claude",
+      includeMetadata: false,
+      warnings: [],
+      maxDimension: 10000,
+    });
+    expect(response.content[0].text).toContain("Fetch tiles");
+    expect(response.content[0].text).toContain('tilesDir="/output/tiles"');
+  });
+
   it("includes resize info in summary and JSON when present", async () => {
     const result = makeTileResult({
       resize: { originalWidth: 7680, originalHeight: 4032, resizedWidth: 2048, resizedHeight: 1076, scaleFactor: 0.267 },
@@ -635,7 +653,14 @@ describe("buildPhase2Response", () => {
     expect(json.allModels).toBeUndefined();
   });
 
-  it("includes tile content summary in text when includeMetadata is true and hints exist", async () => {
+  it("includes tile content summary and tileMetadata in structured output when includeMetadata is true", async () => {
+    const mockTileMetadata = [
+      { index: 0, contentHint: "low-detail", meanBrightness: 200, stdDev: 15, entropy: 2.5, sharpness: 1.2, isBlank: false },
+      { index: 1, contentHint: "high-detail", meanBrightness: 128, stdDev: 65, entropy: 7.2, sharpness: 4.5, isBlank: false },
+      { index: 2, contentHint: "blank", meanBrightness: 255, stdDev: 2, entropy: 0.1, sharpness: 0.05, isBlank: true },
+      { index: 3, contentHint: "low-detail", meanBrightness: 210, stdDev: 12, entropy: 3.0, sharpness: 0.8, isBlank: false },
+    ];
+    mockedAnalyzeTiles.mockResolvedValue(mockTileMetadata as any);
     mockedBuildTileHints.mockReturnValue({ "low-detail": [0, 3], "high-detail": [1], "blank": [2] });
     mockedFormatTileHintsSummary.mockReturnValue("Tile content: 2 low-detail, 1 high-detail, 1 blank");
 
@@ -650,6 +675,7 @@ describe("buildPhase2Response", () => {
 
     const json = JSON.parse(response.content[1].text);
     expect(json.tileHints).toEqual({ "low-detail": [0, 3], "high-detail": [1], "blank": [2] });
+    expect(json.tileMetadata).toEqual(mockTileMetadata);
   });
 
   it("does not include tile content summary when includeMetadata is false", async () => {
@@ -665,162 +691,5 @@ describe("buildPhase2Response", () => {
 
     const json = JSON.parse(response.content[1].text);
     expect(json.tileHints).toBeUndefined();
-  });
-});
-
-// ─── appendTilesPage ──────────────────────────────────────────────────────
-
-describe("appendTilesPage", () => {
-  beforeEach(() => {
-    mockedListTiles.mockResolvedValue([
-      "/output/tiles/tile_000_000.webp",
-      "/output/tiles/tile_000_001.webp",
-      "/output/tiles/tile_001_000.webp",
-      "/output/tiles/tile_001_001.webp",
-    ]);
-    mockedReadBase64.mockResolvedValue("AAAA");
-  });
-
-  it("patches structured JSON with page info", async () => {
-    const input = {
-      content: [
-        { type: "text" as const, text: "Summary" },
-        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
-      ],
-    };
-    const result = await appendTilesPage(input, "/output/tiles", 0);
-    const json = JSON.parse((result.content[1] as { type: "text"; text: string }).text);
-    expect(json.page.current).toBe(0);
-    expect(json.page.totalTiles).toBe(4);
-    expect(json.page.tilesReturned).toBe(4);
-    expect(json.page.hasMore).toBe(false);
-  });
-
-  it("appends tile images as content blocks", async () => {
-    const input = {
-      content: [
-        { type: "text" as const, text: "Summary" },
-        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
-      ],
-    };
-    const result = await appendTilesPage(input, "/output/tiles", 0);
-    const imageBlocks = result.content.filter((c) => c.type === "image");
-    expect(imageBlocks).toHaveLength(4);
-  });
-
-  it("uses webp MIME type for .webp tiles", async () => {
-    const input = {
-      content: [
-        { type: "text" as const, text: "Summary" },
-        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
-      ],
-    };
-    const result = await appendTilesPage(input, "/output/tiles", 0);
-    const imageBlocks = result.content.filter((c) => c.type === "image");
-    for (const img of imageBlocks) {
-      if (img.type === "image") {
-        expect(img.mimeType).toBe("image/webp");
-      }
-    }
-  });
-
-  it("paginates correctly with hasMore=true", async () => {
-    mockedListTiles.mockResolvedValue(
-      Array.from({ length: 12 }, (_, i) => {
-        const row = Math.floor(i / 4);
-        const col = i % 4;
-        return `/output/tiles/tile_${String(row).padStart(3, "0")}_${String(col).padStart(3, "0")}.webp`;
-      })
-    );
-
-    const input = {
-      content: [
-        { type: "text" as const, text: "Summary" },
-        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
-      ],
-    };
-    const result = await appendTilesPage(input, "/output/tiles", 0);
-    const imageBlocks = result.content.filter((c) => c.type === "image");
-    expect(imageBlocks).toHaveLength(5);
-
-    const json = JSON.parse((result.content[1] as { type: "text"; text: string }).text);
-    expect(json.page.hasMore).toBe(true);
-    expect(json.page.tilesReturned).toBe(5);
-  });
-
-  it("returns correct page when page > 0", async () => {
-    mockedListTiles.mockResolvedValue(
-      Array.from({ length: 12 }, (_, i) => {
-        const row = Math.floor(i / 4);
-        const col = i % 4;
-        return `/output/tiles/tile_${String(row).padStart(3, "0")}_${String(col).padStart(3, "0")}.webp`;
-      })
-    );
-
-    const input = {
-      content: [
-        { type: "text" as const, text: "Summary" },
-        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
-      ],
-    };
-    const result = await appendTilesPage(input, "/output/tiles", 1);
-    const imageBlocks = result.content.filter((c) => c.type === "image");
-    expect(imageBlocks).toHaveLength(5); // tiles 5-9
-
-    const json = JSON.parse((result.content[1] as { type: "text"; text: string }).text);
-    expect(json.page.current).toBe(1);
-    expect(json.page.hasMore).toBe(true);
-  });
-
-  it("returns 0 tiles when page is beyond range", async () => {
-    const input = {
-      content: [
-        { type: "text" as const, text: "Summary" },
-        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
-      ],
-    };
-    const result = await appendTilesPage(input, "/output/tiles", 10);
-    const imageBlocks = result.content.filter((c) => c.type === "image");
-    expect(imageBlocks).toHaveLength(0);
-
-    const json = JSON.parse((result.content[1] as { type: "text"; text: string }).text);
-    expect(json.page.tilesReturned).toBe(0);
-  });
-
-  it("annotates tile labels with hints when tileHints present in structured output", async () => {
-    const input = {
-      content: [
-        { type: "text" as const, text: "Summary" },
-        { type: "text" as const, text: JSON.stringify({
-          model: "claude",
-          tileHints: { "low-detail": [0, 3], "high-detail": [1], "blank": [2] },
-        }) },
-      ],
-    };
-    const result = await appendTilesPage(input, "/output/tiles", 0);
-    const tileLabels = result.content.filter(
-      (c) => c.type === "text" && (c as { text: string }).text.startsWith("Tile ")
-    );
-    expect(tileLabels).toHaveLength(4);
-    expect((tileLabels[0] as { text: string }).text).toContain("(low-detail)");
-    expect((tileLabels[1] as { text: string }).text).toContain("(high-detail)");
-    expect((tileLabels[2] as { text: string }).text).toContain("(blank)");
-    expect((tileLabels[3] as { text: string }).text).toContain("(low-detail)");
-  });
-
-  it("does not annotate tile labels when tileHints absent from structured output", async () => {
-    const input = {
-      content: [
-        { type: "text" as const, text: "Summary" },
-        { type: "text" as const, text: JSON.stringify({ model: "claude" }) },
-      ],
-    };
-    const result = await appendTilesPage(input, "/output/tiles", 0);
-    const tileLabels = result.content.filter(
-      (c) => c.type === "text" && (c as { text: string }).text.startsWith("Tile ")
-    );
-    for (const label of tileLabels) {
-      expect((label as { text: string }).text).not.toContain("(");
-    }
   });
 });
