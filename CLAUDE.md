@@ -113,6 +113,10 @@ No linter is configured.
 
 **Test images in `assets/`:** Do not delete — used by integration tests.
 
+## Contributing
+
+See `CONTRIBUTING.md` for bug reporting, contribution guidelines, and PR process.
+
 ## Adding a New Tool
 
 1. Create `src/tools/my-tool.ts` exporting `registerMyTool(server: McpServer)`.
