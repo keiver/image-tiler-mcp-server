@@ -8,38 +8,40 @@ export function registerPrompts(server: McpServer): void {
     {
       title: "Tile and Analyze Image",
       description:
-        "Guide through tiling a large image and analyzing each tile at full resolution",
+        "Tile a local image and analyze every tile at full resolution",
       argsSchema: {
-        filePath: z.string().describe("Path to the image file to tile and analyze"),
+        filePath: z.string().describe("Absolute or relative path to the image file"),
         preset: z
           .enum([...VISION_MODELS] as [string, ...string[]])
           .optional()
-          .describe("Vision model preset to optimize tile size for"),
+          .describe("Vision model preset (claude, openai, gemini3, gemini)"),
         focus: z
           .string()
           .optional()
-          .describe("What to focus on (e.g. 'UI layout', 'text readability')"),
+          .describe("Analysis focus area (e.g. 'text readability', 'UI layout')"),
       },
     },
     ({ filePath, preset, focus }) => {
       const presetNote = preset ? ` with preset="${preset}"` : "";
-      const focusNote = focus ? `\n\nFocus specifically on: ${focus}` : "";
+      const focusNote = focus ? `\n\nFocus your analysis on: ${focus}` : "";
       return {
         messages: [
           {
             role: "user" as const,
             content: {
               type: "text" as const,
-              text: `Analyze the image at "${filePath}" at full resolution:
+              text: `Tile and analyze "${filePath}" at full resolution. Follow this exact workflow:
 
-1. Call the tiler tool with filePath="${filePath}"${presetNote} to get the model comparison table (Phase 1).
-2. Call the tiler tool again with your chosen preset and the outputDir from step 1 to tile the image (Phase 2).
-3. Call the tiler tool with tilesDir set to the outputDir to retrieve the first batch of tiles.
-4. Analyze each tile, noting its row/col position in the original image.
-5. Continue retrieving batches (incrementing start/end by 5) until all tiles are reviewed.
-6. Provide a comprehensive summary of the full image based on your tile-by-tile analysis.${focusNote}
+1. Phase 1: call tiler(filePath="${filePath}"${presetNote}). Returns a model comparison table and an outputDir.
+   Present the table and let the user pick a preset (or auto-select the cheapest).
+2. Phase 2: call tiler(filePath="${filePath}", preset=<chosen>, outputDir=<from step 1>).
+   This tiles the image and returns a metadata summary (no tile images yet).
+3. Retrieve tiles: call tiler(tilesDir=<outputDir>, start=0, end=4) to get the first batch.
+4. Analyze each tile. Note its row/col grid position to understand spatial layout.
+5. Paginate: increment start/end by 5 and repeat until all tiles are reviewed.
+6. Synthesize a full-image summary from your tile-by-tile observations.${focusNote}
 
-Process every tile before drawing conclusions. Tiling preserves full resolution that would be lost if the image were sent whole.`,
+LLM vision systems downscale large images automatically. Tiling preserves the detail that would otherwise be lost.`,
             },
           },
         ],
@@ -52,32 +54,36 @@ Process every tile before drawing conclusions. Tiling preserves full resolution 
     {
       title: "Capture and Analyze Web Page",
       description:
-        "Guide through capturing a web page screenshot and analyzing it tile by tile",
+        "Capture a web page screenshot via Chrome, tile it, and analyze each tile",
       argsSchema: {
-        url: z.string().url().describe("URL of the web page to capture and analyze"),
+        url: z.string().url().describe("URL of the web page to capture"),
         focus: z
           .string()
           .optional()
-          .describe("What to focus on (e.g. 'accessibility', 'responsive layout')"),
+          .describe("Analysis focus area (e.g. 'accessibility', 'responsive layout')"),
       },
     },
     ({ url, focus }) => {
-      const focusNote = focus ? `\n\nFocus specifically on: ${focus}` : "";
+      const focusNote = focus ? `\n\nFocus your analysis on: ${focus}` : "";
       return {
         messages: [
           {
             role: "user" as const,
             content: {
               type: "text" as const,
-              text: `Analyze the web page at "${url}" at full resolution:
+              text: `Capture and analyze "${url}" at full resolution. Follow this exact workflow:
 
-1. Call the tiler tool with url="${url}" to capture and get the model comparison table (Phase 1).
-2. Call the tiler tool again with your chosen preset and the outputDir from step 1 (Phase 2).
-3. Call the tiler tool with tilesDir to retrieve tiles in batches of up to 5.
-4. Analyze each tile, noting the spatial layout and content at each position.
-5. Continue until all tiles are reviewed, then summarize the complete page.${focusNote}
+1. Phase 1: call tiler(url="${url}"). Captures the page and returns a model comparison table,
+   an outputDir, and a screenshotPath. Present the table and let the user pick a preset.
+2. Phase 2: call tiler(screenshotPath=<from step 1>, preset=<chosen>, outputDir=<from step 1>).
+   Important: use screenshotPath (not url) to reuse the existing screenshot.
+   Returns a metadata summary (no tile images yet).
+3. Retrieve tiles: call tiler(tilesDir=<outputDir>, start=0, end=4) to get the first batch.
+4. Analyze each tile. Note spatial layout and content at each grid position.
+5. Paginate: increment start/end by 5 and repeat until all tiles are reviewed.
+6. Synthesize a complete page analysis from your tile-by-tile observations.${focusNote}
 
-Chrome must be installed for URL capture. Pages taller than 16,384px are automatically scroll-stitched.`,
+Requires Chrome/Chromium installed. Pages taller than 16,384px are scroll-stitched automatically.`,
             },
           },
         ],

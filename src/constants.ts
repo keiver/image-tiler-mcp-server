@@ -115,3 +115,4 @@ export const DEFAULT_MOBILE_USER_AGENT =
 // Security environment variable names
 export const ALLOWED_DIRS_ENV_VAR = "TILER_ALLOWED_DIRS";
 export const DISABLE_URL_CAPTURE_ENV_VAR = "TILER_DISABLE_URL_CAPTURE";
+export const DENY_HTTP_PRIVATE_ENV_VAR = "TILER_DENY_HTTP_PRIVATE";

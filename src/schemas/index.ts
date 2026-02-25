@@ -30,7 +30,7 @@ export const TilerInputSchema = {
     .string()
     .url("Must be a valid URL")
     .optional()
-    .describe("URL to download the image from (max 50MB, 30s timeout). https: uses SSRF filtering; http: allowed for local dev servers"),
+    .describe("URL to download the image from (max 50MB, 30s timeout). SSRF filtering active on https:. Set TILER_DENY_HTTP_PRIVATE=1 to block private IPs on http:"),
   dataUrl: z
     .string()
     .max(MAX_DATA_URL_LENGTH, `Data URL must not exceed ${MAX_DATA_URL_LENGTH} characters`)
@@ -81,6 +81,7 @@ export const TilerInputSchema = {
     .describe("Device pixel ratio (e.g., 2 for retina). Defaults to 1 for desktop, 2 when mobile is true."),
   userAgent: z
     .string()
+    .max(1024, "User agent string must not exceed 1024 characters")
     .optional()
     .describe("Custom user agent string"),
   screenshotPath: z

@@ -10,6 +10,7 @@ import {
   DOWNLOAD_TIMEOUT_MS,
   ALLOWED_URL_PROTOCOLS,
   MAX_REDIRECT_HOPS,
+  DENY_HTTP_PRIVATE_ENV_VAR,
 } from "../constants.js";
 import type { ResolvedImageSource } from "../types.js";
 
@@ -45,8 +46,9 @@ interface DownloadResult {
 
 /**
  * Single-request download via http/https.request(). Returns status, headers, body.
- * https: uses request-filtering-agent for SSRF protection (blocks private IPs at connect).
- * http: skips the agent (intended for local dev servers).
+ * https: always uses request-filtering-agent for SSRF protection.
+ * http: skips SSRF filtering by default (allows localhost, private IPs for dev servers).
+ * Set TILER_DENY_HTTP_PRIVATE=1 to opt-in to blocking private IPs on http:.
  */
 function downloadWithAgent(url: string, timeoutMs: number): Promise<DownloadResult> {
   return new Promise((resolve, reject) => {
@@ -60,7 +62,8 @@ function downloadWithAgent(url: string, timeoutMs: number): Promise<DownloadResu
 
     const parsed = new URL(url);
     const isHttps = parsed.protocol === "https:";
-    const agent = isHttps ? useAgent(url) : undefined;
+    const httpPrivateDenied = process.env[DENY_HTTP_PRIVATE_ENV_VAR] === "1";
+    const agent = (isHttps || httpPrivateDenied) ? useAgent(url) : undefined;
     const requestFn = isHttps ? https.request : http.request;
 
     const req = requestFn(url, { agent }, (res) => {

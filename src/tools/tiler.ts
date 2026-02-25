@@ -227,7 +227,7 @@ async function handleGetTiles(
     try {
       const raw = await fs.readFile(path.join(tilesDir, "tiles-manifest.json"), "utf8");
       tilesManifest = JSON.parse(raw) as TilesManifest;
-    } catch { /* no manifest — geometry-agnostic classification */ }
+    } catch { /* no manifest */ }
     const manifestMap = tilesManifest
       ? new Map(tilesManifest.tiles.map((t) => [t.index, t]))
       : null;
@@ -247,7 +247,9 @@ async function handleGetTiles(
       for (const m of metadata) {
         metaMap.set(start + m.index, m);
       }
-    } catch { /* analysis failed — skip annotations */ }
+    } catch (err) {
+      console.error("[tiler] Tile analysis failed, skipping annotations:", err instanceof Error ? err.message : err);
+    }
 
     let skippedCount = 0;
     for (let i = start; i <= effectiveEnd; i++) {
@@ -431,7 +433,7 @@ async function handleTileImage(
       const phase1 = buildPhase1Response(analysis);
       const prependWarnings = [...deprecationWarnings, ...(sourceWarning ? [sourceWarning] : [])];
       if (prependWarnings.length > 0) {
-        phase1.content[0].text = prependWarnings.map(w => `⚠ ${w}`).join("\n") + "\n\n" + phase1.content[0].text;
+        phase1.content.unshift({ type: "text" as const, text: prependWarnings.map(w => `Warning: ${w}`).join("\n") });
       }
       response = phase1;
       return response;
@@ -454,9 +456,91 @@ async function handleTileImage(
   } finally {
     const cleanupWarning = await source?.cleanup?.();
     if (cleanupWarning && response && !response.isError) {
-      response.content.push({ type: "text" as const, text: `\n⚠ ${cleanupWarning}` });
+      response.content.push({ type: "text" as const, text: `\nWarning: ${cleanupWarning}` });
     }
   }
+}
+
+// ─── Capture Helpers ──────────────────────────────────────────────────────
+
+interface CaptureSnapshot {
+  screenshotPath: string;
+  captureWidth: number;
+  captureHeight: number;
+  segmentsStitched?: number;
+  capturedUrl?: string;
+  actualViewportWidth?: number;
+  actualDeviceScaleFactor?: number;
+}
+
+/** Captures a URL and saves the screenshot as PNG. Shared by all capture branches. */
+async function performCapture(
+  url: string,
+  outputDir: string,
+  options: {
+    viewportWidth?: number;
+    waitUntil: "load" | "networkidle" | "domcontentloaded";
+    delay: number;
+    mobile?: boolean;
+    deviceScaleFactor?: number;
+    userAgent?: string;
+  },
+): Promise<CaptureSnapshot> {
+  const captureResult = await captureUrl({
+    url,
+    viewportWidth: options.viewportWidth,
+    waitUntil: options.waitUntil,
+    delay: options.delay,
+    mobile: options.mobile,
+    deviceScaleFactor: options.deviceScaleFactor,
+    userAgent: options.userAgent,
+  });
+
+  const baseName = sanitizeHostname(url);
+  const screenshotPath = path.join(outputDir, `${baseName}.png`);
+  await sharp(captureResult.buffer).png({ compressionLevel: PNG_COMPRESSION_LEVEL }).toFile(screenshotPath);
+
+  return {
+    screenshotPath,
+    captureWidth: captureResult.pageWidth,
+    captureHeight: captureResult.pageHeight,
+    segmentsStitched: captureResult.segmentsStitched,
+    capturedUrl: captureResult.url,
+    actualViewportWidth: captureResult.viewportWidth,
+    actualDeviceScaleFactor: captureResult.deviceScaleFactor,
+  };
+}
+
+/** Builds the captureInfo metadata object for Phase 2 responses. */
+function buildCaptureInfo(
+  snapshot: CaptureSnapshot,
+  params: {
+    viewportWidth?: number;
+    mobile?: boolean;
+    deviceScaleFactor?: number;
+    waitUntil: "load" | "networkidle" | "domcontentloaded";
+  },
+) {
+  return {
+    url: snapshot.capturedUrl,
+    pageWidth: snapshot.captureWidth,
+    pageHeight: snapshot.captureHeight,
+    segmentsStitched: snapshot.segmentsStitched ?? null,
+    viewportWidth: snapshot.actualViewportWidth ?? params.viewportWidth ?? (params.mobile ? CAPTURE_MOBILE_VIEWPORT_WIDTH : CAPTURE_DEFAULT_VIEWPORT_WIDTH),
+    deviceScaleFactor: snapshot.actualDeviceScaleFactor ?? params.deviceScaleFactor ?? (params.mobile ? 2 : 1),
+    mobile: params.mobile ?? false,
+    waitUntil: params.waitUntil,
+  };
+}
+
+/** Builds the capture description text block prepended to Phase 2 responses. */
+function buildCaptureLine(snapshot: CaptureSnapshot): { type: "text"; text: string } {
+  const urlSuffix = snapshot.capturedUrl ? ` of ${snapshot.capturedUrl}` : "";
+  const stitchSuffix = snapshot.segmentsStitched ? `\n  Scroll-stitched ${snapshot.segmentsStitched} segments` : "";
+  return {
+    type: "text" as const,
+    text: `Captured ${snapshot.captureWidth}x${snapshot.captureHeight} screenshot${urlSuffix}${stitchSuffix}`,
+  };
 }
 
 // ─── Capture and Tile Handler ──────────────────────────────────────────────
@@ -492,18 +576,13 @@ async function handleCaptureAndTile(
   } = params;
 
   const resolvedOutputDir = await resolveOutputDirForCapture(outputDir);
+  const captureOpts = { viewportWidth, waitUntil, delay, mobile, deviceScaleFactor, userAgent };
 
   try {
     await fs.mkdir(resolvedOutputDir, { recursive: true });
 
     // 1. Capture or reuse screenshot
-    let screenshotPath: string;
-    let captureWidth: number;
-    let captureHeight: number;
-    let segmentsStitched: number | undefined;
-    let capturedUrl = url;
-    let actualViewportWidth: number | undefined;
-    let actualDeviceScaleFactor: number | undefined;
+    let snapshot: CaptureSnapshot;
 
     if (existingScreenshotPath) {
       await assertSafePath(existingScreenshotPath, "screenshotPath", true);
@@ -518,7 +597,6 @@ async function handleCaptureAndTile(
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
         if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
-        // file doesn't exist -- fileExists stays false
       }
 
       if (fileExists) {
@@ -527,75 +605,35 @@ async function handleCaptureAndTile(
           if (!meta.width || !meta.height) {
             throw new Error(`invalid dimensions (${meta.width ?? 0}x${meta.height ?? 0})`);
           }
-          screenshotPath = existingScreenshotPath;
-          captureWidth = meta.width;
-          captureHeight = meta.height;
+          snapshot = {
+            screenshotPath: existingScreenshotPath,
+            captureWidth: meta.width,
+            captureHeight: meta.height,
+          };
         } catch (metaError) {
-          // File exists but can't be read by Sharp (corrupt/truncated/wrong format)
           if (!url) {
             throw new Error(
               `Screenshot at ${existingScreenshotPath} exists but could not be read: ${metaError instanceof Error ? metaError.message : String(metaError)}`
             );
           }
-          // Recapture from URL
-          const captureResult = await captureUrl({ url, viewportWidth, waitUntil, delay, mobile, deviceScaleFactor, userAgent });
-          captureWidth = captureResult.pageWidth;
-          captureHeight = captureResult.pageHeight;
-          segmentsStitched = captureResult.segmentsStitched;
-          capturedUrl = captureResult.url;
-          actualViewportWidth = captureResult.viewportWidth;
-          actualDeviceScaleFactor = captureResult.deviceScaleFactor;
-
-          const baseName = sanitizeHostname(url);
-          screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
-          await sharp(captureResult.buffer).png({ compressionLevel: PNG_COMPRESSION_LEVEL }).toFile(screenshotPath);
+          snapshot = await performCapture(url, resolvedOutputDir, captureOpts);
         }
       } else {
-        // File doesn't exist — need URL for recapture
         if (!url) {
           throw new Error(`Screenshot not found at ${existingScreenshotPath} and no url provided for recapture.`);
         }
-        const captureResult = await captureUrl({ url, viewportWidth, waitUntil, delay, mobile, deviceScaleFactor, userAgent });
-        captureWidth = captureResult.pageWidth;
-        captureHeight = captureResult.pageHeight;
-        segmentsStitched = captureResult.segmentsStitched;
-        capturedUrl = captureResult.url;
-        actualViewportWidth = captureResult.viewportWidth;
-        actualDeviceScaleFactor = captureResult.deviceScaleFactor;
-
-        const baseName = sanitizeHostname(url);
-        screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
-        await sharp(captureResult.buffer).png({ compressionLevel: PNG_COMPRESSION_LEVEL }).toFile(screenshotPath);
+        snapshot = await performCapture(url, resolvedOutputDir, captureOpts);
       }
     } else {
-      // No existingScreenshotPath — mode detection guarantees url is defined
-      const captureResult = await captureUrl({ url: url!, viewportWidth, waitUntil, delay, mobile, deviceScaleFactor, userAgent });
-      captureWidth = captureResult.pageWidth;
-      captureHeight = captureResult.pageHeight;
-      segmentsStitched = captureResult.segmentsStitched;
-      capturedUrl = captureResult.url;
-      actualViewportWidth = captureResult.viewportWidth;
-      actualDeviceScaleFactor = captureResult.deviceScaleFactor;
-
-      const baseName = sanitizeHostname(url!);
-      screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
-      await sharp(captureResult.buffer).png({ compressionLevel: PNG_COMPRESSION_LEVEL }).toFile(screenshotPath);
+      snapshot = await performCapture(url!, resolvedOutputDir, captureOpts);
     }
+
+    const { screenshotPath } = snapshot;
+    const captureInfo = buildCaptureInfo(snapshot, { viewportWidth, mobile, deviceScaleFactor, waitUntil });
 
     // 2. Preview gate: if preview exists for THIS screenshot, skip straight to Phase 2
     const existingPreview = await checkPreviewGate(resolvedOutputDir, screenshotPath);
     if (existingPreview) {
-      const captureInfo = {
-        url: capturedUrl,
-        pageWidth: captureWidth,
-        pageHeight: captureHeight,
-        segmentsStitched: segmentsStitched ?? null,
-        viewportWidth: actualViewportWidth ?? viewportWidth ?? (mobile ? CAPTURE_MOBILE_VIEWPORT_WIDTH : CAPTURE_DEFAULT_VIEWPORT_WIDTH),
-        deviceScaleFactor: actualDeviceScaleFactor ?? deviceScaleFactor ?? (mobile ? 2 : 1),
-        mobile: mobile ?? false,
-        waitUntil,
-      };
-
       let finalModel = explicitModel;
       let autoSelected = false;
       if (!finalModel) {
@@ -604,16 +642,13 @@ async function handleCaptureAndTile(
         const elicitResult = await tryElicitation(server, { ...elicitData, model: cheapest });
 
         if (elicitResult.status === "cancelled") {
-          return {
-            content: [{ type: "text" as const, text: "Tiling cancelled by user." }],
-          };
+          return { content: [{ type: "text" as const, text: "Tiling cancelled by user." }] };
         }
 
         finalModel = elicitResult.status === "selected" ? elicitResult.model : cheapest;
         autoSelected = elicitResult.status === "unsupported";
       }
 
-      // finalModel is guaranteed set: either explicitModel was truthy, or we assigned in the block above (or returned on cancel)
       const tilingModel = finalModel!;
       const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
         model: tilingModel, tileSize, maxDimension, format, includeMetadata,
@@ -621,28 +656,15 @@ async function handleCaptureAndTile(
       warnings.push(...deprecationWarnings);
 
       const phase2 = await buildPhase2Response(result, { model: tilingModel, includeMetadata, warnings, maxDimension, captureInfo, autoSelected, sourcePath: screenshotPath });
-      const urlSuffix = capturedUrl ? ` of ${capturedUrl}` : "";
-      const captureLine = `Captured ${captureWidth}x${captureHeight} screenshot${urlSuffix}${segmentsStitched ? `\n  Scroll-stitched ${segmentsStitched} segments` : ""}\n`;
-      phase2.content[0].text = captureLine + phase2.content[0].text;
-
+      phase2.content.unshift(buildCaptureLine(snapshot));
       return phase2;
     }
 
-    // One-shot: user provided model + outputDir upfront — generate preview then tile immediately
+    // One-shot: user provided model + outputDir upfront
     if (explicitModel && outputDir) {
       await analyzeAndPreview(screenshotPath, resolvedOutputDir, {
         model: explicitModel, maxDimension, tileSize,
       });
-      const captureInfo = {
-        url: capturedUrl,
-        pageWidth: captureWidth,
-        pageHeight: captureHeight,
-        segmentsStitched: segmentsStitched ?? null,
-        viewportWidth: actualViewportWidth ?? viewportWidth ?? (mobile ? CAPTURE_MOBILE_VIEWPORT_WIDTH : CAPTURE_DEFAULT_VIEWPORT_WIDTH),
-        deviceScaleFactor: actualDeviceScaleFactor ?? deviceScaleFactor ?? (mobile ? 2 : 1),
-        mobile: mobile ?? false,
-        waitUntil,
-      };
       const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
         model: explicitModel, tileSize, maxDimension, format, includeMetadata,
       });
@@ -650,9 +672,7 @@ async function handleCaptureAndTile(
       const phase2 = await buildPhase2Response(result, {
         model: explicitModel, includeMetadata, warnings, maxDimension, captureInfo, sourcePath: screenshotPath,
       });
-      const urlSuffix = capturedUrl ? ` of ${capturedUrl}` : "";
-      const captureLine = `Captured ${captureWidth}x${captureHeight} screenshot${urlSuffix}${segmentsStitched ? `\n  Scroll-stitched ${segmentsStitched} segments` : ""}\n`;
-      phase2.content[0].text = captureLine + phase2.content[0].text;
+      phase2.content.unshift(buildCaptureLine(snapshot));
       return phase2;
     }
 
@@ -662,7 +682,6 @@ async function handleCaptureAndTile(
     });
     const cheapest = findCheapestModel(analysis.allModels);
 
-    // Try elicitation fast path
     const elicitResult = await tryElicitation(server, {
       width: analysis.sourceImage.width,
       height: analysis.sourceImage.height,
@@ -670,49 +689,31 @@ async function handleCaptureAndTile(
       allModels: analysis.allModels,
     });
 
-    // User explicitly cancelled — abort
     if (elicitResult.status === "cancelled") {
-      return {
-        content: [{ type: "text" as const, text: "Tiling cancelled by user." }],
-      };
+      return { content: [{ type: "text" as const, text: "Tiling cancelled by user." }] };
     }
 
     if (elicitResult.status !== "selected") {
-      // Phase 1: return comparison + screenshot path
       const phase1 = buildPhase1Response(analysis, { screenshotPath });
       if (deprecationWarnings.length > 0) {
-        phase1.content[0].text = deprecationWarnings.map(w => `⚠ ${w}`).join("\n") + "\n\n" + phase1.content[0].text;
+        phase1.content.unshift({ type: "text" as const, text: deprecationWarnings.map(w => `Warning: ${w}`).join("\n") });
       }
-      phase1.content[0].text += `\n\n(Screenshot: ${captureWidth}x${captureHeight}${url ? ` of ${url}` : ""}, saved to ${screenshotPath})`;
+      phase1.content.push({ type: "text" as const, text: `Screenshot: ${snapshot.captureWidth}x${snapshot.captureHeight}${url ? ` of ${url}` : ""}, saved to ${screenshotPath}` });
       return phase1;
     }
 
-    // 4. Elicitation returned a model — proceed to tile + read tiles
-    const captureInfo = {
-      url: capturedUrl,
-      pageWidth: captureWidth,
-      pageHeight: captureHeight,
-      segmentsStitched: segmentsStitched ?? null,
-      viewportWidth: actualViewportWidth ?? viewportWidth ?? (mobile ? CAPTURE_MOBILE_VIEWPORT_WIDTH : CAPTURE_DEFAULT_VIEWPORT_WIDTH),
-      deviceScaleFactor: actualDeviceScaleFactor ?? deviceScaleFactor ?? (mobile ? 2 : 1),
-      mobile: mobile ?? false,
-      waitUntil,
-    };
-
+    // 4. Elicitation returned a model
     const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
       model: elicitResult.model, tileSize, maxDimension, format, includeMetadata,
     });
     warnings.push(...deprecationWarnings);
 
     const phase2 = await buildPhase2Response(result, { model: elicitResult.model, includeMetadata, warnings, maxDimension, captureInfo, sourcePath: screenshotPath });
-
-    const captureLine = `Captured ${captureWidth}x${captureHeight} screenshot${url ? ` of ${url}` : ""}${segmentsStitched ? `\n  Scroll-stitched ${segmentsStitched} segments` : ""}\n`;
-    phase2.content[0].text = captureLine + phase2.content[0].text;
-
+    phase2.content.unshift(buildCaptureLine(snapshot));
     return phase2;
   } catch (error) {
-    // Clean up empty output directory created before capture
-    try { await fs.rmdir(resolvedOutputDir); } catch { /* not empty or already gone */ }
+    // Clean up output directory on failure (rm recursive handles non-empty dirs)
+    try { await fs.rm(resolvedOutputDir, { recursive: true, force: true }); } catch { /* already gone */ }
 
     const message = error instanceof Error ? error.message : String(error);
     return { isError: true, content: [{ type: "text" as const, text: `Error capturing and tiling URL: ${message}` }] };

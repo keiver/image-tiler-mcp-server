@@ -62,28 +62,30 @@ export function registerResources(server: McpServer): void {
         {
           uri: uri.href,
           mimeType: "text/plain",
-          text: `Image Tiler MCP Server - Quick Reference
+          text: `Image Tiler MCP Server -- Quick Reference
 
 WHY TILE:
-LLM vision systems downscale large images automatically. A 3600x22000px screenshot
-sent whole to Claude becomes ~257x1568px and all fine text is unreadable. Tiling
-splits the image into chunks that stay within each model's resolution sweet spot.
+LLM vision systems downscale large images. A 3600x22000px screenshot sent whole
+to Claude becomes ~257x1568px, losing all fine text. Tiling splits the image into
+chunks that stay within each model's resolution sweet spot.
 
 WORKFLOW (minimum three tool calls):
 1. tiler(filePath=...) -- Phase 1: returns model comparison table and outputDir.
-2. tiler(preset=..., outputDir=...) -- Phase 2: tiles the image, returns batch 0.
-3. tiler(tilesDir=..., start=5, end=9) -- Get-tiles: retrieve subsequent batches.
+2. tiler(filePath=..., preset=..., outputDir=...) -- Phase 2: tiles the image, returns metadata summary.
+   Re-include the original image source. For captures, use screenshotPath instead of url.
+3. tiler(tilesDir=..., start=0, end=4) -- Get-tiles: retrieve tile images in batches of 5.
+   Increment start/end by 5 to paginate through remaining tiles.
 
 PRESETS:
 ${PRESET_LINES}
 
 TIPS:
-- Process ALL tiles before drawing conclusions about the full image.
-- Tile row/col coordinates show spatial position in the original image.
-- Use includeMetadata:true to identify and skip blank or low-detail tiles.
-- URL capture requires Chrome/Chromium; set CHROME_PATH to override detection.
+- Review ALL tiles before drawing conclusions about the full image.
+- Tile row/col coordinates map to spatial position in the original.
+- includeMetadata is on by default; blank tiles are auto-skipped in get-tiles mode.
+- URL capture requires Chrome/Chromium. Set CHROME_PATH to override detection.
 - Pages taller than 16,384px are scroll-stitched automatically.
-- maxDimension (default 10000px) downscales extremely large inputs before tiling.`,
+- maxDimension (default 10000px) downscales very large inputs before tiling.`,
         },
       ],
     })

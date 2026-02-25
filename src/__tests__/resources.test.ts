@@ -46,7 +46,6 @@ describe("registerResources", () => {
   describe("model-configs resource", () => {
     it("has URI tiler://models and mimeType application/json", () => {
       const r = mock.getResource("model-configs");
-      expect(r).toBeDefined();
       expect(r!.uri).toBe("tiler://models");
       expect((r!.config as any).mimeType).toBe("application/json");
     });
@@ -78,7 +77,6 @@ describe("registerResources", () => {
   describe("usage-guide resource", () => {
     it("has URI tiler://guide and mimeType text/plain", () => {
       const r = mock.getResource("usage-guide");
-      expect(r).toBeDefined();
       expect(r!.uri).toBe("tiler://guide");
       expect((r!.config as any).mimeType).toBe("text/plain");
     });

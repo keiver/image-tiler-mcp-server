@@ -391,7 +391,7 @@ describe("buildPhase1Response", () => {
       allModels: sampleAllModels,
     };
     const response = buildPhase1Response(analysis);
-    expect(response.content[0].text).not.toContain("⚠");
+    expect(response.content[0].text).not.toContain("Warning:");
     const json = JSON.parse(response.content[1].text);
     expect(json.warnings).toBeUndefined();
   });
@@ -603,7 +603,7 @@ describe("buildPhase2Response", () => {
       warnings: ["Tile size clamped"],
       maxDimension: 10000,
     });
-    expect(response.content[0].text).toContain("⚠ Tile size clamped");
+    expect(response.content[0].text).toContain("Warning: Tile size clamped");
     const json = JSON.parse(response.content[1].text);
     expect(json.warnings).toContain("Tile size clamped");
   });

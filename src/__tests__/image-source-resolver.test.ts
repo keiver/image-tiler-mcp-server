@@ -344,13 +344,25 @@ describe("sourceUrl resolution", () => {
     expect(options.agent).toBe(fakeAgent);
   });
 
-  it("uses http.request for http: URLs (no SSRF agent)", async () => {
+  it("skips SSRF agent for http: URLs by default", async () => {
     setupRequestMock(mockHttpRequest);
     const result = await resolveImageSource({ sourceUrl: "http://localhost:3000/photo.png" });
     expect(result.sourceType).toBe("url");
     expect(mockHttpRequest).toHaveBeenCalled();
     expect(mockHttpsRequest).not.toHaveBeenCalled();
     expect(mockUseAgent).not.toHaveBeenCalled();
+  });
+
+  it("uses SSRF agent for http: URLs when TILER_DENY_HTTP_PRIVATE=1", async () => {
+    process.env.TILER_DENY_HTTP_PRIVATE = "1";
+    try {
+      setupRequestMock(mockHttpRequest);
+      await resolveImageSource({ sourceUrl: "http://localhost:3000/photo.png" });
+      expect(mockHttpRequest).toHaveBeenCalled();
+      expect(mockUseAgent).toHaveBeenCalledWith("http://localhost:3000/photo.png");
+    } finally {
+      delete process.env.TILER_DENY_HTTP_PRIVATE;
+    }
   });
 
   it("rejects unsupported protocols (ftp, etc.)", async () => {

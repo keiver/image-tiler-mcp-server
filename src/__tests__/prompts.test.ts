@@ -40,7 +40,6 @@ describe("registerPrompts", () => {
   describe("tile-and-analyze prompt", () => {
     it("has the expected name and title", () => {
       const p = mock.getPrompt("tile-and-analyze");
-      expect(p).toBeDefined();
       expect((p!.config as any).title).toBe("Tile and Analyze Image");
     });
 
@@ -85,7 +84,6 @@ describe("registerPrompts", () => {
   describe("capture-and-analyze prompt", () => {
     it("has the expected name and title", () => {
       const p = mock.getPrompt("capture-and-analyze");
-      expect(p).toBeDefined();
       expect((p!.config as any).title).toBe("Capture and Analyze Web Page");
     });
 

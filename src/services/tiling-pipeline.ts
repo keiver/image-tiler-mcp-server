@@ -238,7 +238,7 @@ export function buildPhase1Response(
     `After choosing a preset, use the summary and tile hints to fetch only the tiles you need.`
   );
   if (warnings && warnings.length > 0) {
-    parts.push(`\n\n⚠ ${warnings.join("\n⚠ ")}`);
+    parts.push(`\n\nWarning: ${warnings.join("\nWarning: ")}`);
   }
 
   const structured: Record<string, unknown> = {
@@ -429,7 +429,7 @@ export async function buildPhase2Response(
   }
 
   if (warnings.length > 0) {
-    summaryLines.push("", `⚠ ${warnings.join("\n⚠ ")}`);
+    summaryLines.push("", `Warning: ${warnings.join("\nWarning: ")}`);
   }
 
   // Structured output

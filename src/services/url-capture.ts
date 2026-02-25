@@ -95,6 +95,9 @@ export function findChromePath(): string {
 
 // ─── CDP Helpers ────────────────────────────────────────────────────
 
+// Per-capture command counter. Reset at the start of each captureUrl() call.
+// IDs only need to be unique within a single WebSocket session, and each capture
+// gets its own Chrome + WebSocket, so resetting per-call is safe.
 let cdpCommandId = 0;
 
 interface CdpResponse {
@@ -116,24 +119,31 @@ interface CdpEvent {
  * @param timers   - Timers to clear on settlement
  * @param label    - Human-readable context for error messages
  * @param reject   - The promise's reject function
- * @returns { settle, addListener } — settle guards against double-settlement,
+ * @param signal   - Optional AbortSignal; if provided, an abort listener is registered
+ *                   and cleaned up on settlement (preventing listener leaks).
+ * @returns { settle, addListener } -- settle guards against double-settlement,
  *   addListener registers a WS listener that will be removed on cleanup.
  */
 function createWsSettler(
   ws: WebSocket,
   timers: Array<ReturnType<typeof setTimeout>>,
   label: string,
-  reject: (reason: Error) => void
+  reject: (reason: Error) => void,
+  signal?: AbortSignal,
 ): {
   settle: (fn: () => void) => void;
   addListener: <E extends string>(event: E, handler: (...args: unknown[]) => void) => void;
 } {
   let settled = false;
   const listeners: Array<{ event: string; handler: (...args: unknown[]) => void }> = [];
+  let abortHandler: (() => void) | undefined;
 
   function cleanup(): void {
     for (const t of timers) clearTimeout(t);
     for (const { event, handler } of listeners) ws.removeListener(event, handler);
+    if (signal && abortHandler) {
+      signal.removeEventListener("abort", abortHandler);
+    }
   }
 
   function settle(fn: () => void): void {
@@ -146,6 +156,12 @@ function createWsSettler(
   function addListener<E extends string>(event: E, handler: (...args: unknown[]) => void): void {
     listeners.push({ event, handler });
     ws.on(event, handler);
+  }
+
+  // Wire abort signal for overall timeout enforcement (cleaned up on settlement)
+  if (signal) {
+    abortHandler = () => settle(() => reject(new Error("Capture timed out")));
+    signal.addEventListener("abort", abortHandler, { once: true });
   }
 
   // Register close/error handlers that every WS promise needs
@@ -180,14 +196,8 @@ function sendCdpCommand(
     }, timeout);
 
     const { settle, addListener } = createWsSettler(
-      ws, [timer], `awaiting CDP command '${method}'`, reject
+      ws, [timer], `awaiting CDP command '${method}'`, reject, signal
     );
-
-    // Wire abort signal for overall timeout enforcement
-    if (signal) {
-      const onAbort = () => settle(() => reject(new Error("Capture timed out")));
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
 
     addListener("message", (data: unknown) => {
       let msg: CdpResponse;
@@ -236,13 +246,8 @@ function waitForCdpEvent(
     }, timeout);
 
     const { settle, addListener } = createWsSettler(
-      ws, [timer], `waiting for ${label}`, reject
+      ws, [timer], `waiting for ${label}`, reject, signal
     );
-
-    if (signal) {
-      const onAbort = () => settle(() => reject(new Error("Capture timed out")));
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
 
     addListener("message", (data: unknown) => {
       let msg: CdpEvent;
@@ -271,13 +276,8 @@ function waitForNetworkIdle(ws: WebSocket, timeout: number, signal?: AbortSignal
 
     const timers = [overallTimer];
     const { settle, addListener } = createWsSettler(
-      ws, timers, "waiting for network idle", reject
+      ws, timers, "waiting for network idle", reject, signal
     );
-
-    if (signal) {
-      const onAbort = () => settle(() => reject(new Error("Capture timed out")));
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
 
     function checkIdle(): void {
       if (idleTimer) clearTimeout(idleTimer);
@@ -491,6 +491,9 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
   const chromePath = findChromePath();
   let chrome: ChildProcess | null = null;
   let ws: WebSocket | null = null;
+
+  // Reset per-capture so IDs stay small and don't leak state across calls
+  cdpCommandId = 0;
 
   // Overall timeout — signal is wired into CDP commands and wait conditions
   const abortController = new AbortController();

@@ -64,6 +64,7 @@ vi.mock("node:fs/promises", () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   stat: vi.fn().mockResolvedValue({ isFile: () => true }),
   rmdir: vi.fn().mockResolvedValue(undefined),
+  rm: vi.fn().mockResolvedValue(undefined),
   readFile: vi.fn().mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" })),
 }));
 
@@ -1025,9 +1026,10 @@ describe("registerTilerTool", () => {
       const res = result as any;
       // ACTION REQUIRED leads (not buried under capture info)
       expect(res.content[0].text).toMatch(/^ACTION REQUIRED/);
-      // Capture info appended at end
-      expect(res.content[0].text).toContain("(Screenshot: 1280x800");
-      expect(res.content[0].text).toContain("example.com");
+      // Capture info appended as separate content block at end
+      const lastBlock = res.content[res.content.length - 1];
+      expect(lastBlock.text).toContain("Screenshot: 1280x800");
+      expect(lastBlock.text).toContain("example.com");
       expect(mockedBuildPhase1Response).toHaveBeenCalledWith(
         sampleAnalysis,
         expect.objectContaining({ screenshotPath: expect.any(String) })
@@ -1384,9 +1386,9 @@ describe("registerTilerTool", () => {
   // ─── Bug #4: Empty directory cleanup on failure ─────────────────────────────
 
   describe("capture failure cleanup", () => {
-    it("attempts to remove empty output directory on capture failure", async () => {
+    it("attempts to remove output directory on capture failure", async () => {
       mockedCaptureUrl.mockRejectedValue(new Error("Chrome not found"));
-      const mockedRmdir = vi.mocked(fsPromises.rmdir);
+      const mockedRm = vi.mocked(fsPromises.rm);
 
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
@@ -1395,13 +1397,13 @@ describe("registerTilerTool", () => {
       );
       const res = result as any;
       expect(res.isError).toBe(true);
-      expect(mockedRmdir).toHaveBeenCalledWith("/output/tiles");
+      expect(mockedRm).toHaveBeenCalledWith("/output/tiles", { recursive: true, force: true });
     });
 
-    it("does not crash when rmdir fails (non-empty dir)", async () => {
+    it("does not crash when rm fails", async () => {
       mockedCaptureUrl.mockRejectedValue(new Error("Chrome not found"));
-      const mockedRmdir = vi.mocked(fsPromises.rmdir);
-      mockedRmdir.mockRejectedValue(new Error("ENOTEMPTY"));
+      const mockedRm = vi.mocked(fsPromises.rm);
+      mockedRm.mockRejectedValue(new Error("EPERM"));
 
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
