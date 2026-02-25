@@ -11,8 +11,9 @@ export function getAllowedDirs(): string[] | null {
   if (!raw || raw.trim() === "") return null;
   const dirs = raw
     .split(",")
-    .map((d) => path.resolve(d.trim()))
-    .filter((d) => d.length > 0);
+    .map((d) => d.trim())
+    .filter((d) => d.length > 0)
+    .map((d) => path.resolve(d));
   return dirs.length > 0 ? dirs : null;
 }
 

@@ -712,8 +712,10 @@ async function handleCaptureAndTile(
     phase2.content.unshift(buildCaptureLine(snapshot));
     return phase2;
   } catch (error) {
-    // Clean up output directory on failure (rm recursive handles non-empty dirs)
-    try { await fs.rm(resolvedOutputDir, { recursive: true, force: true }); } catch { /* already gone */ }
+    // Only clean up auto-generated output directories; never delete a user-provided outputDir
+    if (!outputDir) {
+      try { await fs.rm(resolvedOutputDir, { recursive: true, force: true }); } catch { /* already gone */ }
+    }
 
     const message = error instanceof Error ? error.message : String(error);
     return { isError: true, content: [{ type: "text" as const, text: `Error capturing and tiling URL: ${message}` }] };

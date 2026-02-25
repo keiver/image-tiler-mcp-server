@@ -48,6 +48,12 @@ describe("getAllowedDirs()", () => {
     process.env[ALLOWED_DIRS_ENV_VAR] = " /a , /b ";
     expect(getAllowedDirs()).toEqual(["/a", "/b"]);
   });
+
+  it("ignores empty elements from consecutive or trailing commas", () => {
+    process.env[ALLOWED_DIRS_ENV_VAR] = "/a,,/b,";
+    const result = getAllowedDirs();
+    expect(result).toEqual(["/a", "/b"]);
+  });
 });
 
 describe("isUrlCaptureDisabled()", () => {

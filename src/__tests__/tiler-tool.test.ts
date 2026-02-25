@@ -1386,7 +1386,7 @@ describe("registerTilerTool", () => {
   // ─── Bug #4: Empty directory cleanup on failure ─────────────────────────────
 
   describe("capture failure cleanup", () => {
-    it("attempts to remove output directory on capture failure", async () => {
+    it("removes auto-generated output directory on capture failure", async () => {
       mockedCaptureUrl.mockRejectedValue(new Error("Chrome not found"));
       const mockedRm = vi.mocked(fsPromises.rm);
 
@@ -1398,6 +1398,21 @@ describe("registerTilerTool", () => {
       const res = result as any;
       expect(res.isError).toBe(true);
       expect(mockedRm).toHaveBeenCalledWith("/output/tiles", { recursive: true, force: true });
+    });
+
+    it("does not remove user-provided outputDir on capture failure", async () => {
+      mockedCaptureUrl.mockRejectedValue(new Error("Chrome not found"));
+      const mockedRm = vi.mocked(fsPromises.rm);
+      mockedRm.mockClear();
+
+      const tool = mock.getTool("tiler")!;
+      const result = await tool.handler(
+        { url: "https://example.com", page: 0, format: "webp", outputDir: "/my/data" },
+        {} as any
+      );
+      const res = result as any;
+      expect(res.isError).toBe(true);
+      expect(mockedRm).not.toHaveBeenCalled();
     });
 
     it("does not crash when rm fails", async () => {
