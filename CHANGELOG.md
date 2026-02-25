@@ -1,12 +1,38 @@
 # Changelog
 
+## [3.0.0]
+
+### Added
+- **Path containment** via `TILER_ALLOWED_DIRS`: `assertSafePath()` enforces directory allowlist using `fs.realpath()` on reads and nearest-existing-ancestor walk on writes
+- **URL capture kill switch** via `TILER_DISABLE_URL_CAPTURE=1`: disables all Chrome-based URL capture
+- **MCP prompts**: `tile-and-analyze` (guided local image tiling) and `capture-and-analyze` (guided web capture + tiling)
+- **MCP resources**: `tiler://models` (JSON model configs) and `tiler://guide` (plain-text quick-reference)
+- **Mobile emulation**: `mobile` flag with smart defaults (viewport 390px, DPR 2, mobile user agent), `deviceScaleFactor` and `userAgent` params
+- **DPR-aware scroll stitching**: captures at device pixel ratio for retina-quality screenshots
+- `src/security.ts` module with `assertSafePath()` and `isUrlCaptureDisabled()`
+- `src/prompts/index.ts` and `src/resources/index.ts` modules
+
+### Changed
+- `image-source-resolver` rewritten: replaces `fetch()` with `http.request()` + `request-filtering-agent` for SSRF-safe URL downloads, manual redirect following with hop limit
+- `assertSafePath()` wired into all tiler tool file path inputs (`filePath`, `tilesDir`, `outputDir`, `screenshotPath`)
+- `resolveOutputDir()` and `resolveOutputDirForCapture()` now async (path containment checks)
+- Warning prefixes changed from emoji to `Warning:` text
+- CLAUDE.md architecture section rewritten, em-dashes replaced with colons
+- README rewritten with security section, updated install/usage docs
+
+### Security
+- **SSRF filtering** via `request-filtering-agent` on all `https:` image downloads, applied per-hop on redirects
+- **HTTPS-to-HTTP downgrade blocked** on redirect chains
+- **`TILER_DENY_HTTP_PRIVATE`** opt-in: blocks private/loopback IPs on `http:` URLs (default allows for local dev)
+- **Max redirect hops** enforced (5) to prevent infinite redirect loops
+
 ## [2.1.0]
 
 ### Added
-- **`preset` parameter** — replaces `model` as the external-facing param for selecting a vision model; deprecated `model` still accepted with warning
-- **Entropy-based tile classification** — content analysis uses Shannon entropy (0-8 range) instead of stdDev for low-detail/mixed/high-detail classification; blank detection (stdDev < 5) unchanged
-- **Entropy + sharpness in tile metadata** — `entropy` and `sharpness` fields exposed in tile metadata, get-tiles annotations, and structured JSON output
-- **Blank-tile skipping** — get-tiles mode skips blank tiles by default (`skipBlankTiles: false` to opt out)
+- **`preset` parameter**: replaces `model` as the external-facing param for selecting a vision model; deprecated `model` still accepted with warning
+- **Entropy-based tile classification**: content analysis uses Shannon entropy (0-8 range) instead of stdDev for low-detail/mixed/high-detail classification; blank detection (stdDev < 5) unchanged
+- **Entropy + sharpness in tile metadata**: `entropy` and `sharpness` fields exposed in tile metadata, get-tiles annotations, and structured JSON output
+- **Blank-tile skipping**: get-tiles mode skips blank tiles by default (`skipBlankTiles: false` to opt out)
 - npm keywords for discoverability
 
 ### Changed
@@ -18,7 +44,7 @@
 - Get-tiles annotations now show `(mixed, entropy=5.8, sharpness=12.3)` format
 
 ### Migration
-- **Tiles are now fetched on demand** — Processing an image returns a metadata summary; tile images are retrieved separately using `tilesDir` + `start`/`end`. This reduces token usage by letting you skip blank or low-detail tiles. Update any workflows that previously expected images in the processing response.
+- **Tiles are now fetched on demand**: Processing an image returns a metadata summary; tile images are retrieved separately using `tilesDir` + `start`/`end`. This reduces token usage by letting you skip blank or low-detail tiles. Update any workflows that previously expected images in the processing response.
 
 ### Fixed
 - Chrome zero-dimension fallback catches negative values (not just zero)
@@ -33,18 +59,18 @@
 ## [2.0.0]
 
 ### Breaking
-- **Consolidated 3 MCP tools into 1 unified `tiler` tool** — `tiler_tile_image`, `tiler_get_tiles`, and `tiler_capture_and_tile` are removed. Mode is auto-detected from parameters: `tilesDir` for pagination, `url`/`screenshotPath` for capture, image source fields for tiling
+- **Consolidated 3 MCP tools into 1 unified `tiler` tool**: `tiler_tile_image`, `tiler_get_tiles`, and `tiler_capture_and_tile` are removed. Mode is auto-detected from parameters: `tilesDir` for pagination, `url`/`screenshotPath` for capture, image source fields for tiling
 - Unified `TilerInputSchema` replaces 3 separate schemas
 
 ### Added
-- **URL capture via Chrome DevTools Protocol** — full-page screenshots from `http:`/`https:` URLs with headless Chrome. `CHROME_PATH` env var overrides auto-detection. Pages taller than 16,384px are scroll-stitched automatically
-- **WebP default output** — tiles now output as WebP (quality 80) instead of PNG. `format` param (`"webp"` | `"png"`) to override
-- **Tile metadata analysis** — `includeMetadata: true` runs per-tile content classification (blank, low-detail, mixed, high-detail) via Sharp stats
-- **MCP elicitation support** — elicitation-capable clients get an interactive model picker; others fall through to the comparison table flow
-- **Two-phase confirmation workflow** — Phase 1 returns model comparison table with STOP instruction; Phase 2 performs tiling with user's chosen model
-- **Versioned output directories** — file-source tiling creates versioned output dirs to avoid overwriting previous runs
-- **`prebuild` script** — `rm -rf dist` before each build to prevent stale artifacts
-- **`pretest` script** — runs build before tests so CLI tests find `dist/index.js`
+- **URL capture via Chrome DevTools Protocol**: full-page screenshots from `http:`/`https:` URLs with headless Chrome. `CHROME_PATH` env var overrides auto-detection. Pages taller than 16,384px are scroll-stitched automatically
+- **WebP default output**: tiles now output as WebP (quality 80) instead of PNG. `format` param (`"webp"` | `"png"`) to override
+- **Tile metadata analysis**: `includeMetadata: true` runs per-tile content classification (blank, low-detail, mixed, high-detail) via Sharp stats
+- **MCP elicitation support**: elicitation-capable clients get an interactive model picker; others fall through to the comparison table flow
+- **Two-phase confirmation workflow**: Phase 1 returns model comparison table with STOP instruction; Phase 2 performs tiling with user's chosen model
+- **Versioned output directories**: file-source tiling creates versioned output dirs to avoid overwriting previous runs
+- **`prebuild` script**: `rm -rf dist` before each build to prevent stale artifacts
+- **`pretest` script**: runs build before tests so CLI tests find `dist/index.js`
 - `test:coverage` script for vitest coverage reporting
 - `types` field in package.json for explicit TypeScript declaration entry point
 - `screenshotPath` param to reuse an existing screenshot without re-capturing
@@ -85,20 +111,21 @@
 ## [1.5.0] - 2026-02-13
 
 ### Added
-- `tiler_recommend_settings` tool — dry-run estimator with cost estimates for all 4 models, heuristic recommendations (intent/budget hints), and interactive HTML preview with model-switching tabs
-- `tiler_prepare_image` tool — one-shot convenience combining tile + get-tiles in a single call with pagination
-- Multi-source image input — `sourceUrl`, `dataUrl`, `imageBase64` as alternatives to `filePath` for all image-accepting tools
+- `tiler_recommend_settings` tool: dry-run estimator with cost estimates for all 4 models, heuristic recommendations (intent/budget hints), and interactive HTML preview with model-switching tabs
+- `tiler_prepare_image` tool: one-shot convenience combining tile + get-tiles in a single call with pagination
+- Multi-source image input: `sourceUrl`, `dataUrl`, `imageBase64` as alternatives to `filePath` for all image-accepting tools
 - Heuristic engine for `tiler_recommend_settings`: `intent` (text_heavy, ui_screenshot, diagram, photo, general) and `budget` (low, default, max_detail) parameters
 - Interactive HTML preview generation with per-model tabs showing grid overlays
-- Remainder absorption in grid calculation — thin edge strips (<15% of tileSize) absorbed into the last tile to reduce tile count
+- Remainder absorption in grid calculation: thin edge strips (<15% of tileSize) absorbed into the last tile to reduce tile count
 - `escapeHtml()` utility for safe HTML output in preview generators
 - `MIN_REMAINDER_RATIO`, `IMAGE_INTENTS`, `BUDGET_LEVELS`, `MAX_DATA_URL_LENGTH` constants
 
 ### Security
 - Decoded buffer size validation after base64/data URL decode (defense-in-depth against oversized payloads)
-- Content-Type validation on URL downloads — rejects non-image responses (text/html, application/json, etc.)
-- Base64 input validation — reject invalid characters, handle whitespace-only strings
+- Content-Type validation on URL downloads: rejects non-image responses (text/html, application/json, etc.)
+- Base64 input validation: reject invalid characters, handle whitespace-only strings
 - Data URL length limit enforced in schema (`MAX_DATA_URL_LENGTH`)
+
 ### Fixed
 - URL downloads of non-image content (e.g. HTML error pages) now fail with a clear error instead of a cryptic Sharp decode error
 
@@ -110,8 +137,8 @@
 ## [1.3.0] - 2026-02-11
 
 ### Added
-- `maxDimension` parameter for `tiler_tile_image` — pre-downscales images so the longest side fits within the given pixel value before tiling, reducing tile count and token cost
-- Auto-downscaling enabled by default at 10,000px — images under 10K are unaffected; a 3600×22810 screenshot drops from 84 tiles / ~134K tokens to 20 tiles / ~32K tokens
+- `maxDimension` parameter for `tiler_tile_image`: pre-downscales images so the longest side fits within the given pixel value before tiling, reducing tile count and token cost
+- Auto-downscaling enabled by default at 10,000px: images under 10K are unaffected; a 3600x22810 screenshot drops from 84 tiles / ~134K tokens to 20 tiles / ~32K tokens
 - `maxDimension=0` disables auto-downscaling for full-resolution tiling
 - `resize` field in tool output metadata (present only when downscaling occurred) with original/resized dimensions and scale factor
 - `DEFAULT_MAX_DIMENSION` constant (10000)
@@ -123,7 +150,7 @@
 ## [1.2.0] - 2026-02-10
 
 ### Changed
-- Removed `cleanup` parameter — both tools are now purely idempotent
+- Removed `cleanup` parameter: both tools are now purely idempotent
 - `get-tiles` tool annotations: `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`
 
 ## [1.1.4] - 2026-02-10
@@ -156,7 +183,7 @@
 
 ### Added
 - Initial release
-- `tiler_tile_image` tool — splits images into optimally-sized tiles for LLM vision
-- `tiler_get_tiles` tool — serves tiles as base64 in paginated batches
+- `tiler_tile_image` tool: splits images into optimally-sized tiles for LLM vision
+- `tiler_get_tiles` tool: serves tiles as base64 in paginated batches
 - Support for PNG, JPEG, WebP, TIFF, GIF formats
 - Claude-optimized tiling (1092px default, 1590 tokens/tile)

@@ -26,6 +26,9 @@ import {
   BLANK_STDDEV_THRESHOLD,
   LOW_DETAIL_ENTROPY_THRESHOLD,
   HIGH_DETAIL_ENTROPY_THRESHOLD,
+  CAPTURE_MOBILE_VIEWPORT_WIDTH,
+  CAPTURE_MOBILE_DEVICE_SCALE_FACTOR,
+  DEFAULT_MOBILE_USER_AGENT,
 } from "../constants.js";
 
 
@@ -229,6 +232,22 @@ describe("constants", () => {
     });
   });
 
+  describe("mobile emulation constants", () => {
+    it("CAPTURE_MOBILE_VIEWPORT_WIDTH is 390", () => {
+      expect(CAPTURE_MOBILE_VIEWPORT_WIDTH).toBe(390);
+    });
+
+    it("CAPTURE_MOBILE_DEVICE_SCALE_FACTOR is 2", () => {
+      expect(CAPTURE_MOBILE_DEVICE_SCALE_FACTOR).toBe(2);
+    });
+
+    it("DEFAULT_MOBILE_USER_AGENT contains iPhone and Safari", () => {
+      expect(DEFAULT_MOBILE_USER_AGENT).toContain("iPhone");
+      expect(DEFAULT_MOBILE_USER_AGENT).toContain("Safari");
+      expect(DEFAULT_MOBILE_USER_AGENT).toContain("Mobile");
+    });
+  });
+
   describe("image source resolution constants", () => {
     it("MAX_DOWNLOAD_SIZE_BYTES is 50MB", () => {
       expect(MAX_DOWNLOAD_SIZE_BYTES).toBe(50 * 1024 * 1024);
@@ -238,8 +257,8 @@ describe("constants", () => {
       expect(DOWNLOAD_TIMEOUT_MS).toBe(30_000);
     });
 
-    it("ALLOWED_URL_PROTOCOLS only includes https:", () => {
-      expect(ALLOWED_URL_PROTOCOLS).toEqual(["https:"]);
+    it("ALLOWED_URL_PROTOCOLS includes https: and http:", () => {
+      expect(ALLOWED_URL_PROTOCOLS).toEqual(["https:", "http:"]);
     });
 
     it("MAX_BASE64_LENGTH is ~50MB decoded", () => {

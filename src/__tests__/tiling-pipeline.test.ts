@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { TileImageResult, ModelEstimate } from "../types.js";
 
+vi.mock("../security.js", () => ({
+  assertSafePath: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../services/image-processor.js", () => ({
   getImageMetadata: vi.fn(),
   computeEstimateForModel: vi.fn(),
@@ -41,6 +45,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 import * as fsPromises from "node:fs/promises";
+import { assertSafePath } from "../security.js";
 import { getImageMetadata, computeEstimateForModel, tileImage } from "../services/image-processor.js";
 import { generateInteractivePreview } from "../services/interactive-preview-generator.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
@@ -60,6 +65,7 @@ import {
   computeElicitationData,
 } from "../services/tiling-pipeline.js";
 
+const mockedAssertSafePath = vi.mocked(assertSafePath);
 const mockedGetMetadata = vi.mocked(getImageMetadata);
 const mockedComputeEstimate = vi.mocked(computeEstimateForModel);
 const mockedTileImage = vi.mocked(tileImage);
@@ -107,6 +113,7 @@ describe("resolveOutputDir", () => {
   it("returns explicit outputDir when provided", async () => {
     const dir = await resolveOutputDir("file", "/img.png", "/custom/dir");
     expect(dir).toBe("/custom/dir");
+    expect(mockedAssertSafePath).toHaveBeenCalledWith("/custom/dir", "outputDir", false);
   });
 
   it("returns versioned tiles subfolder for file sources", async () => {
@@ -114,23 +121,27 @@ describe("resolveOutputDir", () => {
     expect(dir).toContain("tiles");
     expect(dir).toContain("photo");
     expect(dir).toContain("_v1");
+    expect(mockedAssertSafePath).toHaveBeenCalledWith(expect.stringContaining("tiles"), "outputDir", false);
   });
 
   it("returns tiled_<timestamp> for non-file sources", async () => {
     const dir = await resolveOutputDir("url", "/tmp/from-url.png");
     expect(dir).toMatch(/tiled_\d+/);
+    expect(mockedAssertSafePath).toHaveBeenCalledWith(expect.stringMatching(/tiled_\d+/), "outputDir", false);
   });
 });
 
 describe("resolveOutputDirForCapture", () => {
-  it("returns explicit outputDir when provided", () => {
-    const dir = resolveOutputDirForCapture("/custom/dir");
+  it("returns explicit outputDir when provided", async () => {
+    const dir = await resolveOutputDirForCapture("/custom/dir");
     expect(dir).toBe("/custom/dir");
+    expect(mockedAssertSafePath).toHaveBeenCalledWith("/custom/dir", "outputDir", false);
   });
 
-  it("returns capture_<timestamp> when no outputDir given", () => {
-    const dir = resolveOutputDirForCapture();
+  it("returns capture_<timestamp> when no outputDir given", async () => {
+    const dir = await resolveOutputDirForCapture();
     expect(dir).toMatch(/capture_\d+/);
+    expect(mockedAssertSafePath).toHaveBeenCalledWith(expect.stringMatching(/capture_\d+/), "outputDir", false);
   });
 });
 
@@ -380,7 +391,7 @@ describe("buildPhase1Response", () => {
       allModels: sampleAllModels,
     };
     const response = buildPhase1Response(analysis);
-    expect(response.content[0].text).not.toContain("⚠");
+    expect(response.content[0].text).not.toContain("Warning:");
     const json = JSON.parse(response.content[1].text);
     expect(json.warnings).toBeUndefined();
   });
@@ -592,7 +603,7 @@ describe("buildPhase2Response", () => {
       warnings: ["Tile size clamped"],
       maxDimension: 10000,
     });
-    expect(response.content[0].text).toContain("⚠ Tile size clamped");
+    expect(response.content[0].text).toContain("Warning: Tile size clamped");
     const json = JSON.parse(response.content[1].text);
     expect(json.warnings).toContain("Tile size clamped");
   });

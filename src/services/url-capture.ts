@@ -4,6 +4,7 @@ import { setMaxListeners } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { isUrlCaptureDisabled } from "../security.js";
 import sharp from "sharp";
 import WebSocket from "ws";
 import {
@@ -22,6 +23,9 @@ import {
   LAZY_LOAD_SCROLL_PAUSE_MS,
   LAZY_LOAD_IMAGE_TIMEOUT_MS,
   LAZY_LOAD_TOTAL_TIMEOUT_MS,
+  CAPTURE_MOBILE_VIEWPORT_WIDTH,
+  CAPTURE_MOBILE_DEVICE_SCALE_FACTOR,
+  DEFAULT_MOBILE_USER_AGENT,
 } from "../constants.js";
 import { withTimeout } from "../utils.js";
 import type { CaptureUrlOptions, CaptureResult } from "../types.js";
@@ -91,6 +95,9 @@ export function findChromePath(): string {
 
 // ─── CDP Helpers ────────────────────────────────────────────────────
 
+// Per-capture command counter. Reset at the start of each captureUrl() call.
+// IDs only need to be unique within a single WebSocket session, and each capture
+// gets its own Chrome + WebSocket, so resetting per-call is safe.
 let cdpCommandId = 0;
 
 interface CdpResponse {
@@ -112,24 +119,31 @@ interface CdpEvent {
  * @param timers   - Timers to clear on settlement
  * @param label    - Human-readable context for error messages
  * @param reject   - The promise's reject function
- * @returns { settle, addListener } — settle guards against double-settlement,
+ * @param signal   - Optional AbortSignal; if provided, an abort listener is registered
+ *                   and cleaned up on settlement (preventing listener leaks).
+ * @returns { settle, addListener } -- settle guards against double-settlement,
  *   addListener registers a WS listener that will be removed on cleanup.
  */
 function createWsSettler(
   ws: WebSocket,
   timers: Array<ReturnType<typeof setTimeout>>,
   label: string,
-  reject: (reason: Error) => void
+  reject: (reason: Error) => void,
+  signal?: AbortSignal,
 ): {
   settle: (fn: () => void) => void;
   addListener: <E extends string>(event: E, handler: (...args: unknown[]) => void) => void;
 } {
   let settled = false;
   const listeners: Array<{ event: string; handler: (...args: unknown[]) => void }> = [];
+  let abortHandler: (() => void) | undefined;
 
   function cleanup(): void {
     for (const t of timers) clearTimeout(t);
     for (const { event, handler } of listeners) ws.removeListener(event, handler);
+    if (signal && abortHandler) {
+      signal.removeEventListener("abort", abortHandler);
+    }
   }
 
   function settle(fn: () => void): void {
@@ -142,6 +156,12 @@ function createWsSettler(
   function addListener<E extends string>(event: E, handler: (...args: unknown[]) => void): void {
     listeners.push({ event, handler });
     ws.on(event, handler);
+  }
+
+  // Wire abort signal for overall timeout enforcement (cleaned up on settlement)
+  if (signal) {
+    abortHandler = () => settle(() => reject(new Error("Capture timed out")));
+    signal.addEventListener("abort", abortHandler, { once: true });
   }
 
   // Register close/error handlers that every WS promise needs
@@ -176,14 +196,8 @@ function sendCdpCommand(
     }, timeout);
 
     const { settle, addListener } = createWsSettler(
-      ws, [timer], `awaiting CDP command '${method}'`, reject
+      ws, [timer], `awaiting CDP command '${method}'`, reject, signal
     );
-
-    // Wire abort signal for overall timeout enforcement
-    if (signal) {
-      const onAbort = () => settle(() => reject(new Error("Capture timed out")));
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
 
     addListener("message", (data: unknown) => {
       let msg: CdpResponse;
@@ -232,13 +246,8 @@ function waitForCdpEvent(
     }, timeout);
 
     const { settle, addListener } = createWsSettler(
-      ws, [timer], `waiting for ${label}`, reject
+      ws, [timer], `waiting for ${label}`, reject, signal
     );
-
-    if (signal) {
-      const onAbort = () => settle(() => reject(new Error("Capture timed out")));
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
 
     addListener("message", (data: unknown) => {
       let msg: CdpEvent;
@@ -267,13 +276,8 @@ function waitForNetworkIdle(ws: WebSocket, timeout: number, signal?: AbortSignal
 
     const timers = [overallTimer];
     const { settle, addListener } = createWsSettler(
-      ws, timers, "waiting for network idle", reject
+      ws, timers, "waiting for network idle", reject, signal
     );
-
-    if (signal) {
-      const onAbort = () => settle(() => reject(new Error("Capture timed out")));
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
 
     function checkIdle(): void {
       if (idleTimer) clearTimeout(idleTimer);
@@ -315,6 +319,7 @@ async function captureWithStitching(
   ws: WebSocket,
   width: number,
   fullHeight: number,
+  deviceScaleFactor: number,
   signal?: AbortSignal,
 ): Promise<{ buffer: Buffer; segments: number }> {
   const segmentHeight = CHROME_MAX_CAPTURE_HEIGHT;
@@ -338,7 +343,7 @@ async function captureWithStitching(
     // Wait for rendering to settle
     await new Promise((r) => setTimeout(r, CAPTURE_STITCH_SETTLE_MS));
 
-    // Capture with clip
+    // Capture with clip (scale by DPR so stitched output matches non-stitched path)
     const result = await sendCdpCommand(ws, "Page.captureScreenshot", {
       format: "png",
       clip: {
@@ -346,7 +351,7 @@ async function captureWithStitching(
         y: offset,
         width,
         height: captureHeight,
-        scale: 1,
+        scale: deviceScaleFactor,
       },
       captureBeyondViewport: true,
     }, 30_000, signal);
@@ -361,7 +366,7 @@ async function captureWithStitching(
     }
     segments.push({
       buffer: segmentBuffer,
-      top: offset,
+      top: offset * deviceScaleFactor,
     });
 
     offset += captureHeight;
@@ -377,8 +382,8 @@ async function captureWithStitching(
   const stitched = await withTimeout(
     sharp({
       create: {
-        width,
-        height: fullHeight,
+        width: width * deviceScaleFactor,
+        height: fullHeight * deviceScaleFactor,
         channels: 4 as const,
         background: { r: 255, g: 255, b: 255, alpha: 1 },
       },
@@ -441,13 +446,33 @@ async function triggerLazyLoading(ws: WebSocket, signal?: AbortSignal): Promise<
 // ─── Main Capture Function ──────────────────────────────────────────
 
 export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureResult> {
+  if (isUrlCaptureDisabled()) {
+    throw new Error(
+      "URL capture is disabled (TILER_DISABLE_URL_CAPTURE=1). " +
+      "Configure network-level Chrome isolation before enabling."
+    );
+  }
+
   const {
     url,
-    viewportWidth = CAPTURE_DEFAULT_VIEWPORT_WIDTH,
     waitUntil = "load",
     delay = 0,
     timeout = CAPTURE_DEFAULT_TIMEOUT_MS,
+    mobile = false,
+    userAgent,
   } = options;
+
+  // Apply mobile-aware defaults: when mobile is true and the caller
+  // didn't explicitly provide viewportWidth / deviceScaleFactor,
+  // use phone-sized values instead of desktop defaults.
+  const viewportWidth = options.viewportWidth
+    ?? (mobile ? CAPTURE_MOBILE_VIEWPORT_WIDTH : CAPTURE_DEFAULT_VIEWPORT_WIDTH);
+  const deviceScaleFactor = options.deviceScaleFactor
+    ?? (mobile ? CAPTURE_MOBILE_DEVICE_SCALE_FACTOR : 1);
+
+  // Apply mobile user agent default when mobile is true and no explicit UA
+  const effectiveUserAgent = userAgent
+    ?? (mobile ? DEFAULT_MOBILE_USER_AGENT : undefined);
 
   // URL validation
   let parsed: URL;
@@ -466,6 +491,9 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
   const chromePath = findChromePath();
   let chrome: ChildProcess | null = null;
   let ws: WebSocket | null = null;
+
+  // Reset per-capture so IDs stay small and don't leak state across calls
+  cdpCommandId = 0;
 
   // Overall timeout — signal is wired into CDP commands and wait conditions
   const abortController = new AbortController();
@@ -620,9 +648,16 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
     await sendCdpCommand(ws, "Emulation.setDeviceMetricsOverride", {
       width: viewportWidth,
       height: CAPTURE_DEFAULT_VIEWPORT_HEIGHT,
-      deviceScaleFactor: 1,
-      mobile: false,
+      deviceScaleFactor,
+      mobile,
     }, 30_000, signal);
+
+    // Set user agent override (explicit userAgent, or mobile default)
+    if (effectiveUserAgent) {
+      await sendCdpCommand(ws, "Emulation.setUserAgentOverride", {
+        userAgent: effectiveUserAgent,
+      }, 30_000, signal);
+    }
 
     // Navigate and wait
     const remainingTimeout = Math.max(1000, timeout - 15_000); // reserve ~15s for setup
@@ -705,8 +740,8 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       await sendCdpCommand(ws, "Emulation.setDeviceMetricsOverride", {
         width: pageWidth,
         height: pageHeight,
-        deviceScaleFactor: 1,
-        mobile: false,
+        deviceScaleFactor,
+        mobile,
       }, 30_000, signal);
 
       const result = await sendCdpCommand(ws, "Page.captureScreenshot", {
@@ -727,11 +762,11 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       await sendCdpCommand(ws, "Emulation.setDeviceMetricsOverride", {
         width: pageWidth,
         height: pageHeight,
-        deviceScaleFactor: 1,
-        mobile: false,
+        deviceScaleFactor,
+        mobile,
       }, 30_000, signal);
 
-      const stitchResult = await captureWithStitching(ws, pageWidth, pageHeight, signal);
+      const stitchResult = await captureWithStitching(ws, pageWidth, pageHeight, deviceScaleFactor, signal);
       buffer = stitchResult.buffer;
       segmentsStitched = stitchResult.segments;
     }
@@ -740,6 +775,8 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       buffer,
       pageWidth,
       pageHeight,
+      viewportWidth,
+      deviceScaleFactor,
       url,
     };
 

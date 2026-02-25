@@ -2,14 +2,27 @@
 
 [![npm version](https://img.shields.io/npm/v/image-tiler-mcp-server)](https://www.npmjs.com/package/image-tiler-mcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/keiver/image-tiler-mcp-server/blob/main/LICENSE)
-[![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/)
+[![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/en)
+[![MCP Badge](https://lobehub.com/badge/mcp/keiver-image-tiler-mcp-server)](https://lobehub.com/mcp/keiver-image-tiler-mcp-server)
 
-MCP server that tiles large images for LLM vision analysis.
+MCP server that gives LLMs full-resolution vision by tiling images and capturing web pages before details are lost.
 
 <figure align="center">
   <img src="assets/preview.gif" alt="Preview of image tiling grid with advised vision models size and token estimates" width="100%" />
   <figcaption><i>The server generates an interactive HTML preview for every image, showing per-model tile grids and token estimates</i></figcaption>
 </figure>
+
+## What You Can Do
+
+- **Visual QA for web pages.** Capture a URL, tile it, and let your AI assistant spot misaligned elements, wrong colors, and broken layouts at full resolution. Fix the code, re-capture, and verify the fix visually.
+
+- **Mobile responsive testing.** Capture at any viewport width with mobile emulation, retina scaling, and a real mobile user agent. Your AI reviews the full mobile layout tile by tile, catching responsive breakpoint issues that only appear on small screens.
+
+- **Full-resolution image analysis.** Diagrams, infographics, and design mockups lose critical details when LLMs downscale them. A 3,600 x 20,220px full-page capture that Claude would reject outright becomes 76 analyzable tiles, each at native resolution.
+
+- **Token-efficient tile inspection.** Each tile gets entropy-based content classification: blank, low-detail, mixed, or high-detail. Your AI skips blank tiles entirely and focuses tokens on what matters.
+
+- **Iterative visual workflow.** Capture, analyze, fix, re-capture. Versioned output directories (`_v1`, `_v2`, ...) preserve each iteration so you can compare before and after without overwriting previous results.
 
 ## Quick Start
 
@@ -21,7 +34,7 @@ claude mcp add image-tiler -- npx -y image-tiler-mcp-server
 
 > `image-tiler` is a local alias. You can name it anything you like. `image-tiler-mcp-server` is the npm package that gets downloaded and run.
 
-See [Claude Code MCP docs](https://docs.anthropic.com/en/docs/claude-code/mcp) for more info.
+See [Claude Code MCP docs](https://code.claude.com/docs/en/mcp) for more info.
 
 <details>
 <summary>Codex CLI</summary>
@@ -140,18 +153,23 @@ Then point your MCP config to the built file:
 
 ### Tile an image
 
-> lets tile ~/Desktop/source.jpg
+> tile ~/source.png and analyze content 
 
-The server shows you a comparison of supported vision models with tile counts and token estimates.
-Pick the model that matches your use case, and the server tiles the image and returns them in batches for analysis.
+The server reads image dimensions and generates an interactive HTML preview with per-model tabs showing grid overlays, tile counts, and token estimates. Pick the model that matches your use case, and the server tiles and returns batches for analysis.
 
 ### Capture a web page
 
-> capture screenshot of https://example.com and analyze the content
+> capture full page screenshot of https://tomotv.app 
 
-The server launches Chrome, captures a full-page screenshot (scroll-stitching pages over 16,384px), then presents the same model comparison. Choose a model and the server tiles the capture for analysis.
+The server launches headless Chrome, scrolls through the page to trigger lazy-loaded images (`loading="lazy"`), then captures a full-page screenshot (scroll-stitching pages over 16,384px). Your assistant receives each section at full resolution and can identify layout issues, misaligned elements, or broken styling that downscaling would hide.
 
 To get only the screenshot without tiling, just ask for a screenshot and stop after the comparison step.
+
+### Test a mobile layout
+
+> capture https://tomotv.app in mobile view 
+
+This is responsive QA, not just a different viewport. The server captures with `mobile: true`, which sets a 390px viewport, 2x retina scale, and a mobile Safari user agent. Sites that check for mobile UA or touch capability serve their mobile layout, so your AI reviews exactly what a real phone user sees.
 
 ### Customize tiling
 
@@ -160,7 +178,7 @@ To get only the screenshot without tiling, just ask for a screenshot and stop af
 | Target a specific model | "Tile hero.png for OpenAI" |
 | Keep full resolution | "Tile banner.png at full resolution, no downscaling" |
 | PNG output | "Tile diagram.png as lossless PNG" |
-| Tile from URL | "Download and tile https://example.com/chart.png" |
+| Tile from URL | "Download and tile https://keiver.dev/source.png" |
 | Tile from base64 | "Tile this base64 image: iVBORw0KGgo..." |
 
 ## Supported Models
@@ -174,18 +192,15 @@ To get only the screenshot without tiling, just ask for a screenshot and stop af
 
 > **OpenAI note:** The `openai` config targets the GPT-4o / o-series vision pipeline (512px tile patches). GPT-4.1 uses a fundamentally different pipeline (32x32 pixel patches) and is not currently supported. It would require a separate model config with a different calculation approach.
 
-> **Gemini 3 note:** Gemini 3 uses a fixed token budget per image (1,120 tokens at default resolution, regardless of dimensions). Tiling increases total token cost but preserves fine detail. For cases where detail isn't critical, consider sending a single image instead.
+> **Gemini 3 note:** Gemini 3 uses a fixed token budget per image (1,120 tokens regardless of dimensions). Tiling increases total token cost but preserves fine detail. For cases where detail isn't critical, consider sending a single image instead.
 
-<details>
-<summary>Why tile? What LLMs do to large images</summary>
+## Why Tile?
 
-### The Problem
+You screenshot a full page, paste it into Claude, and Claude **rejects it**. Anything over 8,000px on either dimension gets refused outright.
 
-You screenshot a full page, paste it into Claude, and Claude **rejects it**. Your 20,000px full-page screenshot? Claude won't even look at it. Anything over 8,000px on either dimension gets refused outright.
+GPT-4o is more forgiving but still destructive: it scales your image to fit within 2,048px, then scales the shortest side down to 768px, *then* tiles internally. An 8,192px-wide NASA panorama becomes ~1,456 x 768 before GPT-4o's own tiling even begins.
 
-GPT-4o is more forgiving but still destructive: it first scales your image to fit within 2,048px, then scales the shortest side down to 768px, *then* tiles internally. An 8,192px-wide NASA panorama becomes ~1,456 x 768 before GPT-4o's own tiling even begins.
-
-Gemini 1.5/2.0 handles large images natively at 768px tiles without downscaling. Gemini 3, however, caps each image at a fixed token budget (1,120 tokens at default resolution) regardless of size. Tiling gives each piece its own budget.
+Gemini 1.5/2.0 handles large images natively at 768px tiles without downscaling. Gemini 3, however, caps each image at a fixed token budget (1,120 tokens) regardless of size. Tiling gives each piece its own budget.
 
 Each tile stays within the model's sweet spot, so the LLM processes it at full resolution.
 
@@ -219,24 +234,25 @@ Using `assets/landscape.png` (8,192 x 4,320, NASA image gallery):
 | Gemini 3 | Capped at 1,120 tokens | 18 tiles at 1,536px, 18x token budget |
 
 *Based on published model vision documentation as of Feb 2026:
-[Claude vision limits](https://docs.anthropic.com/en/docs/build-with-claude/vision) ·
-[OpenAI vision guide](https://platform.openai.com/docs/guides/vision) ·
+[Claude vision limits](https://platform.claude.com/docs/en/build-with-claude/vision) ·
+[OpenAI vision guide](https://developers.openai.com/api/docs/guides/images-vision) ·
 [Gemini image understanding](https://ai.google.dev/gemini-api/docs/image-understanding) ·
 [Gemini media resolution](https://ai.google.dev/gemini-api/docs/media-resolution)*
-
-</details>
 
 ## How It Works
 
 This MCP server:
 
 1. Reads the image dimensions and the target model's vision config
-2. Calculates an optimal grid that keeps every tile within the model's sweet spot
-3. Extracts tiles as individual images (WebP default, PNG optional) and saves them to disk
-4. Returns a metadata summary (grid layout, file paths, token cost, per-tile content hints)
-5. Serves tiles on demand — call with `tilesDir` + `start`/`end` to retrieve batches of up to 5 tiles
+2. Generates an interactive HTML preview with per-model tabs showing grid overlays, tile numbering, and token estimates
+3. Calculates an optimal grid that keeps every tile within the model's sweet spot
+4. Extracts tiles as individual images (WebP default, PNG optional) and saves them to disk
+5. Returns a metadata summary (grid layout, file paths, token cost, per-tile content hints)
+6. Serves tiles on demand: call with `tilesDir` + `start`/`end` to retrieve batches of up to 5 tiles
 
-**Auto-downscaling:** Images over 10,000px on their longest side are automatically downscaled before tiling (configurable via `maxDimension`). This keeps tile counts reasonable and improves LLM comprehension by increasing content density per tile. Set `maxDimension=0` to disable, or pass a custom value (e.g., `maxDimension=5000`) for more aggressive downscaling.
+**Web capture pipeline.** For URLs, the server launches headless Chrome, triggers lazy-loaded images by scrolling the page, captures a full-page screenshot (scroll-stitching pages over 16,384px), then feeds the screenshot into the same tiling pipeline.
+
+**Auto-downscaling.** Images over 10,000px on their longest side are automatically downscaled before tiling (configurable via `maxDimension`). This keeps tile counts reasonable and improves LLM comprehension by increasing content density per tile. Set `maxDimension=0` to disable, or pass a custom value (e.g., `maxDimension=5000`) for more aggressive downscaling.
 
 <details>
 <summary>Tool Reference</summary>
@@ -271,7 +287,7 @@ The tool uses a two-step process to let you choose the right model before tiling
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `filePath` | string | no* | - | Absolute or relative path to the image file |
-| `sourceUrl` | string | no* | - | HTTPS URL to download the image from (max 50MB, 30s timeout) |
+| `sourceUrl` | string | no* | - | URL to download the image from (max 50MB, 30s timeout). `https:` uses SSRF filtering; `http:` is allowed without filtering for local dev servers |
 | `dataUrl` | string | no* | - | Data URL with base64-encoded image |
 | `imageBase64` | string | no* | - | Raw base64-encoded image data |
 
@@ -283,7 +299,10 @@ The tool uses a two-step process to let you choose the right model before tiling
 |---|---|---|---|---|
 | `url` | string | no | - | URL of the web page to capture. Requires Chrome/Chromium installed (or `CHROME_PATH` env var). |
 | `screenshotPath` | string | no | - | Path to a previously captured screenshot. Skips URL capture when provided. |
-| `viewportWidth` | number | no | `1280` | Browser viewport width in pixels (320-3840) |
+| `viewportWidth` | number | no | `1280` (`390` when `mobile`) | Browser viewport width in pixels (320-3840) |
+| `mobile` | boolean | no | `false` | Whether to emulate a mobile device. When true, defaults `viewportWidth` to 390, `deviceScaleFactor` to 2, and sets a mobile user agent. |
+| `deviceScaleFactor` | number | no | `1` (`2` when `mobile`) | Device pixel ratio (0.1-5). Use `2` for retina, `3` for high-DPI mobile. |
+| `userAgent` | string | no | - | Custom user agent string. Auto-set to a mobile Safari UA when `mobile: true` and no explicit value provided. |
 | `waitUntil` | string | no | `"load"` | When to consider the page loaded: `"load"`, `"networkidle"`, or `"domcontentloaded"` |
 | `delay` | number | no | `0` | Additional delay in ms after page load (max 30000) |
 
@@ -308,8 +327,31 @@ Supports scroll-stitching for pages taller than 16,384px. Automatically triggers
 | `outputDir` | string | no | See below | Directory to save tiles. Defaults: for `filePath` sources, `tiles/{name}_vN/` next to source (auto-incrementing: `_v1`, `_v2`, ..., `_vN`); for `sourceUrl`/`dataUrl`/`imageBase64`, `{base}/tiles/tiled_{timestamp}_{hex}/`; for captures, `{base}/tiles/capture_{timestamp}_{hex}/`. `{base}` is `~/Desktop`, `~/Downloads`, or `~` (first available). |
 | `page` | number | no | `0` | Tile page to return (0 = first 5, 1 = next 5, etc.) |
 | `format` | string | no | `"webp"` | Output format: `"webp"` (smaller, default) or `"png"` (lossless) |
-| `includeMetadata` | boolean | no | `true` | Analyze each tile using Shannon entropy and return content classification (blank, low-detail, mixed, high-detail) plus `entropy` and `sharpness` values per tile |
+| `includeMetadata` | boolean | no | `true` | Analyze each tile using image stats and return content classification (blank, low-detail, mixed, high-detail) plus `stdDev` and `entropy` values per tile |
 | `model` | string | no | - | **Deprecated.** Use `preset` instead. Still accepted; emits a deprecation warning in the response. |
+
+</details>
+
+<details>
+<summary>MCP Prompts and Resources</summary>
+
+### Prompts
+
+Guided workflows for clients that support [MCP prompts](https://modelcontextprotocol.io/docs/concepts/prompts):
+
+| Prompt | Arguments | Description |
+|--------|-----------|-------------|
+| `tile-and-analyze` | `filePath` (required), `preset` (optional), `focus` (optional) | Walks through tiling a local image and analyzing each tile at full resolution. The `focus` argument narrows analysis (e.g., "UI layout", "text readability"). |
+| `capture-and-analyze` | `url` (required), `focus` (optional) | Walks through capturing a web page screenshot and analyzing it tile by tile. |
+
+### Resources
+
+Static references for clients that support [MCP resources](https://modelcontextprotocol.io/docs/concepts/resources):
+
+| URI | Format | Description |
+|-----|--------|-------------|
+| `tiler://models` | JSON | All supported vision model presets with tile sizes, min/max bounds, and per-tile token rates. |
+| `tiler://guide` | Plain text | Quick reference covering the tiling workflow, preset summary, and usage tips. |
 
 </details>
 
@@ -339,9 +381,53 @@ PNG, JPEG, WebP, TIFF, GIF
 
 ## Security
 
-Local stdio server - runs with the same filesystem permissions as the MCP client that spawns it. No path sandboxing, no SSRF protection on URL downloads.
+**Transport:** stdio only. The server is a single-session local process spawned by the MCP client. It never listens on a network socket.
 
-**If deploying remotely:** Add path validation, SSRF protection (block private/internal IP ranges), and authentication. This server is not designed for multi-tenant or network-exposed use.
+### URL download protection (always-on)
+
+`https:` `sourceUrl` downloads use [`request-filtering-agent`](https://github.com/azu/request-filtering-agent), which blocks requests to private IP ranges before they are made:
+
+- RFC 1918 (10.x, 172.16-31.x, 192.168.x)
+- Loopback (127.x, ::1)
+- Link-local / IMDS (169.254.x, fe80::/10) including IPv4-mapped IPv6 (`::ffff:169.254.169.254`)
+- CGNAT (100.64.x), ULA (fc00::/7)
+
+HTTP redirects are followed up to 5 hops. Each hop re-applies SSRF filtering for `https:` URLs, so a redirect to a private IP is blocked even if the initial URL was public. `https:` to `http:` downgrades are blocked. `http:` downloads bypass SSRF filtering, intended for local dev servers (localhost, LAN IPs). Use `https:` for all remote/production URLs.
+
+**Limitation:** DNS rebinding is mitigated but not fully prevented at the application layer.
+
+### Path containment (opt-in via `TILER_ALLOWED_DIRS`)
+
+Set `TILER_ALLOWED_DIRS` to a comma-separated list of absolute paths to restrict all file I/O to those directories:
+
+```
+TILER_ALLOWED_DIRS=/app/uploads,/tmp/tiler-work
+```
+
+When set:
+- `filePath` and `tilesDir` inputs are checked via `fs.realpath()` (resolves symlinks) before access.
+- `outputDir` writes are checked against the nearest existing ancestor to prevent path traversal through non-existing directories.
+- Any path outside the allowed list is rejected with an `[TILER_ALLOWED_DIRS]` error.
+
+When unset, no path restriction is applied (preserves backward-compatible local behaviour).
+
+### Chrome URL capture kill switch
+
+Chrome headless can reach any network address the host can reach. Application-level IP checks cannot reliably constrain it. For cloud deployments without a `NetworkPolicy` or equivalent, disable URL capture entirely:
+
+```
+TILER_DISABLE_URL_CAPTURE=1
+```
+
+Any call with a `url` parameter will return an error instead of spawning Chrome.
+
+**Docker example:**
+
+```env
+CHROME_NO_SANDBOX=1
+TILER_ALLOWED_DIRS=/app/uploads
+TILER_DISABLE_URL_CAPTURE=1   # remove only if Chrome is network-isolated
+```
 
 ## Requirements
 
@@ -354,7 +440,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report bugs, suggest changes, 
 
 ## Acknowledgments
 
-Built with the help of [Claude Code](https://claude.ai/claude-code) as an AI assistant for code drafting, testing, and documentation.
+Built with the help of [Claude Code](https://code.claude.com/docs/en/setup) as an AI assistant for code drafting, testing, and documentation.
 
 ## License
 

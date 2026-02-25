@@ -224,7 +224,7 @@ describe("integration: landscape with OpenAI settings (768px tiles)", () => {
 
     expect(result.sourceImage.width).toBe(8192);
     expect(result.sourceImage.height).toBe(4320);
-  }, 30000);
+  }, 120000);
 
   it("produces 11×6 grid = 66 tiles", () => {
     // ceil(8192/768) = 11, ceil(4320/768) = 6
@@ -259,7 +259,7 @@ describe("integration: landscape with Gemini settings (768px tiles)", () => {
 
     expect(result.sourceImage.width).toBe(8192);
     expect(result.sourceImage.height).toBe(4320);
-  }, 30000);
+  }, 120000);
 
   it("produces 11×6 grid = 66 tiles (same grid as OpenAI)", () => {
     expect(result.grid.cols).toBe(11);

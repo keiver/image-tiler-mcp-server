@@ -17,8 +17,12 @@ import type { TileOutputFormat } from "../constants.js";
 import type { ImageMetadata, ResizeInfo, TileGridInfo, TileInfo, TileImageResult, ModelEstimate } from "../types.js";
 import { withTimeout, simulateDownscale } from "../utils.js";
 
-sharp.cache({ items: 10, memory: 200 });
-sharp.concurrency(2);
+try {
+  sharp.cache({ items: 10, memory: 200 });
+  sharp.concurrency(2);
+} catch (err) {
+  console.error("sharp initialization warning:", err);
+}
 
 export async function getImageMetadata(
   filePath: string

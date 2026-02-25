@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { getImageMetadata, computeEstimateForModel, tileImage } from "./image-processor.js";
+import { assertSafePath } from "../security.js";
 import { generateInteractivePreview } from "./interactive-preview-generator.js";
 import { analyzeTiles } from "./tile-analyzer.js";
 import {
@@ -29,18 +30,26 @@ export async function resolveOutputDir(
   localPath: string,
   explicitOutputDir?: string,
 ): Promise<string> {
-  if (explicitOutputDir) return path.resolve(explicitOutputDir);
-  if (sourceType === "file") {
+  let resolvedDir: string;
+  if (explicitOutputDir) {
+    resolvedDir = path.resolve(explicitOutputDir);
+  } else if (sourceType === "file") {
     const basename = stripVersionSuffix(path.basename(localPath, path.extname(localPath)));
     const baseOutputDir = path.join(path.dirname(path.resolve(localPath)), "tiles", basename);
-    return getVersionedOutputDir(baseOutputDir);
+    resolvedDir = await getVersionedOutputDir(baseOutputDir);
+  } else {
+    resolvedDir = path.join(getDefaultOutputBase(), "tiles", `tiled_${Date.now()}_${randomBytes(3).toString("hex")}`);
   }
-  return path.join(getDefaultOutputBase(), "tiles", `tiled_${Date.now()}_${randomBytes(3).toString("hex")}`);
+  await assertSafePath(resolvedDir, "outputDir", false);
+  return resolvedDir;
 }
 
-export function resolveOutputDirForCapture(explicitOutputDir?: string): string {
-  if (explicitOutputDir) return path.resolve(explicitOutputDir);
-  return path.join(getDefaultOutputBase(), "tiles", `capture_${Date.now()}_${randomBytes(3).toString("hex")}`);
+export async function resolveOutputDirForCapture(explicitOutputDir?: string): Promise<string> {
+  const resolvedDir = explicitOutputDir
+    ? path.resolve(explicitOutputDir)
+    : path.join(getDefaultOutputBase(), "tiles", `capture_${Date.now()}_${randomBytes(3).toString("hex")}`);
+  await assertSafePath(resolvedDir, "outputDir", false);
+  return resolvedDir;
 }
 
 // ─── Format validation ─────────────────────────────────────────────────────
@@ -229,7 +238,7 @@ export function buildPhase1Response(
     `After choosing a preset, use the summary and tile hints to fetch only the tiles you need.`
   );
   if (warnings && warnings.length > 0) {
-    parts.push(`\n\n⚠ ${warnings.join("\n⚠ ")}`);
+    parts.push(`\n\nWarning: ${warnings.join("\nWarning: ")}`);
   }
 
   const structured: Record<string, unknown> = {
@@ -420,7 +429,7 @@ export async function buildPhase2Response(
   }
 
   if (warnings.length > 0) {
-    summaryLines.push("", `⚠ ${warnings.join("\n⚠ ")}`);
+    summaryLines.push("", `Warning: ${warnings.join("\nWarning: ")}`);
   }
 
   // Structured output

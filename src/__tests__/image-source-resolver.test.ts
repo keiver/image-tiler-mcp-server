@@ -1,9 +1,28 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 
+// Hoist mock functions so they can be referenced in vi.mock() factories
+const { mockHttpsRequest, mockHttpRequest, mockUseAgent } = vi.hoisted(() => ({
+  mockHttpsRequest: vi.fn(),
+  mockHttpRequest: vi.fn(),
+  mockUseAgent: vi.fn().mockReturnValue({}),
+}));
+
 vi.mock("node:fs/promises", () => ({
   unlink: vi.fn(),
   writeFile: vi.fn(),
+}));
+
+vi.mock("node:https", () => ({
+  request: mockHttpsRequest,
+}));
+
+vi.mock("node:http", () => ({
+  request: mockHttpRequest,
+}));
+
+vi.mock("request-filtering-agent", () => ({
+  useAgent: mockUseAgent,
 }));
 
 const mockedWriteFile = vi.mocked(fs.writeFile);
@@ -15,7 +34,7 @@ import {
   guessExtensionFromMagicBytes,
   mimeSubtypeToExtension,
 } from "../services/image-source-resolver.js";
-import { MAX_DOWNLOAD_SIZE_BYTES } from "../constants.js";
+import { MAX_DOWNLOAD_SIZE_BYTES, DOWNLOAD_TIMEOUT_MS, MAX_REDIRECT_HOPS } from "../constants.js";
 
 describe("resolveImageSource", () => {
   beforeEach(() => {
@@ -95,7 +114,6 @@ describe("resolveImageSource", () => {
     });
 
     it("rejects empty base64 (treated as no source)", async () => {
-      // Empty string is falsy, so resolveImageSource skips it → no source error
       await expect(
         resolveImageSource({ imageBase64: "" })
       ).rejects.toThrow("No image source provided");
@@ -123,14 +141,13 @@ describe("resolveImageSource", () => {
   });
 
   describe("cleanup", () => {
-    it("cleanup is idempotent — safe to call multiple times", async () => {
+    it("cleanup is idempotent: only one unlink despite two calls", async () => {
       const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
       const result = await resolveImageSource({ imageBase64: pngHeader.toString("base64") });
 
       await result.cleanup!();
       await result.cleanup!();
 
-      // Only one actual unlink call despite two cleanup calls
       expect(mockedUnlink).toHaveBeenCalledTimes(1);
     });
 
@@ -167,21 +184,11 @@ describe("resolveImageSource", () => {
       expect(warning).toContain("Failed to clean up temp file");
       expect(warning).toContain("EPERM");
     });
-
-    it("cleanup returns undefined on second call (idempotent)", async () => {
-      const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-      const result = await resolveImageSource({ imageBase64: pngHeader.toString("base64") });
-
-      await result.cleanup!();
-      const secondCall = await result.cleanup!();
-      expect(secondCall).toBeUndefined();
-    });
   });
 
   describe("precedence", () => {
     it("sourceUrl takes precedence over dataUrl and imageBase64", async () => {
-      // We can't easily test URL fetching in unit tests without mocking fetch,
-      // but we can verify filePath > sourceUrl
+      // Can't easily test URL fetching here, but verify filePath > sourceUrl
       const result = await resolveImageSource({
         filePath: "/path.png",
         sourceUrl: "https://example.com/image.png",
@@ -203,8 +210,7 @@ describe("resolveImageSource", () => {
 
   describe("decoded buffer size validation", () => {
     it("rejects base64 that decodes to oversized buffer", async () => {
-      // Create a buffer just over the limit
-      const oversized = Buffer.alloc(MAX_DOWNLOAD_SIZE_BYTES + 1, 0x41); // 'A'
+      const oversized = Buffer.alloc(MAX_DOWNLOAD_SIZE_BYTES + 1, 0x41);
       const base64 = oversized.toString("base64");
       await expect(
         resolveImageSource({ imageBase64: base64 })
@@ -222,9 +228,91 @@ describe("resolveImageSource", () => {
   });
 });
 
-describe("sourceUrl resolution", () => {
-  const originalFetch = globalThis.fetch;
+// ─── HTTP mock helper ────────────────────────────────────────────────────────
 
+interface MockHttpOpts {
+  statusCode?: number;
+  headers?: Record<string, string>;
+  body?: Buffer;
+  reqError?: string;
+  /** Never fires the response callback (simulates hung connection for timeout test) */
+  noCallback?: boolean;
+}
+
+/**
+ * Sets up mockHttpsRequest (or mockHttpRequest) to simulate a single request.
+ * Creates a fake IncomingMessage that fires data/end events asynchronously
+ * after req.end() is called.
+ */
+function setupRequestMock(
+  mock: ReturnType<typeof vi.fn>,
+  opts: MockHttpOpts = {},
+): void {
+  mock.mockReset();
+  mock.mockImplementation((...args: unknown[]) => {
+    const callback = args.find((a) => typeof a === "function") as
+      | ((res: unknown) => void)
+      | undefined;
+
+    const reqErrorHandlers: ((err: Error) => void)[] = [];
+    const mockReq = {
+      on(event: string, handler: (err: Error) => void) {
+        if (event === "error") reqErrorHandlers.push(handler);
+        return mockReq;
+      },
+      destroy: vi.fn(),
+      end() {
+        if (opts.noCallback) return;
+
+        if (opts.reqError) {
+          process.nextTick(() => {
+            for (const h of reqErrorHandlers) h(new Error(opts.reqError));
+          });
+          return;
+        }
+
+        const resHandlers: Record<string, Array<(arg?: unknown) => void>> = {};
+        const mockRes = {
+          statusCode: opts.statusCode ?? 200,
+          headers:
+            opts.headers !== undefined
+              ? opts.headers
+              : { "content-type": "image/png" },
+          destroy: vi.fn(),
+          on(event: string, handler: (arg?: unknown) => void) {
+            if (!resHandlers[event]) resHandlers[event] = [];
+            resHandlers[event].push(handler);
+            return mockRes;
+          },
+        };
+
+        if (callback) {
+          process.nextTick(() => {
+            callback(mockRes);
+            process.nextTick(() => {
+              const defaultBody = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic
+              const body = opts.body ?? defaultBody;
+              for (const h of resHandlers["data"] ?? []) h(body);
+              process.nextTick(() => {
+                for (const h of resHandlers["end"] ?? []) h();
+              });
+            });
+          });
+        }
+      },
+    };
+
+    return mockReq as unknown;
+  });
+}
+
+function setupHttpsMock(opts: MockHttpOpts = {}): void {
+  setupRequestMock(mockHttpsRequest, opts);
+}
+
+// ─── sourceUrl resolution ────────────────────────────────────────────────────
+
+describe("sourceUrl resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedWriteFile.mockResolvedValue(undefined);
@@ -232,54 +320,11 @@ describe("sourceUrl resolution", () => {
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    vi.useRealTimers();
   });
 
-  function mockFetch(overrides: Partial<{
-    ok: boolean;
-    status: number;
-    headers: Record<string, string>;
-    arrayBuffer: () => Promise<ArrayBuffer>;
-    abortError: boolean;
-    networkError: string;
-  }> = {}): void {
-    globalThis.fetch = vi.fn(async (_url: string, options?: RequestInit) => {
-      if (overrides.abortError) {
-        const err = new Error("The operation was aborted");
-        err.name = "AbortError";
-        throw err;
-      }
-      if (overrides.networkError) {
-        throw new Error(overrides.networkError);
-      }
-
-      const headers = new Headers(overrides.headers ?? { "content-type": "image/png" });
-      const defaultBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
-      const getBuffer = overrides.arrayBuffer
-        ?? (() => Promise.resolve(defaultBuffer.buffer.slice(defaultBuffer.byteOffset, defaultBuffer.byteOffset + defaultBuffer.byteLength)));
-      const resolvedArrayBuffer = await getBuffer();
-      const bodyData = new Uint8Array(resolvedArrayBuffer);
-
-      // Create a ReadableStream body for streaming reads (response.body.getReader())
-      const body = new ReadableStream({
-        start(controller) {
-          controller.enqueue(bodyData);
-          controller.close();
-        },
-      });
-
-      return {
-        ok: overrides.ok ?? true,
-        status: overrides.status ?? 200,
-        headers,
-        arrayBuffer: () => Promise.resolve(resolvedArrayBuffer),
-        body,
-      } as unknown as Response;
-    });
-  }
-
   it("downloads image from valid HTTPS URL", async () => {
-    mockFetch();
+    setupHttpsMock();
     const result = await resolveImageSource({ sourceUrl: "https://example.com/photo.png" });
     expect(result.sourceType).toBe("url");
     expect(result.localPath).toMatch(/\.png$/);
@@ -287,41 +332,71 @@ describe("sourceUrl resolution", () => {
     expect(mockedWriteFile).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects non-HTTPS protocol", async () => {
-    await expect(
-      resolveImageSource({ sourceUrl: "http://example.com/photo.png" })
-    ).rejects.toThrow("Unsupported URL protocol");
+  it("passes SSRF filtering agent to https.request", async () => {
+    const fakeAgent = { _ssrfAgent: true };
+    mockUseAgent.mockReturnValue(fakeAgent);
+    setupHttpsMock();
+
+    await resolveImageSource({ sourceUrl: "https://example.com/photo.png" });
+
+    expect(mockUseAgent).toHaveBeenCalledWith("https://example.com/photo.png");
+    const [, options] = mockHttpsRequest.mock.calls[0] as [unknown, { agent: unknown }, unknown];
+    expect(options.agent).toBe(fakeAgent);
   });
 
-  it("rejects ftp protocol", async () => {
+  it("skips SSRF agent for http: URLs by default", async () => {
+    setupRequestMock(mockHttpRequest);
+    const result = await resolveImageSource({ sourceUrl: "http://localhost:3000/photo.png" });
+    expect(result.sourceType).toBe("url");
+    expect(mockHttpRequest).toHaveBeenCalled();
+    expect(mockHttpsRequest).not.toHaveBeenCalled();
+    expect(mockUseAgent).not.toHaveBeenCalled();
+  });
+
+  it("uses SSRF agent for http: URLs when TILER_DENY_HTTP_PRIVATE=1", async () => {
+    process.env.TILER_DENY_HTTP_PRIVATE = "1";
+    try {
+      setupRequestMock(mockHttpRequest);
+      await resolveImageSource({ sourceUrl: "http://localhost:3000/photo.png" });
+      expect(mockHttpRequest).toHaveBeenCalled();
+      expect(mockUseAgent).toHaveBeenCalledWith("http://localhost:3000/photo.png");
+    } finally {
+      delete process.env.TILER_DENY_HTTP_PRIVATE;
+    }
+  });
+
+  it("rejects unsupported protocols (ftp, etc.)", async () => {
     await expect(
       resolveImageSource({ sourceUrl: "ftp://example.com/photo.png" })
     ).rejects.toThrow("Unsupported URL protocol");
   });
 
   it("throws on HTTP error status", async () => {
-    mockFetch({ ok: false, status: 404 });
+    setupHttpsMock({ statusCode: 404 });
     await expect(
       resolveImageSource({ sourceUrl: "https://example.com/missing.png" })
     ).rejects.toThrow("HTTP 404");
   });
 
-  it("throws on timeout (AbortError)", async () => {
-    mockFetch({ abortError: true });
-    await expect(
-      resolveImageSource({ sourceUrl: "https://example.com/slow.png" })
-    ).rejects.toThrow("timed out");
+  it("throws on timeout", async () => {
+    vi.useFakeTimers();
+    setupHttpsMock({ noCallback: true });
+
+    const promise = resolveImageSource({ sourceUrl: "https://example.com/slow.png" });
+    const expectation = expect(promise).rejects.toThrow("timed out");
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_TIMEOUT_MS + 1000);
+    await expectation;
   });
 
-  it("throws on network error", async () => {
-    mockFetch({ networkError: "ECONNREFUSED" });
+  it("throws on network error (req.on error)", async () => {
+    setupHttpsMock({ reqError: "ECONNREFUSED" });
     await expect(
       resolveImageSource({ sourceUrl: "https://example.com/down.png" })
     ).rejects.toThrow("Failed to fetch image");
   });
 
   it("rejects when content-length exceeds limit", async () => {
-    mockFetch({
+    setupHttpsMock({
       headers: {
         "content-type": "image/png",
         "content-length": String(MAX_DOWNLOAD_SIZE_BYTES + 1),
@@ -334,34 +409,31 @@ describe("sourceUrl resolution", () => {
 
   it("rejects when downloaded buffer exceeds limit", async () => {
     const oversized = Buffer.alloc(MAX_DOWNLOAD_SIZE_BYTES + 1, 0x00);
-    mockFetch({
-      arrayBuffer: () => Promise.resolve(oversized.buffer.slice(oversized.byteOffset, oversized.byteOffset + oversized.byteLength)),
-    });
+    setupHttpsMock({ body: oversized });
     await expect(
       resolveImageSource({ sourceUrl: "https://example.com/sneaky-big.png" })
     ).rejects.toThrow("byte limit");
   });
 
   it("rejects non-image Content-Type", async () => {
-    mockFetch({ headers: { "content-type": "text/html" } });
+    setupHttpsMock({ headers: { "content-type": "text/html" } });
     await expect(
       resolveImageSource({ sourceUrl: "https://example.com/page.html" })
     ).rejects.toThrow("non-image Content-Type");
   });
 
   it("rejects application/json Content-Type", async () => {
-    mockFetch({ headers: { "content-type": "application/json" } });
+    setupHttpsMock({ headers: { "content-type": "application/json" } });
     await expect(
       resolveImageSource({ sourceUrl: "https://example.com/api" })
     ).rejects.toThrow("non-image Content-Type");
   });
 
   it("accepts application/octet-stream with valid image magic bytes", async () => {
-    // PNG magic bytes
     const pngBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    mockFetch({
+    setupHttpsMock({
       headers: { "content-type": "application/octet-stream" },
-      arrayBuffer: () => Promise.resolve(pngBuffer.buffer.slice(pngBuffer.byteOffset, pngBuffer.byteOffset + pngBuffer.byteLength)),
+      body: pngBuffer,
     });
     const result = await resolveImageSource({ sourceUrl: "https://example.com/binary" });
     expect(result.sourceType).toBe("url");
@@ -369,9 +441,9 @@ describe("sourceUrl resolution", () => {
 
   it("rejects application/octet-stream with non-image magic bytes", async () => {
     const nonImageBuffer = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
-    mockFetch({
+    setupHttpsMock({
       headers: { "content-type": "application/octet-stream" },
-      arrayBuffer: () => Promise.resolve(nonImageBuffer.buffer.slice(nonImageBuffer.byteOffset, nonImageBuffer.byteOffset + nonImageBuffer.byteLength)),
+      body: nonImageBuffer,
     });
     await expect(
       resolveImageSource({ sourceUrl: "https://example.com/binary" })
@@ -380,29 +452,217 @@ describe("sourceUrl resolution", () => {
 
   it("rejects missing Content-Type with non-image magic bytes", async () => {
     const nonImageBuffer = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
-    mockFetch({
-      headers: {},
-      arrayBuffer: () => Promise.resolve(nonImageBuffer.buffer.slice(nonImageBuffer.byteOffset, nonImageBuffer.byteOffset + nonImageBuffer.byteLength)),
-    });
+    setupHttpsMock({ headers: {}, body: nonImageBuffer });
     await expect(
       resolveImageSource({ sourceUrl: "https://example.com/noheader" })
     ).rejects.toThrow("not a recognized image format");
   });
 
-  it("accepts missing Content-Type (no rejection)", async () => {
-    mockFetch({ headers: {} });
+  it("accepts missing Content-Type with image magic bytes (falls back to .png)", async () => {
+    setupHttpsMock({ headers: {} });
     const result = await resolveImageSource({ sourceUrl: "https://example.com/noheader" });
     expect(result.sourceType).toBe("url");
-    // Falls back to .png extension
     expect(result.localPath).toMatch(/\.png$/);
   });
 
   it("guesses .jpg extension from Content-Type", async () => {
-    mockFetch({ headers: { "content-type": "image/jpeg" } });
+    setupHttpsMock({ headers: { "content-type": "image/jpeg" } });
     const result = await resolveImageSource({ sourceUrl: "https://example.com/photo.jpg" });
     expect(result.localPath).toMatch(/\.jpg$/);
   });
 });
+
+// ─── Redirect following ──────────────────────────────────────────────────────
+
+describe("sourceUrl redirect following", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedWriteFile.mockResolvedValue(undefined);
+    mockedUnlink.mockResolvedValue(undefined);
+  });
+
+  /**
+   * Sets up a redirect chain where the first N calls return 3xx,
+   * and the final call returns a 200 with PNG body.
+   */
+  function setupRedirectChain(
+    locations: string[],
+    finalOpts: MockHttpOpts = {},
+  ): void {
+    let callIndex = 0;
+
+    // All calls go through https.request since the chain starts with https:
+    mockHttpsRequest.mockReset();
+    mockHttpsRequest.mockImplementation((...args: unknown[]) => {
+      const callback = args.find((a) => typeof a === "function") as
+        | ((res: unknown) => void)
+        | undefined;
+
+      const reqErrorHandlers: ((err: Error) => void)[] = [];
+      const currentIndex = callIndex++;
+
+      const mockReq = {
+        on(event: string, handler: (err: Error) => void) {
+          if (event === "error") reqErrorHandlers.push(handler);
+          return mockReq;
+        },
+        destroy: vi.fn(),
+        end() {
+          const isRedirect = currentIndex < locations.length;
+          const resHandlers: Record<string, Array<(arg?: unknown) => void>> = {};
+
+          const mockRes = isRedirect
+            ? {
+                statusCode: 302,
+                headers: { location: locations[currentIndex] },
+                destroy: vi.fn(),
+                on(event: string, handler: (arg?: unknown) => void) {
+                  if (!resHandlers[event]) resHandlers[event] = [];
+                  resHandlers[event].push(handler);
+                  return mockRes;
+                },
+              }
+            : {
+                statusCode: finalOpts.statusCode ?? 200,
+                headers: finalOpts.headers ?? { "content-type": "image/png" },
+                destroy: vi.fn(),
+                on(event: string, handler: (arg?: unknown) => void) {
+                  if (!resHandlers[event]) resHandlers[event] = [];
+                  resHandlers[event].push(handler);
+                  return mockRes;
+                },
+              };
+
+          if (callback) {
+            process.nextTick(() => {
+              callback(mockRes);
+              process.nextTick(() => {
+                if (isRedirect) {
+                  // Redirect responses have empty bodies
+                  for (const h of resHandlers["end"] ?? []) h();
+                } else {
+                  const body = finalOpts.body ?? Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+                  for (const h of resHandlers["data"] ?? []) h(body);
+                  process.nextTick(() => {
+                    for (const h of resHandlers["end"] ?? []) h();
+                  });
+                }
+              });
+            });
+          }
+        },
+      };
+
+      return mockReq as unknown;
+    });
+  }
+
+  it("follows a single redirect", async () => {
+    setupRedirectChain(["https://cdn.example.com/image.png"]);
+    const result = await resolveImageSource({ sourceUrl: "https://example.com/photo.png" });
+    expect(result.sourceType).toBe("url");
+    expect(mockHttpsRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("follows a chain of redirects", async () => {
+    setupRedirectChain([
+      "https://cdn1.example.com/redir",
+      "https://cdn2.example.com/redir",
+      "https://cdn3.example.com/image.png",
+    ]);
+    const result = await resolveImageSource({ sourceUrl: "https://example.com/photo.png" });
+    expect(result.sourceType).toBe("url");
+    expect(mockHttpsRequest).toHaveBeenCalledTimes(4); // 3 redirects + 1 final
+  });
+
+  it("applies SSRF agent on each hop", async () => {
+    const agents = [{ hop: 0 }, { hop: 1 }];
+    let agentCallIndex = 0;
+    mockUseAgent.mockImplementation(() => agents[agentCallIndex++] ?? {});
+
+    setupRedirectChain(["https://cdn.example.com/image.png"]);
+    await resolveImageSource({ sourceUrl: "https://example.com/photo.png" });
+
+    // useAgent called once per https hop
+    expect(mockUseAgent).toHaveBeenCalledTimes(2);
+    expect(mockUseAgent).toHaveBeenNthCalledWith(1, "https://example.com/photo.png");
+    expect(mockUseAgent).toHaveBeenNthCalledWith(2, "https://cdn.example.com/image.png");
+  });
+
+  it("throws when exceeding MAX_REDIRECT_HOPS", async () => {
+    // Create more redirects than allowed
+    const locations = Array.from(
+      { length: MAX_REDIRECT_HOPS + 1 },
+      (_, i) => `https://hop${i + 1}.example.com/redir`,
+    );
+    setupRedirectChain(locations);
+
+    await expect(
+      resolveImageSource({ sourceUrl: "https://example.com/start" })
+    ).rejects.toThrow("Too many redirects");
+  });
+
+  it("blocks https: to http: downgrade", async () => {
+    setupRedirectChain(["http://insecure.example.com/image.png"]);
+
+    await expect(
+      resolveImageSource({ sourceUrl: "https://example.com/photo.png" })
+    ).rejects.toThrow("https: to http: is blocked");
+  });
+
+  it("throws when redirect has no Location header", async () => {
+    // Redirect with no location
+    mockHttpsRequest.mockReset();
+    mockHttpsRequest.mockImplementation((...args: unknown[]) => {
+      const callback = args.find((a) => typeof a === "function") as
+        | ((res: unknown) => void)
+        | undefined;
+
+      const mockReq = {
+        on() { return mockReq; },
+        destroy: vi.fn(),
+        end() {
+          const resHandlers: Record<string, Array<(arg?: unknown) => void>> = {};
+          const mockRes = {
+            statusCode: 301,
+            headers: {}, // no location
+            destroy: vi.fn(),
+            on(event: string, handler: (arg?: unknown) => void) {
+              if (!resHandlers[event]) resHandlers[event] = [];
+              resHandlers[event].push(handler);
+              return mockRes;
+            },
+          };
+
+          if (callback) {
+            process.nextTick(() => {
+              callback(mockRes);
+              process.nextTick(() => {
+                for (const h of resHandlers["end"] ?? []) h();
+              });
+            });
+          }
+        },
+      };
+      return mockReq as unknown;
+    });
+
+    await expect(
+      resolveImageSource({ sourceUrl: "https://example.com/photo.png" })
+    ).rejects.toThrow("redirect with no Location header");
+  });
+
+  it("resolves relative redirect locations", async () => {
+    setupRedirectChain(["/new-path/image.png"]);
+    const result = await resolveImageSource({ sourceUrl: "https://example.com/old-path" });
+    expect(result.sourceType).toBe("url");
+    // Second call should use the resolved absolute URL
+    const secondCallUrl = mockHttpsRequest.mock.calls[1]?.[0] as string;
+    expect(secondCallUrl).toBe("https://example.com/new-path/image.png");
+  });
+});
+
+// ─── Helper function tests ───────────────────────────────────────────────────
 
 describe("guessExtensionFromContentType", () => {
   it("returns undefined for null", () => {
