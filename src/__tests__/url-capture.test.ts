@@ -4,7 +4,7 @@ import type { ChildProcess } from "node:child_process";
 
 // ─── Mocks ─────────────────────────────────────────────────────────
 
-const { mockSpawn, mockExecFileSync, mockAccessSync, mockWsInstance, mockWsConstructor, mockSharp, mockHttpGet } = vi.hoisted(() => {
+const { mockSpawn, mockExecFileSync, mockAccessSync, mockWsInstance, mockWsConstructor, mockSharp, mockHttpGet, mockIsUrlCaptureDisabled } = vi.hoisted(() => {
   // Must require EventEmitter inside vi.hoisted since imports aren't available yet
   const { EventEmitter: EE } = require("node:events");
 
@@ -39,7 +39,9 @@ const { mockSpawn, mockExecFileSync, mockAccessSync, mockWsInstance, mockWsConst
   // HTTP mock for page target discovery (/json endpoint)
   const mockHttpGet = vi.fn();
 
-  return { mockSpawn, mockExecFileSync, mockAccessSync, mockWsInstance, mockWsConstructor, mockSharp, mockHttpGet };
+  const mockIsUrlCaptureDisabled = vi.fn().mockReturnValue(false);
+
+  return { mockSpawn, mockExecFileSync, mockAccessSync, mockWsInstance, mockWsConstructor, mockSharp, mockHttpGet, mockIsUrlCaptureDisabled };
 });
 
 vi.mock("node:child_process", () => ({
@@ -54,6 +56,9 @@ vi.mock("node:fs", () => ({
 
 vi.mock("ws", () => ({ default: mockWsConstructor }));
 vi.mock("sharp", () => ({ default: mockSharp }));
+vi.mock("../security.js", () => ({
+  isUrlCaptureDisabled: mockIsUrlCaptureDisabled,
+}));
 vi.mock("node:http", () => ({
   default: {
     get: mockHttpGet,
@@ -556,6 +561,16 @@ describe("captureUrl", () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content width=-5"));
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content height=-10"));
     warnSpy.mockRestore();
+  });
+
+  // ─── Kill Switch ─────────────────────────────────────────────────
+
+  it("rejects when URL capture is disabled via env", async () => {
+    mockIsUrlCaptureDisabled.mockReturnValue(true);
+    await expect(
+      captureUrl({ url: "https://example.com" })
+    ).rejects.toThrow("URL capture is disabled");
+    mockIsUrlCaptureDisabled.mockReturnValue(false);
   });
 
   // ─── Abort Signal Tests ───────────────────────────────────────────

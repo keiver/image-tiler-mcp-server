@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { TileImageResult, AnalysisResult } from "../types.js";
 
+vi.mock("../security.js", () => ({
+  assertSafePath: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../services/image-source-resolver.js", () => ({
   resolveImageSource: vi.fn(),
 }));
@@ -58,11 +62,12 @@ vi.mock("sharp", () => {
 
 vi.mock("node:fs/promises", () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
-  access: vi.fn().mockResolvedValue(undefined),
+  stat: vi.fn().mockResolvedValue({ isFile: () => true }),
   rmdir: vi.fn().mockResolvedValue(undefined),
   readFile: vi.fn().mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" })),
 }));
 
+import { assertSafePath } from "../security.js";
 import { resolveImageSource } from "../services/image-source-resolver.js";
 import { captureUrl } from "../services/url-capture.js";
 import {
@@ -88,6 +93,7 @@ import { createMockServer } from "./helpers/mock-server.js";
 import * as fsPromises from "node:fs/promises";
 import sharp from "sharp";
 
+const mockedAssertSafePath = vi.mocked(assertSafePath);
 const mockedAnalyzeTiles = vi.mocked(analyzeTiles);
 
 const mockedResolveSource = vi.mocked(resolveImageSource);
@@ -191,7 +197,7 @@ describe("registerTilerTool", () => {
       pageHeight: 800,
       url: "https://example.com",
     });
-    mockedResolveOutputDirForCapture.mockReturnValue("/output/tiles");
+    mockedResolveOutputDirForCapture.mockResolvedValue("/output/tiles");
 
     // Default mocks for get-tiles
     mockedReadBase64.mockResolvedValue("AAAA");
@@ -277,6 +283,7 @@ describe("registerTilerTool", () => {
       expect(res.content[0].text).toContain("ACTION REQUIRED");
       expect(mockedBuildPhase1Response).toHaveBeenCalledWith(sampleAnalysis);
       expect(mockedExecuteTiling).not.toHaveBeenCalled();
+      expect(mockedAssertSafePath).toHaveBeenCalledWith("image.png", "filePath", true);
     });
 
     it("returns Phase 2 response when preview gate passes with explicit model", async () => {
@@ -441,6 +448,17 @@ describe("registerTilerTool", () => {
       expect(allText).not.toContain("Failed to clean up");
     });
 
+    it("returns isError when assertSafePath rejects for filePath", async () => {
+      mockedAssertSafePath.mockRejectedValueOnce(
+        new Error('[TILER_ALLOWED_DIRS] Access denied: "filePath" resolves outside allowed directories.')
+      );
+      const tool = mock.getTool("tiler")!;
+      const res = (await tool.handler({ filePath: "/restricted/image.png" }, {} as any)) as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Error tiling image");
+      expect(res.content[0].text).toContain("[TILER_ALLOWED_DIRS]");
+    });
+
     it("wraps errors from pipeline", async () => {
       mockedAnalyzeAndPreview.mockRejectedValue(new Error("Sharp failed"));
       const tool = mock.getTool("tiler")!;
@@ -598,6 +616,7 @@ describe("registerTilerTool", () => {
       const res = result as any;
       const imageBlocks = res.content.filter((c: any) => c.type === "image");
       expect(imageBlocks).toHaveLength(5);
+      expect(mockedAssertSafePath).toHaveBeenCalledWith("/tiles", "tilesDir", true);
     });
 
     it("respects custom start/end range", async () => {
@@ -685,6 +704,16 @@ describe("registerTilerTool", () => {
       const images = res.content.filter((c: any) => c.type === "image");
       expect(images[0].mimeType).toBe("image/png");
       expect(images[0].data).toBe("AAAA");
+    });
+
+    it("returns isError when assertSafePath rejects for tilesDir", async () => {
+      mockedAssertSafePath.mockRejectedValueOnce(
+        new Error('[TILER_ALLOWED_DIRS] Access denied: "tilesDir" resolves outside allowed directories.')
+      );
+      const tool = mock.getTool("tiler")!;
+      const res = (await tool.handler({ tilesDir: "/restricted/tiles" }, {} as any)) as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("[TILER_ALLOWED_DIRS]");
     });
 
     it("wraps errors from listTilesInDirectory", async () => {
@@ -1061,6 +1090,20 @@ describe("registerTilerTool", () => {
       expect(res.content[0].text).toContain("Scroll-stitched 2 segments");
     });
 
+    it("returns isError when assertSafePath rejects for screenshotPath", async () => {
+      mockedAssertSafePath.mockRejectedValueOnce(
+        new Error('[TILER_ALLOWED_DIRS] Access denied: "screenshotPath" resolves outside allowed directories.')
+      );
+      const tool = mock.getTool("tiler")!;
+      const res = (await tool.handler(
+        { screenshotPath: "/restricted/screenshot.png", url: "https://example.com" },
+        {} as any
+      )) as any;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Error capturing and tiling URL");
+      expect(res.content[0].text).toContain("[TILER_ALLOWED_DIRS]");
+    });
+
     it("wraps errors from captureUrl", async () => {
       mockedCaptureUrl.mockRejectedValue(new Error("Chrome crashed"));
       const tool = mock.getTool("tiler")!;
@@ -1083,6 +1126,7 @@ describe("registerTilerTool", () => {
       const res = result as any;
       expect(res.isError).toBeUndefined();
       expect(mockedCaptureUrl).not.toHaveBeenCalled();
+      expect(mockedAssertSafePath).toHaveBeenCalledWith("/existing/screenshot.png", "screenshotPath", true);
     });
 
     it("passes captureInfo to buildPhase2Response", async () => {
@@ -1182,8 +1226,7 @@ describe("registerTilerTool", () => {
 
   describe("screenshot reuse error handling", () => {
     it("throws descriptive error when screenshot exists but Sharp can't read it (no url)", async () => {
-      const mockedAccess = vi.mocked(fsPromises.access);
-      mockedAccess.mockResolvedValue(undefined);
+      vi.mocked(fsPromises.stat).mockResolvedValue({ isFile: () => true } as any);
       const mockedSharp = vi.mocked(sharp);
       mockedSharp.mockReturnValue({
         metadata: vi.fn().mockRejectedValue(new Error("Input file has truncated header")),
@@ -1205,8 +1248,7 @@ describe("registerTilerTool", () => {
     });
 
     it("throws error when screenshot has zero dimensions", async () => {
-      const mockedAccess = vi.mocked(fsPromises.access);
-      mockedAccess.mockResolvedValue(undefined);
+      vi.mocked(fsPromises.stat).mockResolvedValue({ isFile: () => true } as any);
       const mockedSharp = vi.mocked(sharp);
       mockedSharp.mockReturnValue({
         metadata: vi.fn().mockResolvedValue({ width: 0, height: 0 }),
@@ -1226,8 +1268,7 @@ describe("registerTilerTool", () => {
     });
 
     it("throws error when screenshot has undefined dimensions", async () => {
-      const mockedAccess = vi.mocked(fsPromises.access);
-      mockedAccess.mockResolvedValue(undefined);
+      vi.mocked(fsPromises.stat).mockResolvedValue({ isFile: () => true } as any);
       const mockedSharp = vi.mocked(sharp);
       mockedSharp.mockReturnValue({
         metadata: vi.fn().mockResolvedValue({ width: undefined, height: undefined }),
@@ -1248,8 +1289,7 @@ describe("registerTilerTool", () => {
     });
 
     it("still says 'not found' when file truly doesn't exist (no url)", async () => {
-      const mockedAccess = vi.mocked(fsPromises.access);
-      mockedAccess.mockRejectedValue(new Error("ENOENT"));
+      vi.mocked(fsPromises.stat).mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
 
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
@@ -1262,8 +1302,7 @@ describe("registerTilerTool", () => {
     });
 
     it("recaptures from url when screenshot exists but unreadable", async () => {
-      const mockedAccess = vi.mocked(fsPromises.access);
-      mockedAccess.mockResolvedValue(undefined);
+      vi.mocked(fsPromises.stat).mockResolvedValue({ isFile: () => true } as any);
       const mockedSharp = vi.mocked(sharp);
       mockedSharp.mockReturnValue({
         metadata: vi.fn().mockRejectedValue(new Error("corrupt")),

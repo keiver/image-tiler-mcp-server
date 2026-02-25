@@ -22,6 +22,7 @@ import {
   computeElicitationData,
 } from "../services/tiling-pipeline.js";
 import { tryElicitation } from "../services/elicitation.js";
+import { assertSafePath } from "../security.js";
 import { sanitizeHostname, withTimeout } from "../utils.js";
 import { analyzeTiles } from "../services/tile-analyzer.js";
 import type { ResolvedImageSource, TileMetadata } from "../types.js";
@@ -183,6 +184,7 @@ async function handleGetTiles(
       };
     }
 
+    await assertSafePath(tilesDir, "tilesDir", true);
     const tilePaths = await listTilesInDirectory(tilesDir);
     const totalTiles = tilePaths.length;
 
@@ -323,6 +325,9 @@ async function handleTileImage(
   let response: { content: ContentBlock[]; isError?: boolean } | undefined;
 
   try {
+    if (filePath) {
+      await assertSafePath(filePath, "filePath", true);
+    }
     source = await resolveImageSource({ filePath, sourceUrl, dataUrl, imageBase64 });
 
     const formatError = validateFormat(source.localPath);
@@ -480,7 +485,7 @@ async function handleCaptureAndTile(
     deprecationWarnings,
   } = params;
 
-  const resolvedOutputDir = resolveOutputDirForCapture(outputDir);
+  const resolvedOutputDir = await resolveOutputDirForCapture(outputDir);
 
   try {
     await fs.mkdir(resolvedOutputDir, { recursive: true });
@@ -493,13 +498,19 @@ async function handleCaptureAndTile(
     let capturedUrl = url;
 
     if (existingScreenshotPath) {
+      await assertSafePath(existingScreenshotPath, "screenshotPath", true);
       // Check file existence and readability separately for distinct error messages
       let fileExists = false;
       try {
-        await fs.access(existingScreenshotPath);
+        const stat = await fs.stat(existingScreenshotPath);
+        if (!stat.isFile()) {
+          throw new Error(`screenshotPath is a directory, not an image file: ${existingScreenshotPath}`);
+        }
         fileExists = true;
-      } catch {
-        // File not found
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+        // file doesn't exist -- fileExists stays false
       }
 
       if (fileExists) {

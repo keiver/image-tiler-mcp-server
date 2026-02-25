@@ -4,6 +4,7 @@ import { setMaxListeners } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { isUrlCaptureDisabled } from "../security.js";
 import sharp from "sharp";
 import WebSocket from "ws";
 import {
@@ -441,6 +442,13 @@ async function triggerLazyLoading(ws: WebSocket, signal?: AbortSignal): Promise<
 // ─── Main Capture Function ──────────────────────────────────────────
 
 export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureResult> {
+  if (isUrlCaptureDisabled()) {
+    throw new Error(
+      "URL capture is disabled (TILER_DISABLE_URL_CAPTURE=1). " +
+      "Configure network-level Chrome isolation before enabling."
+    );
+  }
+
   const {
     url,
     viewportWidth = CAPTURE_DEFAULT_VIEWPORT_WIDTH,

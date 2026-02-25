@@ -30,7 +30,7 @@ export const TilerInputSchema = {
     .string()
     .url("Must be a valid URL")
     .optional()
-    .describe("HTTPS URL to download the image from (max 50MB, 30s timeout)"),
+    .describe("URL to download the image from (max 50MB, 30s timeout). https: uses SSRF filtering; http: allowed for local dev servers"),
   dataUrl: z
     .string()
     .max(MAX_DATA_URL_LENGTH, `Data URL must not exceed ${MAX_DATA_URL_LENGTH} characters`)
