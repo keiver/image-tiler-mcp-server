@@ -65,6 +65,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "request-filtering-agent": "^3.2.0",
     "sharp": "^0.33.5",
     "ws": "^8.19.0",
     "zod": "^3.24.1"

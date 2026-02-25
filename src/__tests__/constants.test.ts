@@ -238,8 +238,8 @@ describe("constants", () => {
       expect(DOWNLOAD_TIMEOUT_MS).toBe(30_000);
     });
 
-    it("ALLOWED_URL_PROTOCOLS only includes https:", () => {
-      expect(ALLOWED_URL_PROTOCOLS).toEqual(["https:"]);
+    it("ALLOWED_URL_PROTOCOLS includes https: and http:", () => {
+      expect(ALLOWED_URL_PROTOCOLS).toEqual(["https:", "http:"]);
     });
 
     it("MAX_BASE64_LENGTH is ~50MB decoded", () => {

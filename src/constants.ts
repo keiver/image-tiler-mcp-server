@@ -58,7 +58,8 @@ export const DEFAULT_MAX_DIMENSION = 10000;
 // Image source resolution
 export const MAX_DOWNLOAD_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 export const DOWNLOAD_TIMEOUT_MS = 30_000; // 30 seconds
-export const ALLOWED_URL_PROTOCOLS = ["https:"] as const;
+export const ALLOWED_URL_PROTOCOLS = ["https:", "http:"] as const;
+export const MAX_REDIRECT_HOPS = 5;
 export const MAX_BASE64_LENGTH = 67_108_864; // ~50MB decoded (base64 is ~4/3x)
 export const MAX_DATA_URL_LENGTH = MAX_BASE64_LENGTH + 256; // base64 payload + data URL prefix overhead
 
@@ -104,3 +105,7 @@ export const MAX_CHROME_JSON_BYTES = 1_048_576; // 1MB
 // Preview rendering
 export const MAX_PREVIEW_PIXELS = 16_000_000; // Safari's canvas/image rendering limit
 export const MIN_PREVIEW_WIDTH = 800; // Floor that prevents tall-image width crushing
+
+// Security environment variable names
+export const ALLOWED_DIRS_ENV_VAR = "TILER_ALLOWED_DIRS";
+export const DISABLE_URL_CAPTURE_ENV_VAR = "TILER_DISABLE_URL_CAPTURE";
