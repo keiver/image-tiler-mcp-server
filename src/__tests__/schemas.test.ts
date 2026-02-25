@@ -86,6 +86,52 @@ describe("TilerInputSchema", () => {
     });
   });
 
+  describe("mobile emulation fields", () => {
+    it("mobile is optional and undefined by default", () => {
+      const result = tilerSchema.parse({});
+      expect(result.mobile).toBeUndefined();
+    });
+
+    it("mobile accepts true", () => {
+      const result = tilerSchema.parse({ url: "https://example.com", mobile: true });
+      expect(result.mobile).toBe(true);
+    });
+
+    it("mobile accepts false", () => {
+      const result = tilerSchema.parse({ url: "https://example.com", mobile: false });
+      expect(result.mobile).toBe(false);
+    });
+
+    it("deviceScaleFactor is optional and undefined by default", () => {
+      const result = tilerSchema.parse({});
+      expect(result.deviceScaleFactor).toBeUndefined();
+    });
+
+    it("deviceScaleFactor accepts valid value", () => {
+      const result = tilerSchema.parse({ url: "https://example.com", deviceScaleFactor: 2 });
+      expect(result.deviceScaleFactor).toBe(2);
+    });
+
+    it("deviceScaleFactor rejects below minimum", () => {
+      expect(() => tilerSchema.parse({ url: "https://example.com", deviceScaleFactor: 0.05 })).toThrow("0.1");
+    });
+
+    it("deviceScaleFactor rejects above maximum", () => {
+      expect(() => tilerSchema.parse({ url: "https://example.com", deviceScaleFactor: 6 })).toThrow("5");
+    });
+
+    it("userAgent is optional and undefined by default", () => {
+      const result = tilerSchema.parse({});
+      expect(result.userAgent).toBeUndefined();
+    });
+
+    it("userAgent accepts a string", () => {
+      const ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)";
+      const result = tilerSchema.parse({ url: "https://example.com", userAgent: ua });
+      expect(result.userAgent).toBe(ua);
+    });
+  });
+
   describe("capture fields", () => {
     it("viewportWidth accepts valid range", () => {
       const result = tilerSchema.parse({ url: "https://example.com", viewportWidth: 1280 });

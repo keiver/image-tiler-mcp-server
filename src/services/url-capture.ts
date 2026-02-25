@@ -23,6 +23,9 @@ import {
   LAZY_LOAD_SCROLL_PAUSE_MS,
   LAZY_LOAD_IMAGE_TIMEOUT_MS,
   LAZY_LOAD_TOTAL_TIMEOUT_MS,
+  CAPTURE_MOBILE_VIEWPORT_WIDTH,
+  CAPTURE_MOBILE_DEVICE_SCALE_FACTOR,
+  DEFAULT_MOBILE_USER_AGENT,
 } from "../constants.js";
 import { withTimeout } from "../utils.js";
 import type { CaptureUrlOptions, CaptureResult } from "../types.js";
@@ -316,6 +319,7 @@ async function captureWithStitching(
   ws: WebSocket,
   width: number,
   fullHeight: number,
+  deviceScaleFactor: number,
   signal?: AbortSignal,
 ): Promise<{ buffer: Buffer; segments: number }> {
   const segmentHeight = CHROME_MAX_CAPTURE_HEIGHT;
@@ -339,7 +343,7 @@ async function captureWithStitching(
     // Wait for rendering to settle
     await new Promise((r) => setTimeout(r, CAPTURE_STITCH_SETTLE_MS));
 
-    // Capture with clip
+    // Capture with clip (scale by DPR so stitched output matches non-stitched path)
     const result = await sendCdpCommand(ws, "Page.captureScreenshot", {
       format: "png",
       clip: {
@@ -347,7 +351,7 @@ async function captureWithStitching(
         y: offset,
         width,
         height: captureHeight,
-        scale: 1,
+        scale: deviceScaleFactor,
       },
       captureBeyondViewport: true,
     }, 30_000, signal);
@@ -362,7 +366,7 @@ async function captureWithStitching(
     }
     segments.push({
       buffer: segmentBuffer,
-      top: offset,
+      top: offset * deviceScaleFactor,
     });
 
     offset += captureHeight;
@@ -378,8 +382,8 @@ async function captureWithStitching(
   const stitched = await withTimeout(
     sharp({
       create: {
-        width,
-        height: fullHeight,
+        width: width * deviceScaleFactor,
+        height: fullHeight * deviceScaleFactor,
         channels: 4 as const,
         background: { r: 255, g: 255, b: 255, alpha: 1 },
       },
@@ -451,11 +455,24 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
 
   const {
     url,
-    viewportWidth = CAPTURE_DEFAULT_VIEWPORT_WIDTH,
     waitUntil = "load",
     delay = 0,
     timeout = CAPTURE_DEFAULT_TIMEOUT_MS,
+    mobile = false,
+    userAgent,
   } = options;
+
+  // Apply mobile-aware defaults: when mobile is true and the caller
+  // didn't explicitly provide viewportWidth / deviceScaleFactor,
+  // use phone-sized values instead of desktop defaults.
+  const viewportWidth = options.viewportWidth
+    ?? (mobile ? CAPTURE_MOBILE_VIEWPORT_WIDTH : CAPTURE_DEFAULT_VIEWPORT_WIDTH);
+  const deviceScaleFactor = options.deviceScaleFactor
+    ?? (mobile ? CAPTURE_MOBILE_DEVICE_SCALE_FACTOR : 1);
+
+  // Apply mobile user agent default when mobile is true and no explicit UA
+  const effectiveUserAgent = userAgent
+    ?? (mobile ? DEFAULT_MOBILE_USER_AGENT : undefined);
 
   // URL validation
   let parsed: URL;
@@ -628,9 +645,16 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
     await sendCdpCommand(ws, "Emulation.setDeviceMetricsOverride", {
       width: viewportWidth,
       height: CAPTURE_DEFAULT_VIEWPORT_HEIGHT,
-      deviceScaleFactor: 1,
-      mobile: false,
+      deviceScaleFactor,
+      mobile,
     }, 30_000, signal);
+
+    // Set user agent override (explicit userAgent, or mobile default)
+    if (effectiveUserAgent) {
+      await sendCdpCommand(ws, "Emulation.setUserAgentOverride", {
+        userAgent: effectiveUserAgent,
+      }, 30_000, signal);
+    }
 
     // Navigate and wait
     const remainingTimeout = Math.max(1000, timeout - 15_000); // reserve ~15s for setup
@@ -713,8 +737,8 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       await sendCdpCommand(ws, "Emulation.setDeviceMetricsOverride", {
         width: pageWidth,
         height: pageHeight,
-        deviceScaleFactor: 1,
-        mobile: false,
+        deviceScaleFactor,
+        mobile,
       }, 30_000, signal);
 
       const result = await sendCdpCommand(ws, "Page.captureScreenshot", {
@@ -735,11 +759,11 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       await sendCdpCommand(ws, "Emulation.setDeviceMetricsOverride", {
         width: pageWidth,
         height: pageHeight,
-        deviceScaleFactor: 1,
-        mobile: false,
+        deviceScaleFactor,
+        mobile,
       }, 30_000, signal);
 
-      const stitchResult = await captureWithStitching(ws, pageWidth, pageHeight, signal);
+      const stitchResult = await captureWithStitching(ws, pageWidth, pageHeight, deviceScaleFactor, signal);
       buffer = stitchResult.buffer;
       segmentsStitched = stitchResult.segments;
     }
@@ -748,6 +772,8 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       buffer,
       pageWidth,
       pageHeight,
+      viewportWidth,
+      deviceScaleFactor,
       url,
     };
 

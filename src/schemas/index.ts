@@ -54,7 +54,7 @@ export const TilerInputSchema = {
     .min(320, "Viewport width must be >= 320px")
     .max(3840, "Viewport width must be <= 3840px")
     .optional()
-    .describe("Browser viewport width in pixels. Defaults to 1280 if omitted."),
+    .describe("Browser viewport width in pixels. Defaults to 1280 for desktop, 390 when mobile is true."),
   waitUntil: z
     .enum(WAIT_UNTIL_OPTIONS)
     .default("load")
@@ -66,6 +66,23 @@ export const TilerInputSchema = {
     .max(30000, "Delay must be <= 30000ms")
     .default(0)
     .describe("Additional delay in ms after the page is loaded, before capturing (default: 0)"),
+  mobile: z
+    .boolean()
+    .optional()
+    .describe(
+      "Whether to emulate a mobile device. When true, defaults viewportWidth to 390, " +
+      "deviceScaleFactor to 2, and sets a mobile user agent if not explicitly provided."
+    ),
+  deviceScaleFactor: z
+    .number()
+    .min(0.1, "deviceScaleFactor must be >= 0.1")
+    .max(5, "deviceScaleFactor must be <= 5")
+    .optional()
+    .describe("Device pixel ratio (e.g., 2 for retina). Defaults to 1 for desktop, 2 when mobile is true."),
+  userAgent: z
+    .string()
+    .optional()
+    .describe("Custom user agent string"),
   screenshotPath: z
     .string()
     .optional()

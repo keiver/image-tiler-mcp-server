@@ -66,7 +66,7 @@ vi.mock("node:http", () => ({
 }));
 
 import { findChromePath, captureUrl } from "../services/url-capture.js";
-import { MAX_CAPTURE_HEIGHT, CHROME_MAX_CAPTURE_HEIGHT, MAX_CHROME_STDERR_BYTES, CAPTURE_DEFAULT_VIEWPORT_WIDTH, CAPTURE_DEFAULT_VIEWPORT_HEIGHT } from "../constants.js";
+import { MAX_CAPTURE_HEIGHT, CHROME_MAX_CAPTURE_HEIGHT, MAX_CHROME_STDERR_BYTES, CAPTURE_DEFAULT_VIEWPORT_WIDTH, CAPTURE_DEFAULT_VIEWPORT_HEIGHT, DEFAULT_MOBILE_USER_AGENT, CAPTURE_MOBILE_VIEWPORT_WIDTH, CAPTURE_MOBILE_DEVICE_SCALE_FACTOR } from "../constants.js";
 
 // ─── Chrome Detection ──────────────────────────────────────────────
 
@@ -215,6 +215,12 @@ describe("captureUrl", () => {
         }
       }, 0);
     });
+  }
+
+  function getSentCdpCommands() {
+    return mockWsInstance.send.mock.calls.map(
+      (call: [string]) => JSON.parse(call[0]) as { method: string; params?: Record<string, unknown> }
+    );
   }
 
   it("rejects invalid URLs", async () => {
@@ -415,9 +421,7 @@ describe("captureUrl", () => {
     await captureUrl({ url: "https://example.com" });
 
     // Collect all CDP commands sent
-    const sentCommands = mockWsInstance.send.mock.calls.map(
-      (call: [string]) => JSON.parse(call[0]) as { method: string; params?: Record<string, unknown> }
-    );
+    const sentCommands = getSentCdpCommands();
 
     // Find the Runtime.evaluate call with the lazy loading script
     const lazyLoadCall = sentCommands.find(
@@ -489,9 +493,7 @@ describe("captureUrl", () => {
     await captureUrl({ url: "https://example.com" });
 
     // Collect all CDP commands sent
-    const sentCommands = mockWsInstance.send.mock.calls.map(
-      (call: [string]) => JSON.parse(call[0]) as { method: string; params?: Record<string, unknown> }
-    );
+    const sentCommands = getSentCdpCommands();
 
     // Find the lazy loading Runtime.evaluate call
     const lazyLoadCall = sentCommands.find(
@@ -561,6 +563,228 @@ describe("captureUrl", () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content width=-5"));
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content height=-10"));
     warnSpy.mockRestore();
+  });
+
+  // ─── Mobile Emulation Tests ──────────────────────────────────────
+
+  it("forwards mobile and deviceScaleFactor in Emulation.setDeviceMetricsOverride", async () => {
+    setupCdpAutoResponder(390, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", viewportWidth: 390, mobile: true, deviceScaleFactor: 2 });
+
+    const sentCommands = getSentCdpCommands();
+    const metricsOverrides = sentCommands.filter(
+      (cmd: { method: string }) => cmd.method === "Emulation.setDeviceMetricsOverride"
+    );
+    // All setDeviceMetricsOverride calls should use mobile: true and deviceScaleFactor: 2
+    expect(metricsOverrides.length).toBeGreaterThanOrEqual(1);
+    for (const cmd of metricsOverrides) {
+      expect(cmd.params!.mobile).toBe(true);
+      expect(cmd.params!.deviceScaleFactor).toBe(2);
+    }
+  });
+
+  it("calls Emulation.setUserAgentOverride when userAgent is provided", async () => {
+    setupCdpAutoResponder(1280, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    const ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)";
+    await captureUrl({ url: "https://example.com", userAgent: ua });
+
+    const sentCommands = getSentCdpCommands();
+    const uaOverride = sentCommands.find(
+      (cmd: { method: string }) => cmd.method === "Emulation.setUserAgentOverride"
+    );
+    expect(uaOverride).toBeDefined();
+    expect(uaOverride!.params!.userAgent).toBe(ua);
+  });
+
+  it("does not call Emulation.setUserAgentOverride when userAgent is omitted", async () => {
+    setupCdpAutoResponder(1280, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com" });
+
+    const sentCommands = getSentCdpCommands();
+    const uaOverride = sentCommands.find(
+      (cmd: { method: string }) => cmd.method === "Emulation.setUserAgentOverride"
+    );
+    expect(uaOverride).toBeUndefined();
+  });
+
+  it("defaults mobile to false and deviceScaleFactor to 1 when omitted", async () => {
+    setupCdpAutoResponder(1280, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com" });
+
+    const sentCommands = getSentCdpCommands();
+    const metricsOverride = sentCommands.find(
+      (cmd: { method: string }) => cmd.method === "Emulation.setDeviceMetricsOverride"
+    );
+    expect(metricsOverride).toBeDefined();
+    expect(metricsOverride!.params!.mobile).toBe(false);
+    expect(metricsOverride!.params!.deviceScaleFactor).toBe(1);
+  });
+
+  it("defaults to mobile viewport width and 2x scale when mobile is true without explicit overrides", async () => {
+    setupCdpAutoResponder(390, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", mobile: true });
+
+    const sentCommands = getSentCdpCommands();
+    const metricsOverrides = sentCommands.filter(
+      (cmd: { method: string }) => cmd.method === "Emulation.setDeviceMetricsOverride"
+    );
+    expect(metricsOverrides.length).toBeGreaterThanOrEqual(1);
+    for (const cmd of metricsOverrides) {
+      expect(cmd.params!.width).toBe(390);
+      expect(cmd.params!.mobile).toBe(true);
+      expect(cmd.params!.deviceScaleFactor).toBe(2);
+    }
+  });
+
+  it("respects explicit viewportWidth even with mobile: true", async () => {
+    setupCdpAutoResponder(414, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", mobile: true, viewportWidth: 414 });
+
+    const sentCommands = getSentCdpCommands();
+    const metricsOverride = sentCommands.find(
+      (cmd: { method: string }) => cmd.method === "Emulation.setDeviceMetricsOverride"
+    );
+    expect(metricsOverride).toBeDefined();
+    expect(metricsOverride!.params!.width).toBe(414);
+  });
+
+  it("respects explicit deviceScaleFactor even with mobile: true", async () => {
+    setupCdpAutoResponder(390, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", mobile: true, deviceScaleFactor: 3 });
+
+    const sentCommands = getSentCdpCommands();
+    const metricsOverrides = sentCommands.filter(
+      (cmd: { method: string }) => cmd.method === "Emulation.setDeviceMetricsOverride"
+    );
+    expect(metricsOverrides.length).toBeGreaterThanOrEqual(1);
+    for (const cmd of metricsOverrides) {
+      expect(cmd.params!.deviceScaleFactor).toBe(3);
+    }
+  });
+
+  // ─── Mobile User Agent Tests ─────────────────────────────────────
+
+  it("sets default mobile user agent when mobile is true and userAgent is omitted", async () => {
+    setupCdpAutoResponder(390, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", mobile: true });
+
+    const sentCommands = getSentCdpCommands();
+    const uaOverride = sentCommands.find(
+      (cmd: { method: string }) => cmd.method === "Emulation.setUserAgentOverride"
+    );
+    expect(uaOverride).toBeDefined();
+    expect(uaOverride!.params!.userAgent).toBe(DEFAULT_MOBILE_USER_AGENT);
+  });
+
+  it("uses explicit userAgent over mobile default", async () => {
+    setupCdpAutoResponder(390, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    const customUA = "Custom/1.0";
+    await captureUrl({ url: "https://example.com", mobile: true, userAgent: customUA });
+
+    const sentCommands = getSentCdpCommands();
+    const uaOverride = sentCommands.find(
+      (cmd: { method: string }) => cmd.method === "Emulation.setUserAgentOverride"
+    );
+    expect(uaOverride).toBeDefined();
+    expect(uaOverride!.params!.userAgent).toBe(customUA);
+  });
+
+  it("does not set user agent when mobile is false and userAgent is omitted", async () => {
+    setupCdpAutoResponder(1280, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", mobile: false });
+
+    const sentCommands = getSentCdpCommands();
+    const uaOverride = sentCommands.find(
+      (cmd: { method: string }) => cmd.method === "Emulation.setUserAgentOverride"
+    );
+    expect(uaOverride).toBeUndefined();
+  });
+
+  // ─── CaptureResult Fields Tests ────────────────────────────────
+
+  it("CaptureResult includes viewportWidth and deviceScaleFactor for desktop defaults", async () => {
+    setupCdpAutoResponder(1280, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    const result = await captureUrl({ url: "https://example.com" });
+    expect(result.viewportWidth).toBe(CAPTURE_DEFAULT_VIEWPORT_WIDTH);
+    expect(result.deviceScaleFactor).toBe(1);
+  });
+
+  it("CaptureResult includes mobile viewport and DPR when mobile is true", async () => {
+    setupCdpAutoResponder(390, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    const result = await captureUrl({ url: "https://example.com", mobile: true });
+    expect(result.viewportWidth).toBe(CAPTURE_MOBILE_VIEWPORT_WIDTH);
+    expect(result.deviceScaleFactor).toBe(CAPTURE_MOBILE_DEVICE_SCALE_FACTOR);
+  });
+
+  it("CaptureResult reflects explicit viewportWidth and deviceScaleFactor", async () => {
+    setupCdpAutoResponder(414, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    const result = await captureUrl({ url: "https://example.com", viewportWidth: 414, deviceScaleFactor: 3 });
+    expect(result.viewportWidth).toBe(414);
+    expect(result.deviceScaleFactor).toBe(3);
+  });
+
+  // ─── Stitching DPR Tests ──────────────────────────────────────
+
+  it("passes deviceScaleFactor to stitching clip.scale", async () => {
+    const tallHeight = CHROME_MAX_CAPTURE_HEIGHT + 1;
+    setupCdpAutoResponder(390, tallHeight);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", mobile: true });
+
+    const sentCommands = getSentCdpCommands();
+    const captureCommands = sentCommands.filter(
+      (cmd: { method: string }) => cmd.method === "Page.captureScreenshot"
+    );
+    expect(captureCommands.length).toBeGreaterThanOrEqual(1);
+    for (const cmd of captureCommands) {
+      const clip = cmd.params!.clip as { scale: number } | undefined;
+      if (clip) {
+        expect(clip.scale).toBe(CAPTURE_MOBILE_DEVICE_SCALE_FACTOR);
+      }
+    }
+  });
+
+  it("stitching creates canvas scaled by deviceScaleFactor", async () => {
+    const tallHeight = CHROME_MAX_CAPTURE_HEIGHT + 1;
+    setupCdpAutoResponder(390, tallHeight);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", mobile: true });
+
+    // Sharp should have been called with DPR-scaled dimensions
+    expect(mockSharp).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        width: 390 * CAPTURE_MOBILE_DEVICE_SCALE_FACTOR,
+        height: tallHeight * CAPTURE_MOBILE_DEVICE_SCALE_FACTOR,
+      }),
+    }));
   });
 
   // ─── Kill Switch ─────────────────────────────────────────────────

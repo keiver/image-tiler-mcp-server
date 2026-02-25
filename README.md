@@ -154,6 +154,12 @@ The server launches Chrome, captures a full-page screenshot (scroll-stitching pa
 
 To get only the screenshot without tiling, just ask for a screenshot and stop after the comparison step.
 
+### Capture a mobile view
+
+> capture https://tomotv.app as an iPhone (390px, mobile, 2x retina)
+
+The server captures using mobile emulation: `viewportWidth: 390`, `mobile: true`, `deviceScaleFactor: 2`. Sites that check for mobile UA or touch capability will serve their mobile layout.
+
 ### Customize tiling
 
 | What | Example prompt |
@@ -284,7 +290,10 @@ The tool uses a two-step process to let you choose the right model before tiling
 |---|---|---|---|---|
 | `url` | string | no | - | URL of the web page to capture. Requires Chrome/Chromium installed (or `CHROME_PATH` env var). |
 | `screenshotPath` | string | no | - | Path to a previously captured screenshot. Skips URL capture when provided. |
-| `viewportWidth` | number | no | `1280` | Browser viewport width in pixels (320-3840) |
+| `viewportWidth` | number | no | `1280` (`390` when `mobile`) | Browser viewport width in pixels (320-3840) |
+| `mobile` | boolean | no | `false` | Whether to emulate a mobile device. When true, defaults `viewportWidth` to 390, `deviceScaleFactor` to 2, and sets a mobile user agent. |
+| `deviceScaleFactor` | number | no | `1` (`2` when `mobile`) | Device pixel ratio (0.1-5). Use `2` for retina, `3` for high-DPI mobile. |
+| `userAgent` | string | no | - | Custom user agent string. Auto-set to a mobile Safari UA when `mobile: true` and no explicit value provided. |
 | `waitUntil` | string | no | `"load"` | When to consider the page loaded: `"load"`, `"networkidle"`, or `"domcontentloaded"` |
 | `delay` | number | no | `0` | Additional delay in ms after page load (max 30000) |
 

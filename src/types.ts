@@ -60,12 +60,17 @@ export interface CaptureUrlOptions {
   waitUntil?: "load" | "networkidle" | "domcontentloaded";
   delay?: number;
   timeout?: number;
+  mobile?: boolean;
+  deviceScaleFactor?: number;
+  userAgent?: string;
 }
 
 export interface CaptureResult {
   buffer: Buffer;
   pageWidth: number;
   pageHeight: number;
+  viewportWidth: number;
+  deviceScaleFactor: number;
   url: string;
   segmentsStitched?: number;
 }

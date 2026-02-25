@@ -32,6 +32,7 @@ import {
   MODEL_CONFIGS,
   MAX_TILES_PER_BATCH,
   CAPTURE_DEFAULT_VIEWPORT_WIDTH,
+  CAPTURE_MOBILE_VIEWPORT_WIDTH,
   SHARP_OPERATION_TIMEOUT_MS,
 } from "../constants.js";
 
@@ -86,7 +87,7 @@ export function registerTilerTool(server: McpServer): void {
       // Image source
       filePath, sourceUrl, dataUrl, imageBase64,
       // Capture
-      url, viewportWidth, waitUntil, delay, screenshotPath: existingScreenshotPath,
+      url, viewportWidth, waitUntil, delay, mobile, deviceScaleFactor, userAgent, screenshotPath: existingScreenshotPath,
       // Tile retrieval
       tilesDir, start, end, skipBlankTiles,
       // Tiling config
@@ -117,6 +118,7 @@ export function registerTilerTool(server: McpServer): void {
       if (url || existingScreenshotPath) {
         return handleCaptureAndTile(server, {
           url, viewportWidth, waitUntil, delay,
+          mobile, deviceScaleFactor, userAgent,
           existingScreenshotPath,
           explicitModel, tileSize, maxDimension, outputDir, format, includeMetadata,
           deprecationWarnings,
@@ -464,6 +466,9 @@ interface CaptureAndTileParams {
   viewportWidth?: number;
   waitUntil: "load" | "networkidle" | "domcontentloaded";
   delay: number;
+  mobile?: boolean;
+  deviceScaleFactor?: number;
+  userAgent?: string;
   existingScreenshotPath?: string;
   explicitModel?: typeof VISION_MODELS[number];
   tileSize?: number;
@@ -480,6 +485,7 @@ async function handleCaptureAndTile(
 ): Promise<{ content: ContentBlock[]; isError?: boolean }> {
   const {
     url, viewportWidth, waitUntil, delay,
+    mobile, deviceScaleFactor, userAgent,
     existingScreenshotPath,
     explicitModel, tileSize, maxDimension, outputDir, format, includeMetadata,
     deprecationWarnings,
@@ -496,6 +502,8 @@ async function handleCaptureAndTile(
     let captureHeight: number;
     let segmentsStitched: number | undefined;
     let capturedUrl = url;
+    let actualViewportWidth: number | undefined;
+    let actualDeviceScaleFactor: number | undefined;
 
     if (existingScreenshotPath) {
       await assertSafePath(existingScreenshotPath, "screenshotPath", true);
@@ -530,12 +538,13 @@ async function handleCaptureAndTile(
             );
           }
           // Recapture from URL
-          const resolvedViewport = viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
-          const captureResult = await captureUrl({ url, viewportWidth: resolvedViewport, waitUntil, delay });
+          const captureResult = await captureUrl({ url, viewportWidth, waitUntil, delay, mobile, deviceScaleFactor, userAgent });
           captureWidth = captureResult.pageWidth;
           captureHeight = captureResult.pageHeight;
           segmentsStitched = captureResult.segmentsStitched;
           capturedUrl = captureResult.url;
+          actualViewportWidth = captureResult.viewportWidth;
+          actualDeviceScaleFactor = captureResult.deviceScaleFactor;
 
           const baseName = sanitizeHostname(url);
           screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
@@ -546,12 +555,13 @@ async function handleCaptureAndTile(
         if (!url) {
           throw new Error(`Screenshot not found at ${existingScreenshotPath} and no url provided for recapture.`);
         }
-        const resolvedViewport = viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
-        const captureResult = await captureUrl({ url, viewportWidth: resolvedViewport, waitUntil, delay });
+        const captureResult = await captureUrl({ url, viewportWidth, waitUntil, delay, mobile, deviceScaleFactor, userAgent });
         captureWidth = captureResult.pageWidth;
         captureHeight = captureResult.pageHeight;
         segmentsStitched = captureResult.segmentsStitched;
         capturedUrl = captureResult.url;
+        actualViewportWidth = captureResult.viewportWidth;
+        actualDeviceScaleFactor = captureResult.deviceScaleFactor;
 
         const baseName = sanitizeHostname(url);
         screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
@@ -559,12 +569,13 @@ async function handleCaptureAndTile(
       }
     } else {
       // No existingScreenshotPath — mode detection guarantees url is defined
-      const resolvedViewport = viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH;
-      const captureResult = await captureUrl({ url: url!, viewportWidth: resolvedViewport, waitUntil, delay });
+      const captureResult = await captureUrl({ url: url!, viewportWidth, waitUntil, delay, mobile, deviceScaleFactor, userAgent });
       captureWidth = captureResult.pageWidth;
       captureHeight = captureResult.pageHeight;
       segmentsStitched = captureResult.segmentsStitched;
       capturedUrl = captureResult.url;
+      actualViewportWidth = captureResult.viewportWidth;
+      actualDeviceScaleFactor = captureResult.deviceScaleFactor;
 
       const baseName = sanitizeHostname(url!);
       screenshotPath = path.join(resolvedOutputDir, `${baseName}.png`);
@@ -579,7 +590,9 @@ async function handleCaptureAndTile(
         pageWidth: captureWidth,
         pageHeight: captureHeight,
         segmentsStitched: segmentsStitched ?? null,
-        viewportWidth: viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH,
+        viewportWidth: actualViewportWidth ?? viewportWidth ?? (mobile ? CAPTURE_MOBILE_VIEWPORT_WIDTH : CAPTURE_DEFAULT_VIEWPORT_WIDTH),
+        deviceScaleFactor: actualDeviceScaleFactor ?? deviceScaleFactor ?? (mobile ? 2 : 1),
+        mobile: mobile ?? false,
         waitUntil,
       };
 
@@ -625,7 +638,9 @@ async function handleCaptureAndTile(
         pageWidth: captureWidth,
         pageHeight: captureHeight,
         segmentsStitched: segmentsStitched ?? null,
-        viewportWidth: viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH,
+        viewportWidth: actualViewportWidth ?? viewportWidth ?? (mobile ? CAPTURE_MOBILE_VIEWPORT_WIDTH : CAPTURE_DEFAULT_VIEWPORT_WIDTH),
+        deviceScaleFactor: actualDeviceScaleFactor ?? deviceScaleFactor ?? (mobile ? 2 : 1),
+        mobile: mobile ?? false,
         waitUntil,
       };
       const { result, warnings } = await executeTiling(screenshotPath, resolvedOutputDir, {
@@ -678,7 +693,9 @@ async function handleCaptureAndTile(
       pageWidth: captureWidth,
       pageHeight: captureHeight,
       segmentsStitched: segmentsStitched ?? null,
-      viewportWidth: viewportWidth ?? CAPTURE_DEFAULT_VIEWPORT_WIDTH,
+      viewportWidth: actualViewportWidth ?? viewportWidth ?? (mobile ? CAPTURE_MOBILE_VIEWPORT_WIDTH : CAPTURE_DEFAULT_VIEWPORT_WIDTH),
+      deviceScaleFactor: actualDeviceScaleFactor ?? deviceScaleFactor ?? (mobile ? 2 : 1),
+      mobile: mobile ?? false,
       waitUntil,
     };
 

@@ -86,6 +86,8 @@ export const CHROME_MAX_CAPTURE_HEIGHT = 16384;
 export const CAPTURE_DEFAULT_VIEWPORT_WIDTH = 1280;
 export const CAPTURE_DEFAULT_VIEWPORT_HEIGHT = 800;
 export const CAPTURE_DEFAULT_TIMEOUT_MS = 60_000;
+export const CAPTURE_MOBILE_VIEWPORT_WIDTH = 390;
+export const CAPTURE_MOBILE_DEVICE_SCALE_FACTOR = 2;
 export const CAPTURE_STITCH_SETTLE_MS = 100;
 export const CAPTURE_IDLE_TIMEOUT_MS = 500;
 export const WAIT_UNTIL_OPTIONS = ["load", "networkidle", "domcontentloaded"] as const;
@@ -105,6 +107,10 @@ export const MAX_CHROME_JSON_BYTES = 1_048_576; // 1MB
 // Preview rendering
 export const MAX_PREVIEW_PIXELS = 16_000_000; // Safari's canvas/image rendering limit
 export const MIN_PREVIEW_WIDTH = 800; // Floor that prevents tall-image width crushing
+
+// Mobile emulation
+export const DEFAULT_MOBILE_USER_AGENT =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
 // Security environment variable names
 export const ALLOWED_DIRS_ENV_VAR = "TILER_ALLOWED_DIRS";

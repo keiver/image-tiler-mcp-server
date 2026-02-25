@@ -195,6 +195,8 @@ describe("registerTilerTool", () => {
       buffer: Buffer.from("screenshot-data"),
       pageWidth: 1280,
       pageHeight: 800,
+      viewportWidth: 1280,
+      deviceScaleFactor: 1,
       url: "https://example.com",
     });
     mockedResolveOutputDirForCapture.mockResolvedValue("/output/tiles");
@@ -1078,6 +1080,8 @@ describe("registerTilerTool", () => {
         buffer: Buffer.from("screenshot-data"),
         pageWidth: 1280,
         pageHeight: 20000,
+        viewportWidth: 1280,
+        deviceScaleFactor: 1,
         url: "https://example.com",
         segmentsStitched: 2,
       });
@@ -1147,6 +1151,21 @@ describe("registerTilerTool", () => {
       );
     });
 
+    it("passes mobile emulation params through to captureUrl", async () => {
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { url: "https://example.com", format: "webp", mobile: true, deviceScaleFactor: 2, userAgent: "Custom UA" },
+        {} as any
+      );
+      expect(mockedCaptureUrl).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mobile: true,
+          deviceScaleFactor: 2,
+          userAgent: "Custom UA",
+        })
+      );
+    });
+
     it("triggers capture mode with screenshotPath alone (no url)", async () => {
       const tool = mock.getTool("tiler")!;
       const result = await tool.handler(
@@ -1156,6 +1175,46 @@ describe("registerTilerTool", () => {
       const res = result as any;
       expect(res.isError).toBeUndefined();
       expect(mockedCaptureUrl).not.toHaveBeenCalled();
+    });
+
+    it("does not pre-resolve viewportWidth when mobile is true", async () => {
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { url: "https://example.com", format: "webp", mobile: true },
+        {} as any
+      );
+      expect(mockedCaptureUrl).toHaveBeenCalledWith(
+        expect.objectContaining({ mobile: true }),
+      );
+      // viewportWidth should be undefined (not pre-resolved to 1280)
+      const callArgs = mockedCaptureUrl.mock.calls[0][0];
+      expect(callArgs.viewportWidth).toBeUndefined();
+    });
+
+    it("includes mobile, deviceScaleFactor, and viewportWidth in captureInfo", async () => {
+      mockedCaptureUrl.mockResolvedValue({
+        buffer: Buffer.from("screenshot-data"),
+        pageWidth: 390,
+        pageHeight: 800,
+        viewportWidth: 390,
+        deviceScaleFactor: 2,
+        url: "https://example.com",
+      });
+      const tool = mock.getTool("tiler")!;
+      await tool.handler(
+        { url: "https://example.com", format: "webp", mobile: true },
+        {} as any
+      );
+      expect(mockedBuildPhase2Response).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          captureInfo: expect.objectContaining({
+            viewportWidth: 390,
+            deviceScaleFactor: 2,
+            mobile: true,
+          }),
+        })
+      );
     });
   });
 
