@@ -1,11 +1,15 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as http from "node:http";
+import * as https from "node:https";
 import { randomUUID } from "node:crypto";
+import { useAgent } from "request-filtering-agent";
 import {
   MAX_DOWNLOAD_SIZE_BYTES,
   DOWNLOAD_TIMEOUT_MS,
   ALLOWED_URL_PROTOCOLS,
+  MAX_REDIRECT_HOPS,
 } from "../constants.js";
 import type { ResolvedImageSource } from "../types.js";
 
@@ -31,10 +35,86 @@ function makeIdempotentCleanup(tempPath: string): () => Promise<string | undefin
   };
 }
 
-// Note: No private-IP / SSRF hostname validation is performed here. This is intentional
-// for a local stdio MCP server where the client is trusted. If this server is ever
-// exposed over a network transport, add hostname blocklisting for private IP ranges
-// (10.x, 172.16-31.x, 192.168.x, 169.254.x, localhost, ::1).
+// ─── Low-level HTTP download ──────────────────────────────────────────────
+
+interface DownloadResult {
+  statusCode: number;
+  headers: http.IncomingHttpHeaders;
+  body: Buffer;
+}
+
+/**
+ * Single-request download via http/https.request(). Returns status, headers, body.
+ * https: uses request-filtering-agent for SSRF protection (blocks private IPs at connect).
+ * http: skips the agent (intended for local dev servers).
+ */
+function downloadWithAgent(url: string, timeoutMs: number): Promise<DownloadResult> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    function settle(fn: () => void): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    }
+
+    const parsed = new URL(url);
+    const isHttps = parsed.protocol === "https:";
+    const agent = isHttps ? useAgent(url) : undefined;
+    const requestFn = isHttps ? https.request : http.request;
+
+    const req = requestFn(url, { agent }, (res) => {
+      const chunks: Buffer[] = [];
+      let downloadedBytes = 0;
+
+      res.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        downloadedBytes += chunk.length;
+        if (downloadedBytes > MAX_DOWNLOAD_SIZE_BYTES) {
+          res.destroy();
+          settle(() => reject(new Error(
+            `Downloaded image exceeded the ${MAX_DOWNLOAD_SIZE_BYTES} byte limit (at ${downloadedBytes} bytes). Download aborted.`
+          )));
+          return;
+        }
+        chunks.push(chunk);
+      });
+
+      res.on("end", () => {
+        settle(() => resolve({
+          statusCode: res.statusCode ?? 0,
+          headers: res.headers,
+          body: Buffer.concat(chunks),
+        }));
+      });
+
+      res.on("error", (err: Error) => {
+        settle(() => reject(new Error(`Failed to fetch image: ${err.message}`)));
+      });
+    });
+
+    req.on("error", (err: Error) => {
+      settle(() => reject(new Error(`Failed to fetch image: ${err.message}`)));
+    });
+
+    const timer = setTimeout(() => {
+      req.destroy();
+      settle(() => reject(new Error(`Download timed out after ${timeoutMs / 1000}s: ${url}`)));
+    }, timeoutMs);
+
+    req.end();
+  });
+}
+
+// ─── URL resolution with redirect following ────────────────────────────────
+
+/**
+ * Downloads a URL with SSRF-safe redirect following.
+ * - Each hop re-applies useAgent() for https: (no TOCTOU gap).
+ * - Blocks https: -> http: downgrades.
+ * - Allows http: -> https: upgrades.
+ * - Limits to MAX_REDIRECT_HOPS (5) hops.
+ */
 async function resolveUrl(url: string): Promise<ResolvedImageSource> {
   const parsed = new URL(url);
   if (!ALLOWED_URL_PROTOCOLS.includes(parsed.protocol as typeof ALLOWED_URL_PROTOCOLS[number])) {
@@ -43,94 +123,89 @@ async function resolveUrl(url: string): Promise<ResolvedImageSource> {
     );
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+  let currentUrl = url;
 
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      signal: controller.signal,
-      redirect: "follow",
-    });
-  } catch (err: unknown) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`Download timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s: ${url}`);
-    }
-    throw new Error(`Failed to fetch image: ${err instanceof Error ? err.message : String(err)}`);
-  } finally {
-    clearTimeout(timeout);
-  }
+  for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+    const result = await downloadWithAgent(currentUrl, DOWNLOAD_TIMEOUT_MS);
 
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} fetching ${url}`);
-  }
+    // Follow redirects
+    if (result.statusCode >= 300 && result.statusCode < 400) {
+      const location = result.headers.location;
+      if (!location) {
+        throw new Error(`HTTP ${result.statusCode} redirect with no Location header from ${currentUrl}`);
+      }
+      if (hop === MAX_REDIRECT_HOPS) {
+        throw new Error(`Too many redirects (>${MAX_REDIRECT_HOPS}) starting from ${url}`);
+      }
 
-  // Reject clearly non-image Content-Types (e.g. text/html, application/json)
-  const contentType = response.headers.get("content-type");
-  if (contentType) {
-    const lower = contentType.toLowerCase();
-    if (!lower.startsWith("image/") && !lower.startsWith("application/octet-stream")) {
-      throw new Error(
-        `URL returned non-image Content-Type "${contentType}". Expected an image/* MIME type.`
-      );
-    }
-  }
+      const nextUrl = new URL(location, currentUrl);
 
-  const contentLength = response.headers.get("content-length");
-  if (contentLength && parseInt(contentLength, 10) > MAX_DOWNLOAD_SIZE_BYTES) {
-    throw new Error(
-      `Image at ${url} is ${parseInt(contentLength, 10)} bytes, exceeding the ${MAX_DOWNLOAD_SIZE_BYTES} byte limit.`
-    );
-  }
-
-  // Stream the response body with incremental size tracking to avoid loading
-  // the entire body into memory before checking size (when Content-Length is missing)
-  const chunks: Buffer[] = [];
-  let downloadedBytes = 0;
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error("Response body is not readable");
-  }
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      downloadedBytes += value.byteLength;
-      if (downloadedBytes > MAX_DOWNLOAD_SIZE_BYTES) {
-        await reader.cancel();
+      // Block https -> http downgrade
+      if (new URL(currentUrl).protocol === "https:" && nextUrl.protocol === "http:") {
         throw new Error(
-          `Downloaded image exceeded the ${MAX_DOWNLOAD_SIZE_BYTES} byte limit (at ${downloadedBytes} bytes). Download aborted.`
+          `Redirect from https: to http: is blocked (${currentUrl} -> ${nextUrl.href})`
         );
       }
-      chunks.push(Buffer.from(value));
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const buffer = Buffer.concat(chunks);
 
-  // When Content-Type is ambiguous (octet-stream or missing), verify magic bytes
-  const ctLower = contentType?.toLowerCase() ?? "";
-  if (!ctLower.startsWith("image/")) {
-    if (!guessExtensionFromMagicBytes(buffer)) {
+      if (!ALLOWED_URL_PROTOCOLS.includes(nextUrl.protocol as typeof ALLOWED_URL_PROTOCOLS[number])) {
+        throw new Error(
+          `Redirect to unsupported protocol "${nextUrl.protocol}" (from ${currentUrl})`
+        );
+      }
+
+      currentUrl = nextUrl.href;
+      continue;
+    }
+
+    if (result.statusCode < 200 || result.statusCode >= 300) {
+      throw new Error(`HTTP ${result.statusCode} fetching ${currentUrl}`);
+    }
+
+    // Validate Content-Type
+    const contentType = result.headers["content-type"] ?? null;
+    if (contentType) {
+      const lower = contentType.toLowerCase();
+      if (!lower.startsWith("image/") && !lower.startsWith("application/octet-stream")) {
+        throw new Error(
+          `URL returned non-image Content-Type "${contentType}". Expected an image/* MIME type.`
+        );
+      }
+    }
+
+    // Check Content-Length (also enforced during streaming above)
+    const contentLengthHeader = result.headers["content-length"];
+    if (contentLengthHeader && parseInt(contentLengthHeader, 10) > MAX_DOWNLOAD_SIZE_BYTES) {
       throw new Error(
-        `Downloaded file is not a recognized image format (checked magic bytes). Content-Type was "${contentType ?? "missing"}".`
+        `Image at ${currentUrl} is ${parseInt(contentLengthHeader, 10)} bytes, exceeding the ${MAX_DOWNLOAD_SIZE_BYTES} byte limit.`
       );
     }
+
+    // When Content-Type is ambiguous (octet-stream or missing), verify magic bytes
+    const ctLower = (contentType ?? "").toLowerCase();
+    if (!ctLower.startsWith("image/")) {
+      if (!guessExtensionFromMagicBytes(result.body)) {
+        throw new Error(
+          `Downloaded file is not a recognized image format (checked magic bytes). Content-Type was "${contentType ?? "missing"}".`
+        );
+      }
+    }
+
+    const ext = guessExtensionFromContentType(contentType)
+      || guessExtensionFromMagicBytes(result.body)
+      || ".png";
+    const tempPath = makeTempPath(ext);
+    await fs.writeFile(tempPath, result.body);
+
+    return {
+      localPath: tempPath,
+      cleanup: makeIdempotentCleanup(tempPath),
+      sourceType: "url",
+      originalSource: url,
+    };
   }
 
-  const ext = guessExtensionFromContentType(response.headers.get("content-type"))
-    || guessExtensionFromMagicBytes(buffer)
-    || ".png";
-  const tempPath = makeTempPath(ext);
-  await fs.writeFile(tempPath, buffer);
-
-  return {
-    localPath: tempPath,
-    cleanup: makeIdempotentCleanup(tempPath),
-    sourceType: "url",
-    originalSource: url,
-  };
+  // Should not be reachable: loop always returns or throws
+  throw new Error(`Too many redirects (>${MAX_REDIRECT_HOPS}) starting from ${url}`);
 }
 
 async function resolveDataUrl(dataUrl: string): Promise<ResolvedImageSource> {
