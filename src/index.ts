@@ -4,6 +4,8 @@ import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerTilerTool } from "./tools/tiler.js";
+import { registerPrompts } from "./prompts/index.js";
+import { registerResources } from "./resources/index.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
@@ -36,6 +38,8 @@ const server = new McpServer({
 });
 
 registerTilerTool(server);
+registerPrompts(server);
+registerResources(server);
 
 async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();
