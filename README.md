@@ -14,13 +14,13 @@ MCP server that gives LLMs full-resolution vision by tiling images and capturing
 
 ## What You Can Do
 
-- **Visual QA for web pages.** Capture a URL, tile it, and let your AI assistant spot misaligned elements, wrong colors, and broken layouts at full resolution. Fix the code, re-capture, and verify the fix visually.
+- **Visual QA for web pages.** Capture a URL, tile it, and let the LLM spot misaligned elements, wrong colors, and broken layouts at full resolution. Fix the code, re-capture, and verify the fix visually.
 
-- **Mobile responsive testing.** Capture at any viewport width with mobile emulation, retina scaling, and a real mobile user agent. Your AI reviews the full mobile layout tile by tile, catching responsive breakpoint issues that only appear on small screens.
+- **Mobile responsive testing.** Capture at any viewport width with mobile emulation, retina scaling, and a real mobile user agent. The LLM reviews the full mobile layout tile by tile, catching responsive breakpoint issues that only appear on small screens.
 
-- **Full-resolution image analysis.** Diagrams, infographics, and design mockups lose critical details when LLMs downscale them. A 3,600 x 20,220px full-page capture that Claude would reject outright becomes 76 analyzable tiles, each at native resolution.
+- **Full-resolution image analysis.** Diagrams, infographics, and design mockups lose critical details when LLMs downscale them. A 3,600 x 20,220px full-page capture that Claude would crush to ~279 x 1,568 becomes 76 analyzable tiles, each at native resolution.
 
-- **Token-efficient tile inspection.** Each tile gets entropy-based content classification: blank, low-detail, mixed, or high-detail. Your AI skips blank tiles entirely and focuses tokens on what matters.
+- **Token-efficient tile inspection.** Each tile gets entropy-based content classification: blank, low-detail, mixed, or high-detail. The LLM skips blank tiles entirely and focuses tokens on what matters.
 
 - **Iterative visual workflow.** Capture, analyze, fix, re-capture. Versioned output directories (`_v1`, `_v2`, ...) preserve each iteration so you can compare before and after without overwriting previous results.
 
@@ -169,7 +169,7 @@ To get only the screenshot without tiling, just ask for a screenshot and stop af
 
 > capture https://tomotv.app in mobile view 
 
-This is responsive QA, not just a different viewport. The server captures with `mobile: true`, which sets a 390px viewport, 2x retina scale, and a mobile Safari user agent. Sites that check for mobile UA or touch capability serve their mobile layout, so your AI reviews exactly what a real phone user sees.
+This is responsive QA, not just a different viewport. The server captures with `mobile: true`, which sets a 390px viewport, 2x retina scale, and a mobile Safari user agent. Sites that check for mobile UA or touch capability serve their mobile layout, so the LLM reviews exactly what a real phone user sees.
 
 ### Customize tiling
 
@@ -181,10 +181,10 @@ This is responsive QA, not just a different viewport. The server captures with `
 | Tile from URL | "Download and tile https://keiver.dev/source.png" |
 | Tile from base64 | "Tile this base64 image: iVBORw0KGgo..." |
 
-## Supported Models
+## Presets
 
-| Model | Default tile | Tokens/tile | Max tile | ID |
-|-------|-------------|-------------|----------|-----|
+| Preset | Default tile | Tokens/tile | Max tile | ID |
+|--------|-------------|-------------|----------|-----|
 | Claude | 1092px | 1590 | 1568px | `claude` |
 | OpenAI (GPT-4o/o-series) | 768px | 765 | 2048px | `openai` |
 | Gemini | 768px | 258 | 768px | `gemini` |
@@ -196,7 +196,7 @@ This is responsive QA, not just a different viewport. The server captures with `
 
 ## Why Tile?
 
-You screenshot a full page, paste it into Claude, and Claude **rejects it**. Anything over 8,000px on either dimension gets refused outright.
+You screenshot a full page, paste it into Claude, and Claude **crushes it to a thumbnail**. Any image with a long edge over 1,568 pixels gets auto-downscaled to fit within ~1.15 megapixels. A 3,600 x 20,220px full-page capture becomes ~279 x 1,568, losing over 99% of its pixels before the model even sees it.
 
 GPT-4o is more forgiving but still destructive: it scales your image to fit within 2,048px, then scales the shortest side down to 768px, *then* tiles internally. An 8,192px-wide NASA panorama becomes ~1,456 x 768 before GPT-4o's own tiling even begins.
 
@@ -210,7 +210,7 @@ Using `assets/portrait.png` (3,600 x 20,220, a full-page National Geographic cap
 
 | Model | What happens | Impact |
 |-------|-------------|--------|
-| Claude | **Rejected**, exceeds 8,000px dimension limit | Cannot analyze the image at all |
+| Claude | Auto-downscaled to ~279 x 1,568 | ~0.6% of original pixels survive |
 | GPT-4o | Downscaled to ~365 x 2,048, then internally tiled | ~1% of original pixels survive the downscale |
 | Gemini 3 | Capped at 1,120 tokens per image (default) | Fixed token budget regardless of image size |
 
@@ -221,15 +221,15 @@ Using `assets/portrait.png` (3,600 x 20,220, a full-page National Geographic cap
 
 | Model | Tiles | Result |
 |-------|-------|--------|
-| Claude | 76 tiles at 1,092px | Every tile under 8,000px and 1,568px limits, full analysis |
+| Claude | 76 tiles at 1,092px | Every tile within 1,568px sweet spot, no downscaling |
 | GPT-4o | 135 tiles at 768px | Every tile under 2,048px, no pre-downscale needed |
-| Gemini 3 | 135 tiles at 768px | Each tile gets its own token budget |
+| Gemini 3 | 42 tiles at 1,536px | Each tile gets its own 1,120-token budget |
 
 Using `assets/landscape.png` (8,192 x 4,320, NASA image gallery):
 
 | Model | Without tiling | With tiling |
 |-------|----------------|-------------|
-| Claude | **Rejected** (8,192 > 8,000px limit) | 32 tiles at 1,092px, full analysis |
+| Claude | Auto-downscaled to ~1,568 x 827 (~3.7% of pixels survive) | 32 tiles at 1,092px, full analysis |
 | GPT-4o | Downscaled to ~1,456 x 768 (~3% of pixels survive) | 66 tiles at 768px, full resolution |
 | Gemini 3 | Capped at 1,120 tokens | 18 tiles at 1,536px, 18x token budget |
 

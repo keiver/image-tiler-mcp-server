@@ -65,8 +65,8 @@ export function registerResources(server: McpServer): void {
           text: `Image Tiler MCP Server -- Quick Reference
 
 WHY TILE:
-LLM vision systems downscale large images. A 3600x22000px screenshot sent whole
-to Claude becomes ~257x1568px, losing all fine text. Tiling splits the image into
+LLM vision systems downscale large images. A 3600x20220px screenshot sent whole
+to Claude becomes ~279x1568px, losing all fine text. Tiling splits the image into
 chunks that stay within each model's resolution sweet spot.
 
 WORKFLOW (minimum three tool calls):

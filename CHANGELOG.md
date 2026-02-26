@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.1]
+
+### Fixed
+- Wrong Gemini 3 tile count in README (was copy-pasted from Gemini row)
+- Stale example dimensions in README and resource guide (now match real portrait asset)
+- README wording: "rejects" to "downscales" for Claude, "Supported Models" to "Presets", "your AI" to "the LLM"
+
 ## [3.0.0]
 
 ### Added
