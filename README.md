@@ -349,7 +349,7 @@ The tool uses a two-step process to let you choose the right model before tiling
 | `deviceScaleFactor` | number | no | `1` (`2` when `mobile`) | Device pixel ratio (0.1-5). Use `2` for retina, `3` for high-DPI mobile. |
 | `userAgent` | string | no | - | Custom user agent string. Auto-set to a mobile Safari UA when `mobile: true` and no explicit value provided. |
 | `waitUntil` | string | no | `"load"` | When to consider the page loaded: `"load"`, `"networkidle"`, or `"domcontentloaded"` |
-| `delay` | number | no | `0` | Additional delay in ms after page load (max 30000) |
+| `delay` | number | no | `3000` | Additional delay in ms after page load (max 30000) |
 
 Supports scroll-stitching for pages taller than 16,384px. Automatically triggers lazy-loaded images (`loading="lazy"`) before capture by scrolling through the page. Pages without lazy images are unaffected.
 

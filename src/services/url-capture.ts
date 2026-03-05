@@ -497,7 +497,7 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
   // Reset per-capture so IDs stay small and don't leak state across calls
   cdpCommandId = 0;
 
-  // Overall timeout — signal is wired into CDP commands and wait conditions
+  // Overall timeout: signal is wired into CDP commands and wait conditions
   const abortController = new AbortController();
   const signal = abortController.signal;
   // Each CDP command/wait adds an abort listener; raise limit to avoid Node warning
@@ -816,9 +816,9 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
   } finally {
     clearTimeout(overallTimer);
 
-    // Close WebSocket (safe to call in any state — handles CONNECTING, OPEN, etc.)
+    // Close WebSocket (safe to call in any state, handles CONNECTING, OPEN, etc.)
     if (ws) {
-      try { ws.close(); } catch { /* already closed or failed — safe to ignore */ }
+      try { ws.close(); } catch { /* already closed or failed, safe to ignore */ }
     }
 
     // Kill Chrome
@@ -830,7 +830,7 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
         chrome.on("exit", () => clearTimeout(killTimer));
         chrome.kill("SIGTERM");
       } catch {
-        // Process already dead — safe to ignore
+        // Process already dead, safe to ignore
       }
     }
   }

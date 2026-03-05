@@ -9,3 +9,4 @@ src/__tests__
 .github
 .env
 .env.*
+coverage
