@@ -507,7 +507,7 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
 
   try {
     // Only use --no-sandbox when running as root or when explicitly requested via env var.
-    // Chrome's sandbox is an important security boundary — disabling it means a Chrome
+    // Chrome's sandbox is an important security boundary: disabling it means a Chrome
     // RCE exploit gives the attacker the user's full permissions.
     const needsNoSandbox = process.getuid?.() === 0 || process.env.CHROME_NO_SANDBOX === "1";
 
