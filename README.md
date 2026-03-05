@@ -149,6 +149,51 @@ Then point your MCP config to the built file:
 
 </details>
 
+<details>
+<summary>Docker</summary>
+
+Build the image:
+
+```bash
+git clone https://github.com/keiver/image-tiler-mcp-server.git
+cd image-tiler-mcp-server
+docker build -t image-tiler-mcp-server .
+```
+
+The image includes Chromium for URL capture. Chrome runs without sandbox by default when the container runs as root. To run as the built-in `node` user (recommended), set `CHROME_NO_SANDBOX=1`:
+
+```json
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "-i",
+    "-e", "CHROME_NO_SANDBOX=1",
+    "-v", "/path/to/your/images:/data",
+    "-e", "TILER_ALLOWED_DIRS=/data",
+    "image-tiler-mcp-server"
+  ]
+}
+```
+
+The `-i` flag is required (stdio transport). Mount a volume for any directories the server needs to read from or write to, and set `TILER_ALLOWED_DIRS` to restrict file access to those mounts.
+
+To disable URL capture entirely (no Chrome, no network access):
+
+```json
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "-i",
+    "-e", "TILER_DISABLE_URL_CAPTURE=1",
+    "-v", "/path/to/your/images:/data",
+    "-e", "TILER_ALLOWED_DIRS=/data",
+    "image-tiler-mcp-server"
+  ]
+}
+```
+
+</details>
+
 ## Usage
 
 ### Tile an image
