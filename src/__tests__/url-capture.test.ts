@@ -140,7 +140,7 @@ describe("captureUrl", () => {
         this.killed = true;
       }),
       pid: 12345,
-    });
+    }) as unknown as EventEmitter & Partial<ChildProcess>;
 
     mockSpawn.mockReturnValue(chromeProcess);
 
@@ -209,7 +209,12 @@ describe("captureUrl", () => {
         } else if (msg.method === "Page.captureScreenshot") {
           respondToCdp(id, { data: Buffer.from("screenshot-data").toString("base64") });
         } else if (msg.method === "Runtime.evaluate") {
-          respondToCdp(id, { result: { value: undefined } });
+          const expr = msg.params?.expression as string ?? "";
+          if (expr.includes("scrollHeight")) {
+            respondToCdp(id, { result: { value: pageHeight } });
+          } else {
+            respondToCdp(id, { result: { value: undefined } });
+          }
         } else {
           respondToCdp(id, {});
         }
@@ -235,7 +240,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "http://localhost:3000" });
+    const result = await captureUrl({ url: "http://localhost:3000", delay: 0 });
     expect(result.url).toBe("http://localhost:3000");
     expect(result.buffer).toBeInstanceOf(Buffer);
     expect(result.pageWidth).toBe(1280);
@@ -248,7 +253,7 @@ describe("captureUrl", () => {
       chromeProcess.emit("exit", 1);
     }, 0);
 
-    await expect(captureUrl({ url: "https://example.com" })).rejects.toThrow();
+    await expect(captureUrl({ url: "https://example.com", delay: 0 })).rejects.toThrow();
     // Chrome.kill should have been called (or chrome exited)
   });
 
@@ -268,7 +273,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, CHROME_MAX_CAPTURE_HEIGHT);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com" });
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
     expect(result.pageHeight).toBe(CHROME_MAX_CAPTURE_HEIGHT);
     expect(result.segmentsStitched).toBeUndefined();
     expect(result.buffer).toBeInstanceOf(Buffer);
@@ -279,7 +284,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, tallHeight);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com" });
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
     expect(result.pageHeight).toBe(tallHeight);
     expect(result.segmentsStitched).toBe(2);
     // Sharp should have been called to create the composite canvas
@@ -296,7 +301,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, tallHeight);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com" });
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
     expect(result.pageHeight).toBe(tallHeight);
     expect(result.segmentsStitched).toBe(4);
   });
@@ -308,7 +313,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, absurdHeight);
     setTimeout(emitDevToolsUrl, 0);
 
-    await expect(captureUrl({ url: "https://example.com" })).rejects.toThrow(
+    await expect(captureUrl({ url: "https://example.com", delay: 0 })).rejects.toThrow(
       `Page height ${absurdHeight}px exceeds maximum ${MAX_CAPTURE_HEIGHT}px`
     );
   });
@@ -317,11 +322,11 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, MAX_CAPTURE_HEIGHT);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com" });
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
     expect(result.pageHeight).toBe(MAX_CAPTURE_HEIGHT);
     // Should stitch (200,000 > 16,384)
     expect(result.segmentsStitched).toBeGreaterThan(1);
-  });
+  }, 15_000);
 
   // ─── Buffer Cap Tests ────────────────────────────────────────────
 
@@ -381,7 +386,7 @@ describe("captureUrl", () => {
     });
     setTimeout(emitDevToolsUrl, 0);
 
-    await expect(captureUrl({ url: "https://nonexistent.invalid" })).rejects.toThrow(
+    await expect(captureUrl({ url: "https://nonexistent.invalid", delay: 0 })).rejects.toThrow(
       /Chrome navigated to an error page.*This site can't be reached/
     );
   });
@@ -407,7 +412,7 @@ describe("captureUrl", () => {
     });
     setTimeout(emitDevToolsUrl, 0);
 
-    await expect(captureUrl({ url: "https://broken.test" })).rejects.toThrow(
+    await expect(captureUrl({ url: "https://broken.test", delay: 0 })).rejects.toThrow(
       /Chrome navigated to an error page/
     );
   });
@@ -418,7 +423,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com" });
+    await captureUrl({ url: "https://example.com", delay: 0 });
 
     // Collect all CDP commands sent
     const sentCommands = getSentCdpCommands();
@@ -479,7 +484,7 @@ describe("captureUrl", () => {
     });
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com" });
+    await captureUrl({ url: "https://example.com", delay: 0 });
 
     // Lazy loading must come before error check and capture
     expect(commandOrder.indexOf("lazy-load")).toBeLessThan(commandOrder.indexOf("error-check"));
@@ -490,7 +495,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com" });
+    await captureUrl({ url: "https://example.com", delay: 0 });
 
     // Collect all CDP commands sent
     const sentCommands = getSentCdpCommands();
@@ -521,7 +526,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(0, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com" });
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
     expect(result.pageWidth).toBe(CAPTURE_DEFAULT_VIEWPORT_WIDTH);
     expect(result.pageHeight).toBe(800);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content width=0"));
@@ -533,7 +538,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, 0);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com" });
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
     expect(result.pageWidth).toBe(1280);
     expect(result.pageHeight).toBe(CAPTURE_DEFAULT_VIEWPORT_HEIGHT);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content height=0"));
@@ -545,10 +550,11 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(0, 0);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com" });
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
     expect(result.pageWidth).toBe(CAPTURE_DEFAULT_VIEWPORT_WIDTH);
     expect(result.pageHeight).toBe(CAPTURE_DEFAULT_VIEWPORT_HEIGHT);
-    expect(warnSpy).toHaveBeenCalledTimes(2);
+    // 3 warnings: settle loop (scrollHeight=0), width fallback, height fallback
+    expect(warnSpy).toHaveBeenCalledTimes(3);
     warnSpy.mockRestore();
   });
 
@@ -557,7 +563,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(-5, -10);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com" });
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
     expect(result.pageWidth).toBe(CAPTURE_DEFAULT_VIEWPORT_WIDTH);
     expect(result.pageHeight).toBe(CAPTURE_DEFAULT_VIEWPORT_HEIGHT);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("content width=-5"));
@@ -571,7 +577,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(390, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com", viewportWidth: 390, mobile: true, deviceScaleFactor: 2 });
+    await captureUrl({ url: "https://example.com", viewportWidth: 390, mobile: true, deviceScaleFactor: 2, delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const metricsOverrides = sentCommands.filter(
@@ -590,7 +596,7 @@ describe("captureUrl", () => {
     setTimeout(emitDevToolsUrl, 0);
 
     const ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)";
-    await captureUrl({ url: "https://example.com", userAgent: ua });
+    await captureUrl({ url: "https://example.com", userAgent: ua, delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const uaOverride = sentCommands.find(
@@ -604,7 +610,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com" });
+    await captureUrl({ url: "https://example.com", delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const uaOverride = sentCommands.find(
@@ -617,7 +623,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com" });
+    await captureUrl({ url: "https://example.com", delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const metricsOverride = sentCommands.find(
@@ -632,7 +638,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(390, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com", mobile: true });
+    await captureUrl({ url: "https://example.com", mobile: true, delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const metricsOverrides = sentCommands.filter(
@@ -650,7 +656,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(414, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com", mobile: true, viewportWidth: 414 });
+    await captureUrl({ url: "https://example.com", mobile: true, viewportWidth: 414, delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const metricsOverride = sentCommands.find(
@@ -664,7 +670,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(390, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com", mobile: true, deviceScaleFactor: 3 });
+    await captureUrl({ url: "https://example.com", mobile: true, deviceScaleFactor: 3, delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const metricsOverrides = sentCommands.filter(
@@ -682,7 +688,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(390, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com", mobile: true });
+    await captureUrl({ url: "https://example.com", mobile: true, delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const uaOverride = sentCommands.find(
@@ -697,7 +703,7 @@ describe("captureUrl", () => {
     setTimeout(emitDevToolsUrl, 0);
 
     const customUA = "Custom/1.0";
-    await captureUrl({ url: "https://example.com", mobile: true, userAgent: customUA });
+    await captureUrl({ url: "https://example.com", mobile: true, userAgent: customUA, delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const uaOverride = sentCommands.find(
@@ -711,7 +717,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com", mobile: false });
+    await captureUrl({ url: "https://example.com", mobile: false, delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const uaOverride = sentCommands.find(
@@ -726,7 +732,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(1280, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com" });
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
     expect(result.viewportWidth).toBe(CAPTURE_DEFAULT_VIEWPORT_WIDTH);
     expect(result.deviceScaleFactor).toBe(1);
   });
@@ -735,7 +741,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(390, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com", mobile: true });
+    const result = await captureUrl({ url: "https://example.com", mobile: true, delay: 0 });
     expect(result.viewportWidth).toBe(CAPTURE_MOBILE_VIEWPORT_WIDTH);
     expect(result.deviceScaleFactor).toBe(CAPTURE_MOBILE_DEVICE_SCALE_FACTOR);
   });
@@ -744,7 +750,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(414, 800);
     setTimeout(emitDevToolsUrl, 0);
 
-    const result = await captureUrl({ url: "https://example.com", viewportWidth: 414, deviceScaleFactor: 3 });
+    const result = await captureUrl({ url: "https://example.com", viewportWidth: 414, deviceScaleFactor: 3, delay: 0 });
     expect(result.viewportWidth).toBe(414);
     expect(result.deviceScaleFactor).toBe(3);
   });
@@ -756,7 +762,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(390, tallHeight);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com", mobile: true });
+    await captureUrl({ url: "https://example.com", mobile: true, delay: 0 });
 
     const sentCommands = getSentCdpCommands();
     const captureCommands = sentCommands.filter(
@@ -776,7 +782,7 @@ describe("captureUrl", () => {
     setupCdpAutoResponder(390, tallHeight);
     setTimeout(emitDevToolsUrl, 0);
 
-    await captureUrl({ url: "https://example.com", mobile: true });
+    await captureUrl({ url: "https://example.com", mobile: true, delay: 0 });
 
     // Sharp should have been called with DPR-scaled dimensions
     expect(mockSharp).toHaveBeenCalledWith(expect.objectContaining({
@@ -787,14 +793,192 @@ describe("captureUrl", () => {
     }));
   });
 
+  // ─── DOM scrollHeight Cross-Check Tests ─────────────────────────
+
+  it("uses DOM scrollHeight when it exceeds cssContentSize", async () => {
+    // cssContentSize reports 800, but DOM scrollHeight is 4105
+    mockWsInstance.send = vi.fn((data: string) => {
+      const msg = JSON.parse(data);
+      const id = msg.id;
+      setTimeout(() => {
+        if (msg.method === "Page.navigate") {
+          respondToCdp(id, {});
+          respondToCdpEvent("Page.loadEventFired");
+        } else if (msg.method === "Page.getLayoutMetrics") {
+          respondToCdp(id, {
+            cssContentSize: { width: 1280, height: 800 },
+          });
+        } else if (msg.method === "Page.captureScreenshot") {
+          respondToCdp(id, { data: Buffer.from("screenshot-data").toString("base64") });
+        } else if (msg.method === "Runtime.evaluate") {
+          const expr = msg.params?.expression as string ?? "";
+          if (expr.includes("scrollHeight")) {
+            respondToCdp(id, { result: { value: 4105 } });
+          } else {
+            respondToCdp(id, { result: { value: undefined } });
+          }
+        } else {
+          respondToCdp(id, {});
+        }
+      }, 0);
+    });
+    setTimeout(emitDevToolsUrl, 0);
+
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
+    expect(result.pageHeight).toBe(4105);
+  });
+
+  it("uses cssContentSize when it exceeds DOM scrollHeight", async () => {
+    // cssContentSize reports 5000, but DOM scrollHeight is 3000
+    mockWsInstance.send = vi.fn((data: string) => {
+      const msg = JSON.parse(data);
+      const id = msg.id;
+      setTimeout(() => {
+        if (msg.method === "Page.navigate") {
+          respondToCdp(id, {});
+          respondToCdpEvent("Page.loadEventFired");
+        } else if (msg.method === "Page.getLayoutMetrics") {
+          respondToCdp(id, {
+            cssContentSize: { width: 1280, height: 5000 },
+          });
+        } else if (msg.method === "Page.captureScreenshot") {
+          respondToCdp(id, { data: Buffer.from("screenshot-data").toString("base64") });
+        } else if (msg.method === "Runtime.evaluate") {
+          const expr = msg.params?.expression as string ?? "";
+          if (expr.includes("scrollHeight")) {
+            respondToCdp(id, { result: { value: 3000 } });
+          } else {
+            respondToCdp(id, { result: { value: undefined } });
+          }
+        } else {
+          respondToCdp(id, {});
+        }
+      }, 0);
+    });
+    setTimeout(emitDevToolsUrl, 0);
+
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
+    expect(result.pageHeight).toBe(5000);
+  });
+
+  // ─── Settle Loop Tests ──────────────────────────────────────────
+
+  it("settle loop breaks early when height stabilizes", async () => {
+    let settleScrollHeightCalls = 0;
+    const scrollHeightExpr = "Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)";
+    mockWsInstance.send = vi.fn((data: string) => {
+      const msg = JSON.parse(data);
+      const id = msg.id;
+      setTimeout(() => {
+        if (msg.method === "Page.navigate") {
+          respondToCdp(id, {});
+          respondToCdpEvent("Page.loadEventFired");
+        } else if (msg.method === "Page.getLayoutMetrics") {
+          respondToCdp(id, {
+            cssContentSize: { width: 1280, height: 2000 },
+          });
+        } else if (msg.method === "Page.captureScreenshot") {
+          respondToCdp(id, { data: Buffer.from("screenshot-data").toString("base64") });
+        } else if (msg.method === "Runtime.evaluate") {
+          const expr = msg.params?.expression as string ?? "";
+          if (expr === scrollHeightExpr) {
+            settleScrollHeightCalls++;
+            // Height is stable from the start: 1500 on every poll.
+            // Settle loop: i=0 -> 1500 (prevHeight=0, no match), i=1 -> 1500 (matches, break).
+            // That's 2 settle polls + 1 final cross-check = 3 total.
+            respondToCdp(id, { result: { value: 1500 } });
+          } else if (expr.includes("scrollHeight")) {
+            // Lazy loading script also contains scrollHeight; respond normally
+            respondToCdp(id, { result: { value: undefined } });
+          } else {
+            respondToCdp(id, { result: { value: undefined } });
+          }
+        } else {
+          respondToCdp(id, {});
+        }
+      }, 0);
+    });
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", delay: 0 });
+
+    // Without early break: 3 settle polls + 1 cross-check = 4.
+    // With early break at i=1: 2 settle polls + 1 cross-check = 3.
+    expect(settleScrollHeightCalls).toBe(3);
+  });
+
+  it("falls back to cssContentSize when scrollHeight returns NaN", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockWsInstance.send = vi.fn((data: string) => {
+      const msg = JSON.parse(data);
+      const id = msg.id;
+      setTimeout(() => {
+        if (msg.method === "Page.navigate") {
+          respondToCdp(id, {});
+          respondToCdpEvent("Page.loadEventFired");
+        } else if (msg.method === "Page.getLayoutMetrics") {
+          respondToCdp(id, {
+            cssContentSize: { width: 1280, height: 2000 },
+          });
+        } else if (msg.method === "Page.captureScreenshot") {
+          respondToCdp(id, { data: Buffer.from("screenshot-data").toString("base64") });
+        } else if (msg.method === "Runtime.evaluate") {
+          const expr = msg.params?.expression as string ?? "";
+          if (expr.includes("scrollHeight")) {
+            respondToCdp(id, { result: { value: NaN } });
+          } else {
+            respondToCdp(id, { result: { value: undefined } });
+          }
+        } else {
+          respondToCdp(id, {});
+        }
+      }, 0);
+    });
+    setTimeout(emitDevToolsUrl, 0);
+
+    const result = await captureUrl({ url: "https://example.com", delay: 0 });
+    // NaN scrollHeight should be treated as 0, so cssContentSize height wins
+    expect(result.pageHeight).toBe(2000);
+    // Settle loop warning should fire since prevHeight stayed 0
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[url-capture] Layout settle: scrollHeight was 0 on all polls; relying on cssContentSize only"
+    );
+    warnSpy.mockRestore();
+  });
+
   // ─── Kill Switch ─────────────────────────────────────────────────
 
   it("rejects when URL capture is disabled via env", async () => {
     mockIsUrlCaptureDisabled.mockReturnValue(true);
     await expect(
-      captureUrl({ url: "https://example.com" })
+      captureUrl({ url: "https://example.com", delay: 0 })
     ).rejects.toThrow("URL capture is disabled");
     mockIsUrlCaptureDisabled.mockReturnValue(false);
+  });
+
+  // ─── --no-sandbox Conditional Logic ──────────────────────────────
+
+  it("spawn receives --no-sandbox when CHROME_NO_SANDBOX=1", async () => {
+    process.env.CHROME_NO_SANDBOX = "1";
+    setupCdpAutoResponder(1280, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", delay: 0 });
+
+    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(spawnArgs).toContain("--no-sandbox");
+    delete process.env.CHROME_NO_SANDBOX;
+  });
+
+  it("spawn does NOT include --no-sandbox when neither root nor env var set", async () => {
+    delete process.env.CHROME_NO_SANDBOX;
+    setupCdpAutoResponder(1280, 800);
+    setTimeout(emitDevToolsUrl, 0);
+
+    await captureUrl({ url: "https://example.com", delay: 0 });
+
+    const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+    expect(spawnArgs).not.toContain("--no-sandbox");
   });
 
   // ─── Abort Signal Tests ───────────────────────────────────────────
@@ -821,7 +1005,7 @@ describe("captureUrl", () => {
 
     // Short timeout so abort fires before the 30s CDP default
     await expect(
-      captureUrl({ url: "https://example.com", timeout: 16_000 })
+      captureUrl({ url: "https://example.com", timeout: 16_000, delay: 0 })
     ).rejects.toThrow("Capture timed out");
   }, 20_000);
 });

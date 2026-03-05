@@ -26,6 +26,8 @@ import {
   CAPTURE_MOBILE_VIEWPORT_WIDTH,
   CAPTURE_MOBILE_DEVICE_SCALE_FACTOR,
   DEFAULT_MOBILE_USER_AGENT,
+  CAPTURE_DEFAULT_DELAY_MS,
+  CAPTURE_LAYOUT_SETTLE_MS,
 } from "../constants.js";
 import { withTimeout } from "../utils.js";
 import type { CaptureUrlOptions, CaptureResult } from "../types.js";
@@ -456,7 +458,7 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
   const {
     url,
     waitUntil = "load",
-    delay = 0,
+    delay = CAPTURE_DEFAULT_DELAY_MS,
     timeout = CAPTURE_DEFAULT_TIMEOUT_MS,
     mobile = false,
     userAgent,
@@ -683,6 +685,24 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
     // waits for images to finish loading, then scrolls back to top)
     await triggerLazyLoading(ws, signal);
 
+    // Poll for layout stabilization after lazy-load scroll
+    let prevHeight = 0;
+    for (let i = 0; i < 3; i++) {
+      await new Promise((r) => setTimeout(r, CAPTURE_LAYOUT_SETTLE_MS));
+      const heightResult = await sendCdpCommand(ws, "Runtime.evaluate", {
+        expression: "Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)",
+        returnByValue: true,
+      }, 30_000, signal);
+      const raw = (heightResult.result as { value?: number })?.value;
+      const currentHeight = (typeof raw === "number" && Number.isFinite(raw)) ? raw : 0;
+      if (currentHeight > 0 && currentHeight === prevHeight) break;
+      prevHeight = currentHeight;
+    }
+
+    if (prevHeight === 0) {
+      console.warn("[url-capture] Layout settle: scrollHeight was 0 on all polls; relying on cssContentSize only");
+    }
+
     if (abortController.signal.aborted) {
       throw new Error("Capture timed out");
     }
@@ -719,8 +739,16 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       );
     }
 
+    // Cross-check with DOM scrollHeight (cssContentSize can return 0 on dynamic pages)
+    const scrollResult = await sendCdpCommand(ws, "Runtime.evaluate", {
+      expression: "Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)",
+      returnByValue: true,
+    }, 30_000, signal);
+    const rawDom = (scrollResult.result as { value?: number })?.value;
+    const domScrollHeight = (typeof rawDom === "number" && Number.isFinite(rawDom)) ? rawDom : 0;
+
     const rawWidth = Math.ceil(contentSize.width);
-    const rawHeight = Math.ceil(contentSize.height);
+    const rawHeight = Math.max(Math.ceil(contentSize.height), domScrollHeight);
 
     if (rawWidth <= 0) {
       console.warn(`[url-capture] Chrome reported content width=${contentSize.width}; falling back to viewportWidth=${viewportWidth}`);

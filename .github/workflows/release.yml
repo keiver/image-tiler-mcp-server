@@ -53,11 +53,23 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Bumped to $VERSION"
 
+      - name: Update CHANGELOG
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          NEW_VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          TODAY=$(date +%Y-%m-%d)
+          HEADING=$(printf '%s%s' '#' '#')
+          printf "\n%s [%s] - %s\n- %s (#%s)\n\n" "$HEADING" "$NEW_VERSION" "$TODAY" "$PR_TITLE" "$PR_NUMBER" > /tmp/changelog_entry.txt
+          awk '!inserted && /^## \[[0-9]/ {system("cat /tmp/changelog_entry.txt"); inserted=1} 1 END { if (!inserted) system("cat /tmp/changelog_entry.txt") }' CHANGELOG.md > /tmp/changelog_new.md
+          mv /tmp/changelog_new.md CHANGELOG.md
+
       - run: npm run build
 
       - name: Commit and push
         run: |
-          git add package.json package-lock.json
+          git add package.json package-lock.json CHANGELOG.md
           git commit -m "chore: release v${{ steps.bump.outputs.version }}"
           git push
 
@@ -66,16 +78,29 @@ jobs:
           git tag "v${{ steps.bump.outputs.version }}"
           git push origin "v${{ steps.bump.outputs.version }}"
 
+      - name: Extract changelog for release
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          node << 'EOF'
+          const fs = require('fs');
+          const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
+          const version = process.env.NEW_VERSION;
+          const startMarker = `## [${version}]`;
+          const start = changelog.indexOf(startMarker);
+          const nextSection = changelog.indexOf('\n## [', start + 1);
+          const content = changelog.substring(start, nextSection > 0 ? nextSection : changelog.length).trim();
+          fs.writeFileSync('release-notes.md', content);
+          EOF
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           tag_name: v${{ steps.bump.outputs.version }}
           name: v${{ steps.bump.outputs.version }}
-          body: |
-            ${{ github.event.pull_request.title }}
-
-            PR: #${{ github.event.pull_request.number }}
-          generate_release_notes: false
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
 
       - name: Publish to npm
         run: npm publish
