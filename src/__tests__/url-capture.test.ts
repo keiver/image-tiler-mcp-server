@@ -171,6 +171,7 @@ describe("captureUrl", () => {
 
   afterEach(() => {
     delete process.env.CHROME_PATH;
+    delete process.env.CHROME_NO_SANDBOX;
   });
 
   function emitDevToolsUrl() {
@@ -253,8 +254,23 @@ describe("captureUrl", () => {
       chromeProcess.emit("exit", 1);
     }, 0);
 
-    await expect(captureUrl({ url: "https://example.com", delay: 0 })).rejects.toThrow();
-    // Chrome.kill should have been called (or chrome exited)
+    await expect(captureUrl({ url: "https://example.com", delay: 0 })).rejects.toThrow(
+      "Chrome exited unexpectedly with code 1"
+    );
+  });
+
+  it("includes stderr tail in Chrome exit error", async () => {
+    setTimeout(() => {
+      (chromeProcess.stderr as EventEmitter).emit(
+        "data",
+        Buffer.from("Failed to launch Chrome: no usable sandbox\n")
+      );
+      chromeProcess.emit("exit", 1);
+    }, 0);
+
+    await expect(captureUrl({ url: "https://example.com", delay: 0 })).rejects.toThrow(
+      /Chrome exited unexpectedly with code 1\nFailed to launch Chrome: no usable sandbox/
+    );
   });
 
   // ─── Chrome Hang / Timeout Tests ────────────────────────────────
@@ -967,11 +983,9 @@ describe("captureUrl", () => {
 
     const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
     expect(spawnArgs).toContain("--no-sandbox");
-    delete process.env.CHROME_NO_SANDBOX;
   });
 
   it("spawn does NOT include --no-sandbox when neither root nor env var set", async () => {
-    delete process.env.CHROME_NO_SANDBOX;
     setupCdpAutoResponder(1280, 800);
     setTimeout(emitDevToolsUrl, 0);
 

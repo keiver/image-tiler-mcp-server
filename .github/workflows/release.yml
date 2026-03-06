@@ -88,6 +88,7 @@ jobs:
           const version = process.env.NEW_VERSION;
           const startMarker = `## [${version}]`;
           const start = changelog.indexOf(startMarker);
+          if (start === -1) { console.error(`"## [${version}]" not found in CHANGELOG.md; the changelog update step may have failed`); process.exit(1); }
           const nextSection = changelog.indexOf('\n## [', start + 1);
           const content = changelog.substring(start, nextSection > 0 ? nextSection : changelog.length).trim();
           fs.writeFileSync('release-notes.md', content);

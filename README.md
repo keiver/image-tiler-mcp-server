@@ -160,14 +160,13 @@ cd image-tiler-mcp-server
 docker build -t image-tiler-mcp-server .
 ```
 
-The image includes Chromium for URL capture. Chrome runs without sandbox by default when the container runs as root. To run as the built-in `node` user (recommended), set `CHROME_NO_SANDBOX=1`:
+The image includes Chromium for URL capture. Chrome's `--no-sandbox` flag is enabled by default in the image because Docker containers don't provide the user namespaces that Chrome's sandbox requires. The container itself provides process isolation. To re-enable the sandbox (e.g. with `--privileged` or user-namespace support), pass `-e CHROME_NO_SANDBOX=0`.
 
 ```json
 {
   "command": "docker",
   "args": [
     "run", "--rm", "-i",
-    "-e", "CHROME_NO_SANDBOX=1",
     "-v", "/path/to/your/images:/data",
     "-e", "TILER_ALLOWED_DIRS=/data",
     "image-tiler-mcp-server"
@@ -422,7 +421,7 @@ PNG, JPEG, WebP, TIFF, GIF
 
 **"Chrome not found"** - Install Google Chrome or set the `CHROME_PATH` environment variable to the Chrome executable (must be an absolute path).
 
-**Running as root / in Docker** - Set `CHROME_NO_SANDBOX=1` to launch Chrome without sandbox (also enabled automatically when running as root).
+**Running as root** - Chrome's sandbox is automatically disabled when running as root. For non-root containers (e.g. Docker), set `CHROME_NO_SANDBOX=1`. The official Docker image already sets this.
 
 ## Security
 
@@ -469,7 +468,7 @@ Any call with a `url` parameter will return an error instead of spawning Chrome.
 **Docker example:**
 
 ```env
-CHROME_NO_SANDBOX=1
+# CHROME_NO_SANDBOX=1 is set by default in the Docker image
 TILER_ALLOWED_DIRS=/app/uploads
 TILER_DISABLE_URL_CAPTURE=1   # remove only if Chrome is network-isolated
 ```

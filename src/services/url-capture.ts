@@ -559,8 +559,10 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       });
 
       chrome!.on("exit", (code) => {
+        if (found) return;
         clearTimeout(stderrTimer);
-        reject(new Error(`Chrome exited unexpectedly with code ${code}`));
+        const hint = stderrBuf ? stderrBuf.trimEnd().slice(-500) : "";
+        reject(new Error(`Chrome exited unexpectedly with code ${code}\n${hint}`));
       });
 
       if (abortController.signal.aborted) {
