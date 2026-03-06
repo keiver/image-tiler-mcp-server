@@ -1,5 +1,9 @@
 # Changelog
 
+
+## [3.1.0] - 2026-03-06
+- fix(ci): replace bare awk `1` with `{print}` in release workflow (#19)
+
 ## [3.0.1]
 
 ### Fixed
