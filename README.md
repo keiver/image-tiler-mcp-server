@@ -149,6 +149,50 @@ Then point your MCP config to the built file:
 
 </details>
 
+<details>
+<summary>Docker</summary>
+
+Build the image:
+
+```bash
+git clone https://github.com/keiver/image-tiler-mcp-server.git
+cd image-tiler-mcp-server
+docker build -t image-tiler-mcp-server .
+```
+
+The image includes Chromium for URL capture. Chrome's `--no-sandbox` flag is enabled by default in the image because Docker containers don't provide the user namespaces that Chrome's sandbox requires. The container itself provides process isolation. To re-enable the sandbox (e.g. with `--privileged` or user-namespace support), pass `-e CHROME_NO_SANDBOX=0`.
+
+```json
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "-i",
+    "-v", "/path/to/your/images:/data",
+    "-e", "TILER_ALLOWED_DIRS=/data",
+    "image-tiler-mcp-server"
+  ]
+}
+```
+
+The `-i` flag is required (stdio transport). Mount a volume for any directories the server needs to read from or write to, and set `TILER_ALLOWED_DIRS` to restrict file access to those mounts.
+
+To disable URL capture entirely (no Chrome, no network access):
+
+```json
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "-i",
+    "-e", "TILER_DISABLE_URL_CAPTURE=1",
+    "-v", "/path/to/your/images:/data",
+    "-e", "TILER_ALLOWED_DIRS=/data",
+    "image-tiler-mcp-server"
+  ]
+}
+```
+
+</details>
+
 ## Usage
 
 ### Tile an image
@@ -304,7 +348,7 @@ The tool uses a two-step process to let you choose the right model before tiling
 | `deviceScaleFactor` | number | no | `1` (`2` when `mobile`) | Device pixel ratio (0.1-5). Use `2` for retina, `3` for high-DPI mobile. |
 | `userAgent` | string | no | - | Custom user agent string. Auto-set to a mobile Safari UA when `mobile: true` and no explicit value provided. |
 | `waitUntil` | string | no | `"load"` | When to consider the page loaded: `"load"`, `"networkidle"`, or `"domcontentloaded"` |
-| `delay` | number | no | `0` | Additional delay in ms after page load (max 30000) |
+| `delay` | number | no | `3000` | Additional delay in ms after page load (max 30000) |
 
 Supports scroll-stitching for pages taller than 16,384px. Automatically triggers lazy-loaded images (`loading="lazy"`) before capture by scrolling through the page. Pages without lazy images are unaffected.
 
@@ -377,7 +421,7 @@ PNG, JPEG, WebP, TIFF, GIF
 
 **"Chrome not found"** - Install Google Chrome or set the `CHROME_PATH` environment variable to the Chrome executable (must be an absolute path).
 
-**Running as root / in Docker** - Set `CHROME_NO_SANDBOX=1` to launch Chrome without sandbox (also enabled automatically when running as root).
+**Running as root** - Chrome's sandbox is automatically disabled when running as root. For non-root containers (e.g. Docker), set `CHROME_NO_SANDBOX=1`. The official Docker image already sets this.
 
 ## Security
 
@@ -424,7 +468,7 @@ Any call with a `url` parameter will return an error instead of spawning Chrome.
 **Docker example:**
 
 ```env
-CHROME_NO_SANDBOX=1
+# CHROME_NO_SANDBOX=1 is set by default in the Docker image
 TILER_ALLOWED_DIRS=/app/uploads
 TILER_DISABLE_URL_CAPTURE=1   # remove only if Chrome is network-isolated
 ```

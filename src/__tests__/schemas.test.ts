@@ -151,9 +151,9 @@ describe("TilerInputSchema", () => {
       expect(result.waitUntil).toBe("load");
     });
 
-    it("delay defaults to 0", () => {
+    it("delay defaults to 3000", () => {
       const result = tilerSchema.parse({});
-      expect(result.delay).toBe(0);
+      expect(result.delay).toBe(3000);
     });
 
     it("screenshotPath is optional and undefined by default", () => {

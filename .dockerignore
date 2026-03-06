@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+assets
+docs
+src/__tests__
+*.md
+!README.md
+.github
+.env
+.env.*
+coverage

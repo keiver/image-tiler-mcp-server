@@ -64,8 +64,8 @@ export const TilerInputSchema = {
     .int()
     .min(0, "Delay must be >= 0")
     .max(30000, "Delay must be <= 30000ms")
-    .default(0)
-    .describe("Additional delay in ms after the page is loaded, before capturing (default: 0)"),
+    .default(3000)
+    .describe("Additional delay in ms after the page is loaded, before capturing (default: 3000)"),
   mobile: z
     .boolean()
     .optional()
