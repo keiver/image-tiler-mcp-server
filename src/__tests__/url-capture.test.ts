@@ -277,11 +277,11 @@ describe("captureUrl", () => {
 
   it("times out when Chrome never emits DevTools URL", async () => {
     // Chrome spawns but never writes to stderr — no DevTools URL appears
-    // The 10s stderr timer should fire
+    // The startup timer (capped to the capture timeout) should fire
     await expect(
-      captureUrl({ url: "https://example.com", timeout: 15_000 })
+      captureUrl({ url: "https://example.com", timeout: 5_000 })
     ).rejects.toThrow("Timed out waiting for Chrome DevTools WebSocket URL");
-  }, 15_000);
+  }, 10_000);
 
   // ─── Scroll-Stitch Tests ────────────────────────────────────────
 
@@ -366,7 +366,7 @@ describe("captureUrl", () => {
     };
 
     // This should time out since no DevTools URL is emitted
-    const promise = captureUrl({ url: "https://example.com", timeout: 12_000 });
+    const promise = captureUrl({ url: "https://example.com", timeout: 5_000 });
 
     // Emit the big chunk
     setTimeout(() => {
@@ -375,7 +375,7 @@ describe("captureUrl", () => {
 
     await expect(promise).rejects.toThrow("Timed out waiting for Chrome DevTools WebSocket URL");
     // The important thing is it didn't crash or OOM from unbounded buffer growth
-  }, 15_000);
+  }, 10_000);
 
   // ─── Chrome Error Page Detection ──────────────────────────────────
 
