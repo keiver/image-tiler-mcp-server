@@ -3,9 +3,12 @@
 [![npm version](https://img.shields.io/npm/v/image-tiler-mcp-server)](https://www.npmjs.com/package/image-tiler-mcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/keiver/image-tiler-mcp-server/blob/main/LICENSE)
 [![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/en)
-[![MCP Badge](https://lobehub.com/badge/mcp/keiver-image-tiler-mcp-server)](https://lobehub.com/mcp/keiver-image-tiler-mcp-server)
 
-MCP server that gives LLMs full-resolution vision by tiling images and capturing web pages before details are lost.
+<a href="https://glama.ai/mcp/servers/@keiver/image-tiler-mcp-server">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@keiver/image-tiler-mcp-server/badge" />
+</a>
+
+MCP server that gives LLMs full-resolution vision by tiling large images and capturing full web pages before details are lost to automatic downscaling.
 
 <figure align="center">
   <img src="assets/preview.gif" alt="Preview of image tiling grid with advised vision models size and token estimates" width="100%" />
