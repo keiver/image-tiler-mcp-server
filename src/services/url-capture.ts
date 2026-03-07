@@ -28,6 +28,7 @@ import {
   DEFAULT_MOBILE_USER_AGENT,
   CAPTURE_DEFAULT_DELAY_MS,
   CAPTURE_LAYOUT_SETTLE_MS,
+  CHROME_STARTUP_TIMEOUT_MS,
 } from "../constants.js";
 import { withTimeout } from "../utils.js";
 import type { CaptureUrlOptions, CaptureResult } from "../types.js";
@@ -497,6 +498,10 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
   // Reset per-capture so IDs stay small and don't leak state across calls
   cdpCommandId = 0;
 
+  // Chrome startup/connection timeout: generous default for cold-start in constrained VMs,
+  // but capped at the overall capture timeout so we don't outlive the caller's budget.
+  const chromeStartupTimeout = Math.min(CHROME_STARTUP_TIMEOUT_MS, timeout);
+
   // Overall timeout: signal is wired into CDP commands and wait conditions
   const abortController = new AbortController();
   const signal = abortController.signal;
@@ -534,8 +539,8 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
     // Parse DevTools WebSocket URL from stderr
     const wsUrl = await new Promise<string>((resolve, reject) => {
       const stderrTimer = setTimeout(() => {
-        reject(new Error("Timed out waiting for Chrome DevTools WebSocket URL (10s)"));
-      }, 10_000);
+        reject(new Error(`Timed out waiting for Chrome DevTools WebSocket URL (${chromeStartupTimeout / 1000}s)`));
+      }, chromeStartupTimeout);
 
       let stderrBuf = "";
       let found = false;
@@ -583,8 +588,8 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
 
     const pageWsUrl = await new Promise<string>((resolve, reject) => {
       const jsonTimer = setTimeout(() => {
-        reject(new Error("Timed out discovering Chrome page target (5s)"));
-      }, 5_000);
+        reject(new Error(`Timed out discovering Chrome page target (${chromeStartupTimeout / 1000}s)`));
+      }, chromeStartupTimeout);
 
       // Use http.get to avoid fetch compatibility concerns
       import("node:http").then(({ default: http }) => {
@@ -629,8 +634,8 @@ export async function captureUrl(options: CaptureUrlOptions): Promise<CaptureRes
       const socket = new WebSocket(pageWsUrl);
       const connectTimer = setTimeout(() => {
         socket.close();
-        reject(new Error("WebSocket connection to Chrome timed out (10s)"));
-      }, 10_000);
+        reject(new Error(`WebSocket connection to Chrome timed out (${chromeStartupTimeout / 1000}s)`));
+      }, chromeStartupTimeout);
 
       socket.on("open", () => {
         clearTimeout(connectTimer);

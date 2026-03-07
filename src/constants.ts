@@ -79,6 +79,9 @@ export const TILE_OUTPUT_FORMATS = ["png", "webp"] as const;
 export type TileOutputFormat = (typeof TILE_OUTPUT_FORMATS)[number];
 export const WEBP_QUALITY = 80;
 
+// Chrome startup / connection timeouts (generous for cold-start in constrained VMs)
+export const CHROME_STARTUP_TIMEOUT_MS = 60_000;
+
 // URL capture
 export const MAX_STITCH_BYTES = 500 * 1024 * 1024; // 500 MB cumulative buffer limit for scroll-stitching
 export const MAX_CAPTURE_HEIGHT = 200_000; // max page height for scroll-stitching (~12 segments)
