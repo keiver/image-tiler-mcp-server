@@ -2,6 +2,10 @@
 
 
 
+
+## [3.1.2] - 2026-03-07
+- chore: update readme to remove lobehub badge - abandoned? - and adding glama.ai widget (#21)
+
 ## [3.1.1] - 2026-03-07
 - fix(url-capture): bump Chrome startup timeouts to 60s for cold-start VMs (#20)
 
