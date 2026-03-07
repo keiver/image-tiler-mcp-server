@@ -1,6 +1,10 @@
 # Changelog
 
 
+
+## [3.1.1] - 2026-03-07
+- fix(url-capture): bump Chrome startup timeouts to 60s for cold-start VMs (#20)
+
 ## [3.1.0] - 2026-03-06
 - fix(ci): replace bare awk `1` with `{print}` in release workflow (#19)
 
